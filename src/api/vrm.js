@@ -69,3 +69,9 @@ export async function fetchFleetAlerts() {
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     return res.json();
 }
+
+export async function fetchFleetNetwork() {
+    const res = await fetch(`${API_BASE}/fleet/network`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
