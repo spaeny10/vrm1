@@ -117,18 +117,19 @@ function SiteDetail() {
             .catch(() => setHistoryData([]))
     }, [id, range])
 
-    // Fetch Pepwave history when device name is known
-    useEffect(() => {
-        if (!siteName) return
-        const end = Date.now()
-        const start = end - RANGES[range]
-        fetchPepwaveHistory(siteName, start, end)
-            .then(res => setPepwaveHistoryData(res.records || []))
-            .catch(() => setPepwaveHistoryData([]))
-    }, [siteName, range])
-
     // Parse diagnostics
     const records = diagData?.records || [];
+
+    // Find matching Pepwave device by site name (MUST be before useEffect that uses it)
+    // We need the site name — get it from the diagnostics data or system data
+    const siteName = useMemo(() => {
+        // Try to find name from various sources
+        const sysName = systemData?.records?.name
+        if (sysName) return sysName
+        // Fallback: check if any record has a site name
+        const diagRecord = records.find(r => r.idSiteName)
+        return diagRecord?.idSiteName || null
+    }, [systemData, records])
 
     const battery = useMemo(() => ({
         soc: diagValue(records, 'SOC') ?? diagValue(records, 'bs'),
@@ -151,16 +152,15 @@ function SiteDetail() {
         temp: diagValue(records, 'ScT'),
     }), [records]);
 
-    // Find matching Pepwave device by site name
-    // We need the site name — get it from the diagnostics data or system data
-    const siteName = useMemo(() => {
-        // Try to find name from various sources
-        const sysName = systemData?.records?.name
-        if (sysName) return sysName
-        // Fallback: check if any record has a site name
-        const diagRecord = records.find(r => r.idSiteName)
-        return diagRecord?.idSiteName || null
-    }, [systemData, records])
+    // Fetch Pepwave history when device name is known
+    useEffect(() => {
+        if (!siteName) return
+        const end = Date.now()
+        const start = end - RANGES[range]
+        fetchPepwaveHistory(siteName, start, end)
+            .then(res => setPepwaveHistoryData(res.records || []))
+            .catch(() => setPepwaveHistoryData([]))
+    }, [siteName, range])
 
     const pepwaveDevice = useMemo(() => {
         if (!siteName || !networkData?.records) return null
