@@ -3,6 +3,7 @@ import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchSites, fetchFleetLatest, fetchFleetCombined } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import SiteCard from '../components/SiteCard'
+import QueryBar from '../components/QueryBar'
 
 function FleetOverview() {
     const [sortBy, setSortBy] = useState('name')
@@ -177,6 +178,8 @@ function FleetOverview() {
                     trend="up"
                 />
             </div>
+
+            <QueryBar />
 
             <div className="fleet-controls">
                 <div className="search-box">

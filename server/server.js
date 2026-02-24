@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import Anthropic from '@anthropic-ai/sdk';
 import {
     initDb, insertSnapshot, getHistory, getLatestSnapshots,
     getRetentionDays, setRetentionDays, pruneOldData, getDbStats,
@@ -22,6 +23,11 @@ const IC2_CLIENT_SECRET = process.env.IC2_CLIENT_SECRET;
 const IC2_BASE = 'https://api.ic.peplink.com';
 const IC2_ORG_ID = 'VdYVxn';
 const IC2_GROUP_ID = 1;
+
+// Claude API for natural language queries
+const anthropic = process.env.ANTHROPIC_API_KEY
+    ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    : null;
 
 app.use(cors());
 app.use(express.json());
@@ -687,6 +693,133 @@ async function pollIc2Devices() {
         isPollingIc2 = false;
     }
 }
+
+// ============================================================
+// Natural Language Query (Claude-powered)
+// ============================================================
+const FLEET_SCHEMA = `
+You are a fleet data assistant for a solar-powered trailer monitoring system. The system tracks ~110 trailers.
+
+Database tables:
+
+1. site_snapshots — VRM power data (one row per site per 5-min poll)
+   Columns: id SERIAL, site_id INTEGER, site_name TEXT, timestamp BIGINT (ms),
+   battery_soc REAL (0-100%), battery_voltage REAL (V), battery_current REAL (A),
+   battery_temp REAL (°C), battery_power REAL (W), solar_watts REAL (W),
+   solar_yield_today REAL (kWh), solar_yield_yesterday REAL (kWh), charge_state TEXT
+
+2. pepwave_snapshots — Pepwave network data (one row per device per 5-min poll)
+   Columns: id SERIAL, device_name TEXT, timestamp BIGINT (ms),
+   online BOOLEAN, signal_bar INTEGER (0-5), rsrp REAL (dBm, good > -90, fair > -105, poor < -105),
+   rsrq REAL (dB), rssi REAL (dBm), sinr REAL (dB, higher=better),
+   carrier TEXT, technology TEXT (LTE/5G/etc), usage_mb REAL (cumulative MB),
+   tx_mb REAL, rx_mb REAL, client_count INTEGER, uptime INTEGER (seconds), wan_ip TEXT
+
+IMPORTANT:
+- site_snapshots.site_name can be matched to pepwave_snapshots.device_name (they share trailer names)
+- Timestamps are in epoch milliseconds. Use to_timestamp(timestamp/1000) for date operations.
+- Always LIMIT results to 50 rows max.
+- Only generate SELECT queries. Never INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL/DML.
+- For "latest" queries, use DISTINCT ON or subqueries with MAX(timestamp).
+- For daily aggregations, group by DATE(to_timestamp(timestamp/1000)).
+
+Examples:
+- "trailers with weak signal" → query pepwave_snapshots for latest rsrp < -105
+- "which trailers are offline" → query pepwave_snapshots for latest where online = false
+- "low battery trailers" → query site_snapshots for latest where battery_soc < 30
+- "data usage this week" → aggregate pepwave_snapshots usage_mb grouped by device_name
+`;
+
+app.post('/api/query', async (req, res) => {
+    if (!anthropic) {
+        return res.status(501).json({ error: 'Claude API key not configured' });
+    }
+
+    const { question } = req.body;
+    if (!question || typeof question !== 'string' || question.trim().length === 0) {
+        return res.status(400).json({ error: 'Question is required' });
+    }
+
+    try {
+        // Build real-time context from in-memory caches
+        const deviceSummary = [];
+        for (const [name, device] of pepwaveCache.entries()) {
+            deviceSummary.push(`${name}: ${device.online ? 'online' : 'offline'}, signal=${device.cellular?.signal_bar ?? '?'}/5, rsrp=${device.cellular?.signal?.rsrp ?? '?'}dBm, clients=${device.client_count}, usage=${device.usage_mb}MB`);
+        }
+        const snapshotSummary = [];
+        for (const [siteId, snap] of snapshotCache.entries()) {
+            snapshotSummary.push(`${snap.site_name || 'Site ' + siteId}: SOC=${snap.battery_soc}%, ${snap.battery_voltage}V, solar=${snap.solar_watts}W, charge=${snap.charge_state}`);
+        }
+
+        const liveContext = `\nCurrent live data (${new Date().toISOString()}):\n` +
+            `Pepwave devices (${deviceSummary.length} total):\n${deviceSummary.slice(0, 20).join('\n')}${deviceSummary.length > 20 ? '\n...(truncated)' : ''}\n\n` +
+            `VRM sites (${snapshotSummary.length} total):\n${snapshotSummary.slice(0, 20).join('\n')}${snapshotSummary.length > 20 ? '\n...(truncated)' : ''}`;
+
+        const systemPrompt = FLEET_SCHEMA + liveContext + `\n\nRespond in this JSON format:\n{\n  "answer": "<human-readable answer to the question>",\n  "sql": "<optional SQL query if database lookup would help, or null>",\n  "data": null\n}\n\nIf you can answer from the live context alone, set sql to null and answer directly.\nIf a SQL query would give better/more complete data, include it. The system will execute it and ask you to refine the answer.\nAlways respond with valid JSON only, no markdown fences.`;
+
+        const msg = await anthropic.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 1500,
+            messages: [{ role: 'user', content: question }],
+            system: systemPrompt,
+        });
+
+        let parsed;
+        try {
+            const text = msg.content[0].text;
+            parsed = JSON.parse(text);
+        } catch {
+            // If Claude didn't return valid JSON, wrap the text as an answer
+            parsed = { answer: msg.content[0].text, sql: null, data: null };
+        }
+
+        // If Claude generated a SQL query and DB is available, execute it
+        if (parsed.sql && dbAvailable) {
+            const sqlLower = parsed.sql.toLowerCase().trim();
+            // Safety: only allow SELECT
+            if (!sqlLower.startsWith('select')) {
+                parsed.answer += '\n⚠️ Query was blocked for safety (non-SELECT detected).';
+                parsed.sql = null;
+            } else {
+                try {
+                    const pool = (await import('./db.js')).default;
+                    // Use the pool from db.js
+                    const { initDb } = await import('./db.js');
+                    const p = await initDb();
+                    const result = await p.query(parsed.sql);
+                    parsed.data = result.rows.slice(0, 50);
+
+                    // Ask Claude to refine the answer with the actual data
+                    const refinement = await anthropic.messages.create({
+                        model: 'claude-sonnet-4-20250514',
+                        max_tokens: 1000,
+                        messages: [{
+                            role: 'user',
+                            content: `Original question: "${question}"\n\nSQL query returned ${result.rows.length} rows:\n${JSON.stringify(result.rows.slice(0, 20), null, 2)}\n\nProvide a clear, concise answer summarizing these results. Format as plain text, use bullet points if listing items. Keep it brief.`
+                        }],
+                        system: 'You are a fleet data assistant. Provide clear, concise answers about trailer fleet data. Use bullet points for lists. Include numbers and specifics. Keep answers under 200 words.',
+                    });
+                    parsed.answer = refinement.content[0].text;
+                } catch (dbErr) {
+                    parsed.answer += `\n⚠️ SQL execution failed: ${dbErr.message}`;
+                    parsed.data = null;
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            question,
+            answer: parsed.answer,
+            sql: parsed.sql,
+            data: parsed.data,
+        });
+    } catch (err) {
+        console.error('Query error:', err.message);
+        res.status(500).json({ error: `Query failed: ${err.message}` });
+    }
+});
+
 
 // --- SPA fallback ---
 app.get('*', (req, res) => {
