@@ -7,8 +7,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import {
     initDb, insertSnapshot, getHistory, getLatestSnapshots,
     getRetentionDays, setRetentionDays, pruneOldData, getDbStats,
-    insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage
+    insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
+    upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding
 } from './db.js';
+import {
+    generateQueryEmbedding, embedSiteSnapshots, embedPepwaveDevices,
+    embedAlerts, isConfigured as isEmbeddingsConfigured
+} from './embeddings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -605,6 +610,13 @@ async function pollAllSites() {
         const alertCount = computeAlerts().length;
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         console.log(`  VRM poll complete: ${successCount} ok, ${errorCount} errors in ${elapsed}s (cache: ${snapshotCache.size} sites, energy alerts: ${alertCount})`);
+
+        // Auto-generate embeddings for new data (async, don't block)
+        if (dbAvailable && isEmbeddingsConfigured() && snapshotCache.size > 0) {
+            generateEmbeddingsAsync().catch(err =>
+                console.error('  Background embedding generation failed:', err.message)
+            );
+        }
     } catch (err) {
         console.error('  VRM poll error:', err.message);
     } finally {
@@ -692,6 +704,46 @@ async function pollIc2Devices() {
         console.error('  IC2 poll error:', err.message);
     } finally {
         isPollingIc2 = false;
+    }
+}
+
+// ============================================================
+// Background Embedding Generation
+// ============================================================
+async function generateEmbeddingsAsync() {
+    if (!isEmbeddingsConfigured() || !dbAvailable) return;
+
+    try {
+        // Get current sites from snapshot cache
+        const sites = Array.from(snapshotCache.values()).filter(s => s.site_name);
+        if (sites.length > 0) {
+            const siteEmbeddings = await embedSiteSnapshots(sites);
+            for (const emb of siteEmbeddings) {
+                await upsertEmbedding(emb.contentType, emb.contentId, emb.contentText, emb.embedding, emb.metadata);
+            }
+        }
+
+        // Get current devices from pepwave cache
+        const devices = Array.from(pepwaveCache.values()).filter(d => d.name);
+        if (devices.length > 0) {
+            const deviceEmbeddings = await embedPepwaveDevices(devices);
+            for (const emb of deviceEmbeddings) {
+                await upsertEmbedding(emb.contentType, emb.contentId, emb.contentText, emb.embedding, emb.metadata);
+            }
+        }
+
+        // Embed current alerts
+        const alerts = computeAlerts();
+        if (alerts.length > 0) {
+            const alertEmbeddings = await embedAlerts(alerts);
+            for (const emb of alertEmbeddings) {
+                await upsertEmbedding(emb.contentType, emb.contentId, emb.contentText, emb.embedding, emb.metadata);
+            }
+        }
+
+        console.log(`  Background embeddings updated: ${sites.length} sites, ${devices.length} devices, ${alerts.length} alerts`);
+    } catch (err) {
+        console.error('  Background embedding error:', err.message);
     }
 }
 
@@ -817,6 +869,153 @@ app.post('/api/query', async (req, res) => {
     }
 });
 
+// ============================================================
+// Semantic Search Endpoint
+// ============================================================
+app.post('/api/search/semantic', async (req, res) => {
+    if (!isEmbeddingsConfigured()) {
+        return res.status(501).json({ error: 'Voyage API key not configured' });
+    }
+
+    if (!dbAvailable) {
+        return res.status(503).json({ error: 'Database not available' });
+    }
+
+    const { query, contentTypes, limit } = req.body;
+
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+        return res.status(400).json({ error: 'Query is required' });
+    }
+
+    try {
+        // Generate embedding for the search query
+        const queryEmbedding = await generateQueryEmbedding(query);
+
+        // Perform vector similarity search
+        const results = await semanticSearch(
+            queryEmbedding,
+            contentTypes || null,
+            limit || 20
+        );
+
+        // Use Claude to synthesize results into a natural answer
+        let answer = '';
+        if (anthropic && results.length > 0) {
+            try {
+                const resultsContext = results.slice(0, 10).map((r, i) =>
+                    `${i + 1}. [${r.content_type}] ${r.content_text} (similarity: ${(r.similarity * 100).toFixed(1)}%)`
+                ).join('\n');
+
+                const msg = await anthropic.messages.create({
+                    model: 'claude-3-5-sonnet-20241022',
+                    max_tokens: 800,
+                    messages: [{
+                        role: 'user',
+                        content: `User query: "${query}"\n\nMost relevant fleet data:\n${resultsContext}\n\nProvide a clear, concise answer based on these search results. Use bullet points if listing items. Keep it under 150 words.`
+                    }],
+                    system: 'You are a fleet data assistant. Provide clear answers about trailer fleet data based on semantic search results.',
+                });
+                answer = msg.content[0].text;
+            } catch (claudeErr) {
+                console.error('Claude synthesis failed:', claudeErr.message);
+                // Fall back to raw results
+                answer = `Found ${results.length} relevant results for "${query}".`;
+            }
+        } else {
+            answer = results.length > 0
+                ? `Found ${results.length} relevant results for "${query}".`
+                : `No results found for "${query}".`;
+        }
+
+        res.json({
+            success: true,
+            query,
+            answer,
+            results: results.map(r => ({
+                type: r.content_type,
+                id: r.content_id,
+                text: r.content_text,
+                similarity: r.similarity,
+                metadata: r.metadata,
+            })),
+            count: results.length,
+        });
+    } catch (err) {
+        console.error('Semantic search error:', err.message);
+        res.status(500).json({ error: `Search failed: ${err.message}` });
+    }
+});
+
+// ============================================================
+// Embeddings Management Endpoints
+// ============================================================
+
+// Get embedding stats
+app.get('/api/embeddings/stats', async (req, res) => {
+    try {
+        if (!dbAvailable) {
+            return res.json({ success: true, stats: [] });
+        }
+        const stats = await getEmbeddingStats();
+        res.json({ success: true, stats });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Generate embeddings for all current data
+app.post('/api/embeddings/generate', async (req, res) => {
+    if (!isEmbeddingsConfigured()) {
+        return res.status(501).json({ error: 'Voyage API key not configured' });
+    }
+
+    if (!dbAvailable) {
+        return res.status(503).json({ error: 'Database not available' });
+    }
+
+    try {
+        const data = await getAllContentForEmbedding();
+        let siteCount = 0;
+        let deviceCount = 0;
+
+        // Embed sites
+        if (data.sites.length > 0) {
+            const siteEmbeddings = await embedSiteSnapshots(data.sites);
+            for (const emb of siteEmbeddings) {
+                await upsertEmbedding(emb.contentType, emb.contentId, emb.contentText, emb.embedding, emb.metadata);
+            }
+            siteCount = data.sites.length;
+        }
+
+        // Embed devices
+        if (data.devices.length > 0) {
+            const deviceEmbeddings = await embedPepwaveDevices(data.devices);
+            for (const emb of deviceEmbeddings) {
+                await upsertEmbedding(emb.contentType, emb.contentId, emb.contentText, emb.embedding, emb.metadata);
+            }
+            deviceCount = data.devices.length;
+        }
+
+        // Embed current alerts
+        const alerts = computeAlerts();
+        if (alerts.length > 0) {
+            const alertEmbeddings = await embedAlerts(alerts);
+            for (const emb of alertEmbeddings) {
+                await upsertEmbedding(emb.contentType, emb.contentId, emb.contentText, emb.embedding, emb.metadata);
+            }
+        }
+
+        res.json({
+            success: true,
+            sites_embedded: siteCount,
+            devices_embedded: deviceCount,
+            alerts_embedded: alerts.length,
+        });
+    } catch (err) {
+        console.error('Embedding generation error:', err.message);
+        res.status(500).json({ error: `Failed to generate embeddings: ${err.message}` });
+    }
+});
 
 // --- SPA fallback ---
 app.get('*', (req, res) => {

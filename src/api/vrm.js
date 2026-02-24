@@ -103,3 +103,25 @@ export async function fetchQuery(question) {
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     return res.json();
 }
+
+export async function semanticSearch(query, contentTypes = null, limit = 20) {
+    const res = await fetch(`${API_BASE}/search/semantic`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, contentTypes, limit }),
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function generateEmbeddings() {
+    const res = await fetch(`${API_BASE}/embeddings/generate`, { method: 'POST' });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function getEmbeddingStats() {
+    const res = await fetch(`${API_BASE}/embeddings/stats`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}

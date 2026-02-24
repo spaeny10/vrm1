@@ -28,6 +28,9 @@ export async function initDb() {
     // Test connection
     const client = await pool.connect();
     try {
+        // Enable pgvector extension for semantic search
+        await client.query(`CREATE EXTENSION IF NOT EXISTS vector`);
+
         await client.query(`
       CREATE TABLE IF NOT EXISTS site_snapshots (
         id SERIAL PRIMARY KEY,
@@ -86,6 +89,31 @@ export async function initDb() {
         await client.query(`
       CREATE INDEX IF NOT EXISTS idx_pepwave_device_ts
       ON pepwave_snapshots(device_name, timestamp)
+    `);
+
+        // Embeddings table for semantic search (1024 dimensions for Voyage AI)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS fleet_embeddings (
+        id SERIAL PRIMARY KEY,
+        content_type TEXT NOT NULL,
+        content_id TEXT NOT NULL,
+        content_text TEXT NOT NULL,
+        embedding vector(1024),
+        metadata JSONB,
+        timestamp BIGINT NOT NULL,
+        UNIQUE(content_type, content_id)
+      )
+    `);
+
+        // Vector similarity index using HNSW for fast nearest neighbor search
+        await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_fleet_embeddings_vector
+      ON fleet_embeddings USING hnsw (embedding vector_cosine_ops)
+    `);
+
+        await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_fleet_embeddings_type
+      ON fleet_embeddings(content_type)
     `);
 
         // Default retention: 90 days
@@ -251,4 +279,103 @@ export async function getDbStats() {
         count: parseInt(countResult.rows[0].count, 10),
         pepwave_count: parseInt(pepwaveCountResult.rows[0].count, 10),
     };
+}
+
+// ============================================================
+// Semantic Search - Embeddings Management
+// ============================================================
+
+export async function upsertEmbedding(contentType, contentId, contentText, embedding, metadata = {}) {
+    if (!pool) return;
+    await pool.query(
+        `INSERT INTO fleet_embeddings
+      (content_type, content_id, content_text, embedding, metadata, timestamp)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (content_type, content_id)
+     DO UPDATE SET content_text = $3, embedding = $4, metadata = $5, timestamp = $6`,
+        [contentType, contentId, contentText, JSON.stringify(embedding), metadata, Date.now()]
+    );
+}
+
+export async function semanticSearch(queryEmbedding, contentTypes = null, limit = 20) {
+    if (!pool) return [];
+
+    let query = `
+        SELECT
+            content_type,
+            content_id,
+            content_text,
+            metadata,
+            timestamp,
+            1 - (embedding <=> $1::vector) as similarity
+        FROM fleet_embeddings
+    `;
+
+    const params = [JSON.stringify(queryEmbedding)];
+
+    if (contentTypes && contentTypes.length > 0) {
+        query += ` WHERE content_type = ANY($2)`;
+        params.push(contentTypes);
+    }
+
+    query += ` ORDER BY embedding <=> $1::vector LIMIT $${params.length + 1}`;
+    params.push(limit);
+
+    const result = await pool.query(query, params);
+    return result.rows;
+}
+
+export async function getEmbeddingStats() {
+    if (!pool) return {};
+    const result = await pool.query(`
+        SELECT
+            content_type,
+            COUNT(*) as count,
+            MAX(timestamp) as latest_timestamp
+        FROM fleet_embeddings
+        GROUP BY content_type
+        ORDER BY content_type
+    `);
+    return result.rows;
+}
+
+export async function getAllContentForEmbedding() {
+    if (!pool) return [];
+
+    // Get all sites with latest data
+    const sites = await pool.query(`
+        SELECT DISTINCT ON (site_id)
+            site_id,
+            site_name,
+            battery_soc,
+            battery_voltage,
+            solar_watts,
+            charge_state,
+            timestamp
+        FROM site_snapshots
+        ORDER BY site_id, timestamp DESC
+    `);
+
+    // Get all pepwave devices with latest data
+    const devices = await pool.query(`
+        SELECT DISTINCT ON (device_name)
+            device_name,
+            online,
+            signal_bar,
+            rsrp,
+            carrier,
+            technology,
+            timestamp
+        FROM pepwave_snapshots
+        ORDER BY device_name, timestamp DESC
+    `);
+
+    return {
+        sites: sites.rows,
+        devices: devices.rows
+    };
+}
+
+export function getPool() {
+    return pool;
 }
