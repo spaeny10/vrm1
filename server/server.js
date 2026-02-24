@@ -819,7 +819,12 @@ app.post('/api/query', async (req, res) => {
 
         let parsed;
         try {
-            const text = msg.content[0].text;
+            let text = msg.content[0].text;
+            // Strip markdown code blocks if present
+            const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+            if (codeBlockMatch) {
+                text = codeBlockMatch[1];
+            }
             parsed = JSON.parse(text);
         } catch {
             // If Claude didn't return valid JSON, wrap the text as an answer

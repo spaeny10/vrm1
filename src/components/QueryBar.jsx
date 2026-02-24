@@ -92,7 +92,7 @@ export default function QueryBar() {
                         <div className="query-error">{error}</div>
                     ) : (
                         <>
-                            <div className="query-answer">
+                            <div className="query-answer" style={{ whiteSpace: 'pre-wrap' }}>
                                 {result.answer}
                             </div>
 
