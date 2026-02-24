@@ -102,13 +102,20 @@ async function getIc2Token() {
     return ic2Token;
 }
 
-async function ic2Fetch(endpoint) {
+async function ic2Fetch(endpoint, retryOn401 = true) {
     const token = await getIc2Token();
     const res = await fetch(`${IC2_BASE}${endpoint}`, {
         headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
         const text = await res.text();
+        // On 401, invalidate token and retry once
+        if (res.status === 401 && retryOn401) {
+            console.log('  IC2 token invalid, refreshing...');
+            ic2Token = null;
+            ic2TokenExpiry = 0;
+            return ic2Fetch(endpoint, false); // Retry without further recursion
+        }
         throw new Error(`IC2 API ${res.status}: ${text}`);
     }
     return res.json();
@@ -636,6 +643,7 @@ async function pollIc2Devices() {
     try {
         const result = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d?has_status=true`);
         const devices = result.data || [];
+
 
         let onlineCount = 0;
         let offlineCount = 0;
