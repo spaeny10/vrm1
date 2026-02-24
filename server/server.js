@@ -759,7 +759,7 @@ app.post('/api/query', async (req, res) => {
         const systemPrompt = FLEET_SCHEMA + liveContext + `\n\nRespond in this JSON format:\n{\n  "answer": "<human-readable answer to the question>",\n  "sql": "<optional SQL query if database lookup would help, or null>",\n  "data": null\n}\n\nIf you can answer from the live context alone, set sql to null and answer directly.\nIf a SQL query would give better/more complete data, include it. The system will execute it and ask you to refine the answer.\nAlways respond with valid JSON only, no markdown fences.`;
 
         const msg = await anthropic.messages.create({
-            model: 'claude-3-5-sonnet-20240620',
+            model: 'claude-3-5-sonnet-20241022',
             max_tokens: 1500,
             messages: [{ role: 'user', content: question }],
             system: systemPrompt,
@@ -788,7 +788,7 @@ app.post('/api/query', async (req, res) => {
 
                     // Ask Claude to refine the answer with the actual data
                     const refinement = await anthropic.messages.create({
-                        model: 'claude-3-5-sonnet-20240620',
+                        model: 'claude-3-5-sonnet-20241022',
                         max_tokens: 1000,
                         messages: [{
                             role: 'user',
