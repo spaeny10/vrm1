@@ -81,3 +81,15 @@ export async function fetchFleetCombined() {
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     return res.json();
 }
+
+export async function fetchPepwaveHistory(name, start, end) {
+    const res = await fetch(`${API_BASE}/fleet/network/${encodeURIComponent(name)}/history?start=${start}&end=${end}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchPepwaveDaily(name, days = 30) {
+    const res = await fetch(`${API_BASE}/fleet/network/${encodeURIComponent(name)}/daily?days=${days}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}

@@ -7,7 +7,7 @@ import {
 } from 'chart.js'
 import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork } from '../api/vrm'
+import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import AlarmBadge from '../components/AlarmBadge'
@@ -96,6 +96,7 @@ function SiteDetail() {
     const navigate = useNavigate()
     const [range, setRange] = useState('24h')
     const [historyData, setHistoryData] = useState([])
+    const [pepwaveHistoryData, setPepwaveHistoryData] = useState([])
 
     const fetchDiagFn = useCallback(() => fetchDiagnostics(id), [id])
     const fetchAlarmsFn = useCallback(() => fetchAlarms(id), [id])
@@ -115,6 +116,16 @@ function SiteDetail() {
             .then(res => setHistoryData(res.records || []))
             .catch(() => setHistoryData([]))
     }, [id, range])
+
+    // Fetch Pepwave history when device name is known
+    useEffect(() => {
+        if (!siteName) return
+        const end = Date.now()
+        const start = end - RANGES[range]
+        fetchPepwaveHistory(siteName, start, end)
+            .then(res => setPepwaveHistoryData(res.records || []))
+            .catch(() => setPepwaveHistoryData([]))
+    }, [siteName, range])
 
     // Parse diagnostics
     const records = diagData?.records || [];
@@ -214,6 +225,55 @@ function SiteDetail() {
             }],
         }
     }, [historyData, range])
+
+    // Pepwave signal history chart
+    const rsrpChartData = useMemo(() => {
+        if (!pepwaveHistoryData.length) return null
+        return {
+            labels: pepwaveHistoryData.map(h => {
+                const d = new Date(Number(h.timestamp))
+                return range === '24h'
+                    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+            }),
+            datasets: [{
+                label: 'RSRP (dBm)',
+                data: pepwaveHistoryData.map(h => h.rsrp),
+                borderColor: '#9b59b6',
+                backgroundColor: 'rgba(155, 89, 182, 0.1)',
+                fill: true, tension: 0.3,
+                pointRadius: range === '24h' ? 2 : 0,
+            }, {
+                label: 'SINR (dB)',
+                data: pepwaveHistoryData.map(h => h.sinr),
+                borderColor: '#1abc9c',
+                backgroundColor: 'rgba(26, 188, 156, 0.05)',
+                fill: false, tension: 0.3,
+                pointRadius: range === '24h' ? 2 : 0,
+            }],
+        }
+    }, [pepwaveHistoryData, range])
+
+    // Pepwave data usage chart
+    const usageChartData = useMemo(() => {
+        if (!pepwaveHistoryData.length) return null
+        return {
+            labels: pepwaveHistoryData.map(h => {
+                const d = new Date(Number(h.timestamp))
+                return range === '24h'
+                    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+            }),
+            datasets: [{
+                label: 'Cumulative Usage (MB)',
+                data: pepwaveHistoryData.map(h => h.usage_mb),
+                borderColor: '#e67e22',
+                backgroundColor: 'rgba(230, 126, 34, 0.1)',
+                fill: true, tension: 0.3,
+                pointRadius: range === '24h' ? 2 : 0,
+            }],
+        }
+    }, [pepwaveHistoryData, range])
 
     const chartOptions = {
         responsive: true, maintainAspectRatio: false,
@@ -450,6 +510,38 @@ function SiteDetail() {
                                     {iface.ip && <span className="wan-ip">{iface.ip}</span>}
                                 </div>
                             ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Pepwave History Charts */}
+            {pepwaveDevice && (
+                <div className="charts-grid">
+                    <div className="chart-card">
+                        <h3>📶 Signal Strength</h3>
+                        <div className="chart-container">
+                            {rsrpChartData ? (
+                                <Line data={rsrpChartData} options={{
+                                    ...chartOptions,
+                                    scales: {
+                                        ...chartOptions.scales,
+                                        y: { ...chartOptions.scales.y, suggestedMin: -120, suggestedMax: -60 },
+                                    },
+                                }} />
+                            ) : (
+                                <div className="chart-empty">Signal history will build up as data is polled.</div>
+                            )}
+                        </div>
+                    </div>
+                    <div className="chart-card">
+                        <h3>📊 Data Usage</h3>
+                        <div className="chart-container">
+                            {usageChartData ? (
+                                <Line data={usageChartData} options={chartOptions} />
+                            ) : (
+                                <div className="chart-empty">Data usage history will build up as data is polled.</div>
+                            )}
                         </div>
                     </div>
                 </div>

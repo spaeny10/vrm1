@@ -5,7 +5,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
     initDb, insertSnapshot, getHistory, getLatestSnapshots,
-    getRetentionDays, setRetentionDays, pruneOldData, getDbStats
+    getRetentionDays, setRetentionDays, pruneOldData, getDbStats,
+    insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -404,6 +405,40 @@ app.get('/api/fleet/combined', (req, res) => {
     res.json({ success: true, pepwave: pepwaveMap, last_poll: lastIc2Poll });
 });
 
+// Pepwave device history (time-series)
+app.get('/api/fleet/network/:name/history', async (req, res) => {
+    try {
+        if (!dbAvailable) {
+            return res.json({ success: true, records: [] });
+        }
+        const name = decodeURIComponent(req.params.name);
+        const { start, end } = req.query;
+        const rows = await getPepwaveHistory(
+            name,
+            parseInt(start) || 0,
+            parseInt(end) || Date.now()
+        );
+        res.json({ success: true, records: rows });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Pepwave daily usage aggregation
+app.get('/api/fleet/network/:name/daily', async (req, res) => {
+    try {
+        if (!dbAvailable) {
+            return res.json({ success: true, records: [] });
+        }
+        const name = decodeURIComponent(req.params.name);
+        const days = parseInt(req.query.days) || 30;
+        const rows = await getPepwaveDailyUsage(name, days);
+        res.json({ success: true, records: rows });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Settings
 app.get('/api/settings', async (req, res) => {
     try {
@@ -614,6 +649,30 @@ async function pollIc2Devices() {
             };
 
             pepwaveCache.set(dev.name, record);
+
+            // Persist to PostgreSQL for historical tracking
+            if (dbAvailable) {
+                try {
+                    await insertPepwaveSnapshot({
+                        device_name: dev.name,
+                        timestamp: record.timestamp,
+                        online: record.online,
+                        signal_bar: cellular?.signal_bar ?? null,
+                        rsrp: cellular?.signal?.rsrp ?? null,
+                        rsrq: cellular?.signal?.rsrq ?? null,
+                        rssi: cellular?.signal?.rssi ?? null,
+                        sinr: cellular?.signal?.sinr ?? null,
+                        carrier: cellular?.carrier || null,
+                        technology: cellular?.technology || null,
+                        usage_mb: record.usage_mb,
+                        tx_mb: record.tx_mb,
+                        rx_mb: record.rx_mb,
+                        client_count: record.client_count,
+                        uptime: record.uptime,
+                        wan_ip: record.wan_ip,
+                    });
+                } catch (dbErr) { /* continue - in-memory still works */ }
+            }
 
             if (dev.status === 'online') onlineCount++;
             else offlineCount++;
