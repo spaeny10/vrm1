@@ -1034,6 +1034,7 @@ async function start() {
         dbAvailable = false;
         console.warn('PostgreSQL not available — using in-memory cache only');
         console.warn('Set DATABASE_URL to enable persistent history');
+        console.error('Database connection error:', err.message);
     }
 
     app.listen(PORT, () => {

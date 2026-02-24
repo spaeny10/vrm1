@@ -28,8 +28,13 @@ export async function initDb() {
     // Test connection
     const client = await pool.connect();
     try {
-        // Enable pgvector extension for semantic search
-        await client.query(`CREATE EXTENSION IF NOT EXISTS vector`);
+        // Try to enable pgvector extension (optional - only needed for semantic search)
+        try {
+            await client.query(`CREATE EXTENSION IF NOT EXISTS vector`);
+            console.log('  ✓ pgvector extension enabled');
+        } catch (vecErr) {
+            console.warn('  ⚠ pgvector not available - semantic search disabled');
+        }
 
         await client.query(`
       CREATE TABLE IF NOT EXISTS site_snapshots (
@@ -92,29 +97,35 @@ export async function initDb() {
     `);
 
         // Embeddings table for semantic search (1024 dimensions for Voyage AI)
-        await client.query(`
-      CREATE TABLE IF NOT EXISTS fleet_embeddings (
-        id SERIAL PRIMARY KEY,
-        content_type TEXT NOT NULL,
-        content_id TEXT NOT NULL,
-        content_text TEXT NOT NULL,
-        embedding vector(1024),
-        metadata JSONB,
-        timestamp BIGINT NOT NULL,
-        UNIQUE(content_type, content_id)
-      )
-    `);
+        // Only create if pgvector is available
+        try {
+            await client.query(`
+          CREATE TABLE IF NOT EXISTS fleet_embeddings (
+            id SERIAL PRIMARY KEY,
+            content_type TEXT NOT NULL,
+            content_id TEXT NOT NULL,
+            content_text TEXT NOT NULL,
+            embedding vector(1024),
+            metadata JSONB,
+            timestamp BIGINT NOT NULL,
+            UNIQUE(content_type, content_id)
+          )
+        `);
 
-        // Vector similarity index using HNSW for fast nearest neighbor search
-        await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_fleet_embeddings_vector
-      ON fleet_embeddings USING hnsw (embedding vector_cosine_ops)
-    `);
+            // Vector similarity index using HNSW for fast nearest neighbor search
+            await client.query(`
+          CREATE INDEX IF NOT EXISTS idx_fleet_embeddings_vector
+          ON fleet_embeddings USING hnsw (embedding vector_cosine_ops)
+        `);
 
-        await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_fleet_embeddings_type
-      ON fleet_embeddings(content_type)
-    `);
+            await client.query(`
+          CREATE INDEX IF NOT EXISTS idx_fleet_embeddings_type
+          ON fleet_embeddings(content_type)
+        `);
+            console.log('  ✓ Semantic search tables created');
+        } catch (embErr) {
+            console.warn('  ⚠ Semantic search tables skipped (pgvector required)');
+        }
 
         // Default retention: 90 days
         await client.query(`
