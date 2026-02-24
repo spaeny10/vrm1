@@ -7,7 +7,7 @@ import {
 } from 'chart.js'
 import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory } from '../api/vrm'
+import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import AlarmBadge from '../components/AlarmBadge'
@@ -38,6 +38,59 @@ function diagFormatted(records, code) {
     return match?.formattedValue || null;
 }
 
+function formatUptime(seconds) {
+    if (!seconds) return '—'
+    const d = Math.floor(seconds / 86400)
+    const h = Math.floor((seconds % 86400) / 3600)
+    if (d > 0) return `${d}d ${h}h`
+    const m = Math.floor((seconds % 3600) / 60)
+    return `${h}h ${m}m`
+}
+
+function formatMB(mb) {
+    if (!mb && mb !== 0) return '—'
+    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
+    return `${Math.round(mb)} MB`
+}
+
+function signalQuality(rsrp) {
+    if (rsrp === null || rsrp === undefined) return { label: 'Unknown', color: '#888' }
+    if (rsrp >= -80) return { label: 'Excellent', color: '#2ecc71' }
+    if (rsrp >= -90) return { label: 'Good', color: '#27ae60' }
+    if (rsrp >= -100) return { label: 'Fair', color: '#f1c40f' }
+    if (rsrp >= -110) return { label: 'Poor', color: '#e67e22' }
+    return { label: 'Weak', color: '#e74c3c' }
+}
+
+function SignalBars({ bars, size = 28 }) {
+    const maxBars = 5
+    const barWidth = Math.floor(size / 7)
+    const gap = 1
+    return (
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+            {Array.from({ length: maxBars }, (_, i) => {
+                const h = ((i + 1) / maxBars) * (size - 2) + 2
+                const x = i * (barWidth + gap)
+                const y = size - h
+                const active = i < (bars ?? 0)
+                return (
+                    <rect
+                        key={i}
+                        x={x}
+                        y={y}
+                        width={barWidth}
+                        height={h}
+                        rx={1}
+                        fill={active
+                            ? (bars >= 4 ? '#2ecc71' : bars >= 2 ? '#f1c40f' : '#e74c3c')
+                            : 'rgba(255,255,255,0.08)'}
+                    />
+                )
+            })}
+        </svg>
+    )
+}
+
 function SiteDetail() {
     const { id } = useParams()
     const navigate = useNavigate()
@@ -47,10 +100,12 @@ function SiteDetail() {
     const fetchDiagFn = useCallback(() => fetchDiagnostics(id), [id])
     const fetchAlarmsFn = useCallback(() => fetchAlarms(id), [id])
     const fetchSystemFn = useCallback(() => fetchSystemOverview(id), [id])
+    const fetchNetworkFn = useCallback(() => fetchFleetNetwork(), [])
 
     const { data: diagData } = useApiPolling(fetchDiagFn, 30000)
     const { data: alarmsData } = useApiPolling(fetchAlarmsFn, 60000)
     const { data: systemData } = useApiPolling(fetchSystemFn, 120000)
+    const { data: networkData } = useApiPolling(fetchNetworkFn, 60000)
 
     // Fetch local history based on range
     useEffect(() => {
@@ -85,7 +140,23 @@ function SiteDetail() {
         temp: diagValue(records, 'ScT'),
     }), [records]);
 
-    // Chart data from local history
+    // Find matching Pepwave device by site name
+    // We need the site name — get it from the diagnostics data or system data
+    const siteName = useMemo(() => {
+        // Try to find name from various sources
+        const sysName = systemData?.records?.name
+        if (sysName) return sysName
+        // Fallback: check if any record has a site name
+        const diagRecord = records.find(r => r.idSiteName)
+        return diagRecord?.idSiteName || null
+    }, [systemData, records])
+
+    const pepwaveDevice = useMemo(() => {
+        if (!siteName || !networkData?.records) return null
+        return networkData.records.find(d => d.name === siteName)
+    }, [siteName, networkData])
+
+    // Chart data
     const socChartData = useMemo(() => {
         if (!historyData.length) return null
         return {
@@ -173,7 +244,7 @@ function SiteDetail() {
                     </svg>
                     Back to Fleet
                 </button>
-                <h1>Site #{id}</h1>
+                <h1>{siteName || `Site #${id}`}</h1>
             </div>
 
             {/* KPI Cards */}
@@ -248,6 +319,54 @@ function SiteDetail() {
                         </div>
                     </div>
                 </div>
+
+                {/* Network card — only shown when Pepwave data is available */}
+                {pepwaveDevice && (
+                    <div className="detail-gauge-card detail-network-card">
+                        <div className="detail-net-hero">
+                            <SignalBars bars={pepwaveDevice.cellular?.signal_bar} size={40} />
+                            <div className="detail-net-hero-info">
+                                <span className="detail-net-carrier">{pepwaveDevice.cellular?.carrier || '—'}</span>
+                                <span className="detail-net-tech">{pepwaveDevice.cellular?.technology || ''}</span>
+                            </div>
+                            <span className={`detail-net-status-badge ${pepwaveDevice.online ? 'detail-net-online' : 'detail-net-offline'}`}>
+                                {pepwaveDevice.online ? 'Online' : 'Offline'}
+                            </span>
+                        </div>
+                        <div className="gauge-details">
+                            {pepwaveDevice.cellular?.signal && (
+                                <>
+                                    <div className="gauge-detail-row">
+                                        <span>RSRP</span>
+                                        <span style={{ color: signalQuality(pepwaveDevice.cellular.signal.rsrp).color, fontWeight: 700 }}>
+                                            {pepwaveDevice.cellular.signal.rsrp} dBm
+                                        </span>
+                                    </div>
+                                    <div className="gauge-detail-row">
+                                        <span>SINR</span>
+                                        <span>{pepwaveDevice.cellular.signal.sinr} dB</span>
+                                    </div>
+                                </>
+                            )}
+                            <div className="gauge-detail-row">
+                                <span>Clients</span>
+                                <span>{pepwaveDevice.client_count}</span>
+                            </div>
+                            <div className="gauge-detail-row">
+                                <span>Data</span>
+                                <span>{formatMB(pepwaveDevice.usage_mb)}</span>
+                            </div>
+                            <div className="gauge-detail-row">
+                                <span>Uptime</span>
+                                <span>{formatUptime(pepwaveDevice.uptime)}</span>
+                            </div>
+                            <div className="gauge-detail-row">
+                                <span>WAN IP</span>
+                                <span className="mono">{pepwaveDevice.wan_ip || '—'}</span>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Range selector */}
@@ -295,6 +414,46 @@ function SiteDetail() {
                     </div>
                 </div>
             </div>
+
+            {/* Pepwave SIM + WAN section */}
+            {pepwaveDevice && (
+                <div className="detail-section">
+                    <h2>📡 Network Details — {pepwaveDevice.model}</h2>
+                    <div className="detail-net-grid">
+                        {pepwaveDevice.cellular?.sims?.length > 0 && (
+                            <div className="detail-net-block">
+                                <h4>SIM Cards</h4>
+                                {pepwaveDevice.cellular.sims.map(sim => (
+                                    <div key={sim.id} className={`sim-card ${sim.active ? 'sim-active' : 'sim-inactive'}`}>
+                                        <div className="sim-header">
+                                            <span className="sim-label">SIM {sim.id}</span>
+                                            <span className={`sim-status ${sim.active ? 'sim-status-active' : ''}`}>
+                                                {sim.active ? '● Active' : '○ Standby'}
+                                            </span>
+                                        </div>
+                                        <div className="sim-details">
+                                            {sim.carrier && <span>📱 {sim.carrier}</span>}
+                                            {sim.iccid && <span className="sim-iccid">ICCID: {sim.iccid}</span>}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="detail-net-block">
+                            <h4>WAN Interfaces</h4>
+                            {pepwaveDevice.wan_interfaces?.map(iface => (
+                                <div key={iface.id} className={`wan-iface wan-iface-${iface.status_led || 'gray'}`}>
+                                    <span className="wan-name">{iface.name}</span>
+                                    <span className="wan-type">{iface.type}</span>
+                                    <span className="wan-status">{iface.message || iface.status}</span>
+                                    {iface.ip && <span className="wan-ip">{iface.ip}</span>}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Alarms */}
             <div className="detail-section">

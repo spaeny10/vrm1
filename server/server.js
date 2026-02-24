@@ -380,6 +380,30 @@ app.get('/api/fleet/network/:name', (req, res) => {
     res.json({ success: true, data: device });
 });
 
+// ============================================================
+// Fleet combined: VRM snapshots + Pepwave data merged by name
+// ============================================================
+app.get('/api/fleet/combined', (req, res) => {
+    // Build a pepwave lookup by device name
+    const pepwaveMap = {};
+    for (const [name, device] of pepwaveCache.entries()) {
+        pepwaveMap[name] = {
+            online: device.online,
+            status: device.status,
+            signal_bar: device.cellular?.signal_bar ?? null,
+            rsrp: device.cellular?.signal?.rsrp ?? null,
+            carrier: device.cellular?.carrier || null,
+            technology: device.cellular?.technology || null,
+            client_count: device.client_count || 0,
+            usage_mb: device.usage_mb || 0,
+            uptime: device.uptime || 0,
+            model: device.model,
+            wan_ip: device.wan_ip,
+        };
+    }
+    res.json({ success: true, pepwave: pepwaveMap, last_poll: lastIc2Poll });
+});
+
 // Settings
 app.get('/api/settings', async (req, res) => {
     try {

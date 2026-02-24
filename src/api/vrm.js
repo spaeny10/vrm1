@@ -75,3 +75,9 @@ export async function fetchFleetNetwork() {
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     return res.json();
 }
+
+export async function fetchFleetCombined() {
+    const res = await fetch(`${API_BASE}/fleet/combined`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}

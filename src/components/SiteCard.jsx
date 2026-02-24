@@ -2,7 +2,47 @@ import { useNavigate } from 'react-router-dom'
 import GaugeChart from './GaugeChart'
 import AlarmBadge from './AlarmBadge'
 
-function SiteCard({ site, snapshot }) {
+function SignalBadge({ pepwave }) {
+    if (!pepwave) return null
+
+    const bars = pepwave.signal_bar ?? 0
+    const online = pepwave.online
+    const maxBars = 5
+    const barWidth = 3
+    const gap = 1
+    const size = 16
+
+    return (
+        <div className={`signal-badge ${online ? 'signal-badge-online' : 'signal-badge-offline'}`}
+            title={`${online ? 'Online' : 'Offline'} — ${pepwave.carrier || '—'} ${pepwave.technology || ''} ${pepwave.rsrp ? `(${pepwave.rsrp} dBm)` : ''}`}
+        >
+            <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+                {Array.from({ length: maxBars }, (_, i) => {
+                    const h = ((i + 1) / maxBars) * (size - 2) + 2
+                    const x = i * (barWidth + gap)
+                    const y = size - h
+                    const active = i < bars
+                    return (
+                        <rect
+                            key={i}
+                            x={x}
+                            y={y}
+                            width={barWidth}
+                            height={h}
+                            rx={0.5}
+                            fill={active
+                                ? (online ? (bars >= 4 ? '#2ecc71' : bars >= 2 ? '#f1c40f' : '#e74c3c') : '#7f8c8d')
+                                : 'rgba(255,255,255,0.08)'}
+                        />
+                    )
+                })}
+            </svg>
+            <span className="signal-badge-carrier">{pepwave.carrier || '—'}</span>
+        </div>
+    )
+}
+
+function SiteCard({ site, snapshot, pepwave }) {
     const navigate = useNavigate()
 
     const soc = snapshot?.battery_soc ?? null
@@ -11,7 +51,6 @@ function SiteCard({ site, snapshot }) {
     const yieldToday = snapshot?.solar_yield_today ?? null
     const lastUpdate = (() => {
         if (!snapshot?.timestamp) return '—'
-        // Always parse as numeric ms — PostgreSQL may return it as a string
         const ts = Number(snapshot.timestamp)
         if (isNaN(ts) || ts <= 0) return '—'
         const d = new Date(ts)
@@ -34,7 +73,10 @@ function SiteCard({ site, snapshot }) {
         >
             <div className="site-card-header">
                 <h3 className="site-card-name">{site.name}</h3>
-                <AlarmBadge level={status} />
+                <div className="site-card-badges">
+                    <SignalBadge pepwave={pepwave} />
+                    <AlarmBadge level={status} />
+                </div>
             </div>
 
             <div className="site-card-body">
@@ -69,6 +111,20 @@ function SiteCard({ site, snapshot }) {
                     </div>
                 </div>
             </div>
+
+            {pepwave && (
+                <div className="site-card-netrow">
+                    <span className={`netrow-dot ${pepwave.online ? 'netrow-dot-on' : 'netrow-dot-off'}`}></span>
+                    <span className="netrow-carrier">{pepwave.carrier || '—'}</span>
+                    <span className="netrow-tech">{pepwave.technology || ''}</span>
+                    {pepwave.rsrp && (
+                        <span className={`netrow-rsrp ${pepwave.rsrp >= -90 ? 'netrow-good' : pepwave.rsrp >= -100 ? 'netrow-fair' : 'netrow-poor'}`}>
+                            {pepwave.rsrp} dBm
+                        </span>
+                    )}
+                    <span className="netrow-clients">{pepwave.client_count} 👤</span>
+                </div>
+            )}
 
             <div className="site-card-footer">
                 <span className="last-update">Updated {lastUpdate}</span>

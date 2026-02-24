@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSites, fetchFleetLatest } from '../api/vrm'
+import { fetchSites, fetchFleetLatest, fetchFleetCombined } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import SiteCard from '../components/SiteCard'
 
@@ -11,12 +11,15 @@ function FleetOverview() {
 
     const fetchSitesFn = useCallback(() => fetchSites(), [])
     const fetchLatestFn = useCallback(() => fetchFleetLatest(), [])
+    const fetchCombinedFn = useCallback(() => fetchFleetCombined(), [])
 
     const { data: sitesData, loading: sitesLoading } = useApiPolling(fetchSitesFn, 60000)
-    const { data: latestData, loading: latestLoading } = useApiPolling(fetchLatestFn, 30000)
+    const { data: latestData } = useApiPolling(fetchLatestFn, 30000)
+    const { data: combinedData } = useApiPolling(fetchCombinedFn, 60000)
 
     const sites = sitesData?.records || []
     const snapshots = latestData?.records || []
+    const pepwaveMap = combinedData?.pepwave || {}
 
     // Build lookup map: siteId -> latest snapshot
     const snapshotMap = useMemo(() => {
@@ -49,14 +52,21 @@ function FleetOverview() {
             }
         })
 
+        // Pepwave KPIs
+        const pepValues = Object.values(pepwaveMap)
+        const netOnline = pepValues.filter(p => p.online).length
+        const netTotal = pepValues.length
+
         return {
             total,
             online,
             alarmCount,
             avgSoc: socCount > 0 ? (totalSoc / socCount).toFixed(1) : '—',
             totalYield: totalYield.toFixed(1),
+            netOnline,
+            netTotal,
         }
-    }, [sites, snapshotMap])
+    }, [sites, snapshotMap, pepwaveMap])
 
     // Filter and sort
     const filteredSites = useMemo(() => {
@@ -81,6 +91,11 @@ function FleetOverview() {
             })
         } else if (filterAlarm === 'offline') {
             result = result.filter(s => !snapshotMap[s.idSite])
+        } else if (filterAlarm === 'net-offline') {
+            result = result.filter(s => {
+                const pw = pepwaveMap[s.name]
+                return pw && !pw.online
+            })
         }
 
         // Sort
@@ -101,11 +116,16 @@ function FleetOverview() {
                 const sB = snapshotMap[b.idSite]?.solar_watts ?? -1
                 return sB - sA
             }
+            if (sortBy === 'signal') {
+                const rsrpA = pepwaveMap[a.name]?.rsrp ?? -999
+                const rsrpB = pepwaveMap[b.name]?.rsrp ?? -999
+                return rsrpA - rsrpB // weakest first
+            }
             return 0
         })
 
         return result
-    }, [sites, snapshotMap, sortBy, filterAlarm, searchTerm])
+    }, [sites, snapshotMap, sortBy, filterAlarm, searchTerm, pepwaveMap])
 
     if (sitesLoading && !sitesData) {
         return (
@@ -179,6 +199,7 @@ function FleetOverview() {
                         <option value="soc">SOC ↑</option>
                         <option value="soc-desc">SOC ↓</option>
                         <option value="solar">Solar ↓</option>
+                        <option value="signal">Signal ↑</option>
                     </select>
                 </div>
 
@@ -188,7 +209,8 @@ function FleetOverview() {
                         <option value="all">All Sites</option>
                         <option value="alarm">Low Battery</option>
                         <option value="warning">Warning</option>
-                        <option value="offline">Offline</option>
+                        <option value="offline">VRM Offline</option>
+                        <option value="net-offline">Network Offline</option>
                     </select>
                 </div>
             </div>
@@ -199,6 +221,7 @@ function FleetOverview() {
                         key={site.idSite}
                         site={site}
                         snapshot={snapshotMap[site.idSite]}
+                        pepwave={pepwaveMap[site.name]}
                     />
                 ))}
                 {filteredSites.length === 0 && (

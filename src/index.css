@@ -500,6 +500,259 @@ body {
   font-size: 16px;
 }
 
+/* --- Signal Badge (SiteCard header) --- */
+.site-card-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.signal-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+}
+
+.signal-badge-online {
+  background: rgba(46, 204, 113, 0.12);
+}
+
+.signal-badge-offline {
+  background: rgba(127, 140, 141, 0.12);
+}
+
+.signal-badge-carrier {
+  color: var(--text-secondary);
+  font-weight: 500;
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Network Info Row (SiteCard) --- */
+.site-card-netrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+}
+
+.netrow-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.netrow-dot-on {
+  background: var(--success);
+  box-shadow: 0 0 4px rgba(46, 204, 113, 0.5);
+}
+
+.netrow-dot-off {
+  background: var(--text-muted);
+}
+
+.netrow-carrier {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.netrow-tech {
+  color: var(--text-muted);
+}
+
+.netrow-rsrp {
+  margin-left: auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.netrow-good {
+  color: var(--success);
+}
+
+.netrow-fair {
+  color: var(--warning);
+}
+
+.netrow-poor {
+  color: var(--danger);
+}
+
+.netrow-clients {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+/* --- Detail Network Card --- */
+.detail-network-card {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.detail-net-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 4px;
+}
+
+.detail-net-hero-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-net-carrier {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.detail-net-tech {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.detail-net-status-badge {
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.detail-net-online {
+  background: rgba(46, 204, 113, 0.15);
+  color: var(--success);
+}
+
+.detail-net-offline {
+  background: rgba(127, 140, 141, 0.15);
+  color: var(--text-muted);
+}
+
+/* --- Detail Network Grid (SIM/WAN) --- */
+.detail-net-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.detail-net-block h4 {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+.sim-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-left: 3px solid var(--text-muted);
+}
+
+.sim-active {
+  border-left-color: var(--success);
+}
+
+.sim-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.sim-label {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.sim-status {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sim-status-active {
+  color: var(--success);
+}
+
+.sim-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sim-iccid {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.wan-iface {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  border-left: 3px solid var(--text-muted);
+  font-size: 13px;
+}
+
+.wan-iface-green {
+  border-left-color: var(--success);
+}
+
+.wan-iface-red {
+  border-left-color: var(--danger);
+}
+
+.wan-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 60px;
+}
+
+.wan-type {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.wan-status {
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.wan-ip {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+
 /* ========== Alarm Badges ========== */
 .alarm-badge {
   display: inline-block;
