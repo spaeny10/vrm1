@@ -843,8 +843,8 @@ app.post('/api/query', async (req, res) => {
         // If Claude generated a SQL query and DB is available, execute it
         if (parsed.sql && dbAvailable) {
             const sqlLower = parsed.sql.toLowerCase().trim();
-            // Safety: only allow SELECT
-            if (!sqlLower.startsWith('select')) {
+            // Safety: only allow SELECT (including CTEs starting with WITH)
+            if (!sqlLower.startsWith('select') && !sqlLower.startsWith('with')) {
                 parsed.answer += '\n⚠️ Query was blocked for safety (non-SELECT detected).';
                 parsed.sql = null;
             } else if (dbPool) {
