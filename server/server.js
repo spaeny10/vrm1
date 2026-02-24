@@ -121,6 +121,7 @@ let dbAvailable = false;
 // Pepwave device cache: deviceName -> device data
 const pepwaveCache = new Map();
 let lastIc2Poll = 0;
+let dbPool = null;
 
 // ============================================================
 // Daily energy tracker: siteId -> { [dateStr]: { yield_wh, consumed_wh, site_name } }
@@ -758,7 +759,7 @@ app.post('/api/query', async (req, res) => {
         const systemPrompt = FLEET_SCHEMA + liveContext + `\n\nRespond in this JSON format:\n{\n  "answer": "<human-readable answer to the question>",\n  "sql": "<optional SQL query if database lookup would help, or null>",\n  "data": null\n}\n\nIf you can answer from the live context alone, set sql to null and answer directly.\nIf a SQL query would give better/more complete data, include it. The system will execute it and ask you to refine the answer.\nAlways respond with valid JSON only, no markdown fences.`;
 
         const msg = await anthropic.messages.create({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-3-5-sonnet-20240620',
             max_tokens: 1500,
             messages: [{ role: 'user', content: question }],
             system: systemPrompt,
@@ -780,18 +781,14 @@ app.post('/api/query', async (req, res) => {
             if (!sqlLower.startsWith('select')) {
                 parsed.answer += '\n⚠️ Query was blocked for safety (non-SELECT detected).';
                 parsed.sql = null;
-            } else {
+            } else if (dbPool) {
                 try {
-                    const pool = (await import('./db.js')).default;
-                    // Use the pool from db.js
-                    const { initDb } = await import('./db.js');
-                    const p = await initDb();
-                    const result = await p.query(parsed.sql);
+                    const result = await dbPool.query(parsed.sql);
                     parsed.data = result.rows.slice(0, 50);
 
                     // Ask Claude to refine the answer with the actual data
                     const refinement = await anthropic.messages.create({
-                        model: 'claude-sonnet-4-20250514',
+                        model: 'claude-3-5-sonnet-20240620',
                         max_tokens: 1000,
                         messages: [{
                             role: 'user',
@@ -831,7 +828,7 @@ app.get('*', (req, res) => {
 // --- Start ---
 async function start() {
     try {
-        await initDb();
+        dbPool = await initDb();
         dbAvailable = true;
         console.log('PostgreSQL database connected');
     } catch (err) {
