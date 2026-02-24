@@ -9,9 +9,18 @@ function SiteCard({ site, snapshot }) {
     const voltage = snapshot?.battery_voltage ?? null
     const solarW = snapshot?.solar_watts ?? null
     const yieldToday = snapshot?.solar_yield_today ?? null
-    const lastUpdate = snapshot?.timestamp
-        ? new Date(snapshot.timestamp).toLocaleTimeString()
-        : '—'
+    const lastUpdate = (() => {
+        if (!snapshot?.timestamp) return '—'
+        const ts = typeof snapshot.timestamp === 'string'
+            ? new Date(snapshot.timestamp).getTime()
+            : Number(snapshot.timestamp)
+        if (isNaN(ts) || ts <= 0) return '—'
+        const d = new Date(ts)
+        if (isNaN(d.getTime())) return '—'
+        const ago = Math.round((Date.now() - d.getTime()) / 60000)
+        if (ago < 60) return `${ago}m ago`
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    })()
 
     // Determine status
     let status = 'ok'
