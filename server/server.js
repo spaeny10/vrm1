@@ -783,6 +783,7 @@ IMPORTANT:
 - Only generate SELECT queries. Never INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL/DML.
 - For "latest" queries, use DISTINCT ON or subqueries with MAX(timestamp).
 - For daily aggregations, group by DATE(to_timestamp(timestamp/1000)).
+- PostgreSQL REAL columns: When using round() or math functions, cast to numeric first: round(column::numeric, 2)
 
 Examples:
 - "trailers with weak signal" → query pepwave_snapshots for latest rsrp < -105
