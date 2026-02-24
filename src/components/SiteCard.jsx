@@ -11,9 +11,8 @@ function SiteCard({ site, snapshot }) {
     const yieldToday = snapshot?.solar_yield_today ?? null
     const lastUpdate = (() => {
         if (!snapshot?.timestamp) return '—'
-        const ts = typeof snapshot.timestamp === 'string'
-            ? new Date(snapshot.timestamp).getTime()
-            : Number(snapshot.timestamp)
+        // Always parse as numeric ms — PostgreSQL may return it as a string
+        const ts = Number(snapshot.timestamp)
         if (isNaN(ts) || ts <= 0) return '—'
         const d = new Date(ts)
         if (isNaN(d.getTime())) return '—'
