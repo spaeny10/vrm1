@@ -1239,6 +1239,39 @@ body {
   white-space: nowrap;
 }
 
+.trailer-count-badge.clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.trailer-count-badge.clickable:hover {
+  background: rgba(52, 152, 219, 0.3);
+}
+.trailer-assign-row {
+  background: rgba(0, 0, 0, 0.2);
+}
+.trailer-assign-row td {
+  padding: 6px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
+}
+.trailer-assign-name {
+  padding-left: 28px !important;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+.reassign-select {
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  min-width: 160px;
+}
+.reassign-select:hover {
+  border-color: var(--accent);
+}
+
 .status-select {
   background: var(--bg-secondary);
   border: 1px solid rgba(255, 255, 255, 0.08);

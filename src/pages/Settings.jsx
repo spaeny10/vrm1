@@ -1,6 +1,6 @@
-import { useState, useCallback, useMemo } from 'react'
+import { Fragment, useState, useCallback, useMemo } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer } from '../api/vrm'
 
 function Settings() {
     const fetchSettingsFn = useCallback(() => fetchSettings(), [])
@@ -15,6 +15,7 @@ function Settings() {
     const [editingSiteId, setEditingSiteId] = useState(null)
     const [editName, setEditName] = useState('')
     const [reclustering, setReclustering] = useState(false)
+    const [expandedSite, setExpandedSite] = useState(null)
 
     const settings = data || {}
     const jobSites = jobSitesData?.job_sites || []
@@ -91,6 +92,16 @@ function Settings() {
         }
     }
 
+    const handleReassignTrailer = async (trailerId, newJobSiteId) => {
+        try {
+            await assignTrailer(newJobSiteId, trailerId)
+            setMessage('Trailer reassigned successfully')
+            refetchJobSites()
+        } catch (err) {
+            setMessage('Error reassigning trailer: ' + err.message)
+        }
+    }
+
     const formatBytes = (bytes) => {
         if (!bytes) return '0 B'
         const sizes = ['B', 'KB', 'MB', 'GB']
@@ -128,8 +139,8 @@ function Settings() {
                         </button>
                     </div>
                     <p className="settings-desc">
-                        Manage construction sites. Trailers are automatically grouped by GPS proximity (200m threshold).
-                        Click a name to rename it.
+                        Manage construction sites. Trailers are automatically grouped by GPS proximity (300m threshold).
+                        Click a name to rename. Click a trailer count to expand and reassign trailers.
                     </p>
                     {sortedJobSites.length > 0 ? (
                         <div className="jobsite-mgmt-table-wrapper">
@@ -143,53 +154,83 @@ function Settings() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {sortedJobSites.map(js => (
-                                        <tr key={js.id} className={`jobsite-mgmt-row jobsite-mgmt-${js.status}`}>
-                                            <td className="jobsite-mgmt-name">
-                                                {editingSiteId === js.id ? (
-                                                    <div className="inline-edit-compact">
-                                                        <input
-                                                            type="text"
-                                                            value={editName}
-                                                            onChange={e => setEditName(e.target.value)}
-                                                            onKeyDown={e => {
-                                                                if (e.key === 'Enter') handleSaveSiteName(js.id)
-                                                                if (e.key === 'Escape') setEditingSiteId(null)
-                                                            }}
-                                                            autoFocus
-                                                        />
-                                                        <button onClick={() => handleSaveSiteName(js.id)} className="btn btn-sm">Save</button>
-                                                        <button onClick={() => setEditingSiteId(null)} className="btn btn-sm btn-ghost">Cancel</button>
-                                                    </div>
-                                                ) : (
-                                                    <span
-                                                        className="clickable-name"
-                                                        onClick={() => { setEditingSiteId(js.id); setEditName(js.name) }}
-                                                        title="Click to rename"
-                                                    >
-                                                        {js.name}
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td className="jobsite-mgmt-trailers">
-                                                <span className="trailer-count-badge">{js.trailer_count}</span>
-                                            </td>
-                                            <td>
-                                                <select
-                                                    className={`status-select status-select-${js.status}`}
-                                                    value={js.status}
-                                                    onChange={e => handleStatusChange(js.id, e.target.value)}
-                                                >
-                                                    <option value="active">Active</option>
-                                                    <option value="standby">Standby</option>
-                                                    <option value="completed">Completed</option>
-                                                </select>
-                                            </td>
-                                            <td className="jobsite-mgmt-address">
-                                                {js.address || '—'}
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {sortedJobSites.map(js => {
+                                        const isExpanded = expandedSite === js.id
+                                        const trailers = js.trailers || []
+                                        return (
+                                            <Fragment key={js.id}>
+                                                <tr className={`jobsite-mgmt-row jobsite-mgmt-${js.status}`}>
+                                                    <td className="jobsite-mgmt-name">
+                                                        {editingSiteId === js.id ? (
+                                                            <div className="inline-edit-compact">
+                                                                <input
+                                                                    type="text"
+                                                                    value={editName}
+                                                                    onChange={e => setEditName(e.target.value)}
+                                                                    onKeyDown={e => {
+                                                                        if (e.key === 'Enter') handleSaveSiteName(js.id)
+                                                                        if (e.key === 'Escape') setEditingSiteId(null)
+                                                                    }}
+                                                                    autoFocus
+                                                                />
+                                                                <button onClick={() => handleSaveSiteName(js.id)} className="btn btn-sm">Save</button>
+                                                                <button onClick={() => setEditingSiteId(null)} className="btn btn-sm btn-ghost">Cancel</button>
+                                                            </div>
+                                                        ) : (
+                                                            <span
+                                                                className="clickable-name"
+                                                                onClick={() => { setEditingSiteId(js.id); setEditName(js.name) }}
+                                                                title="Click to rename"
+                                                            >
+                                                                {js.name}
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                    <td className="jobsite-mgmt-trailers">
+                                                        <span
+                                                            className="trailer-count-badge clickable"
+                                                            onClick={() => setExpandedSite(isExpanded ? null : js.id)}
+                                                            title="Click to expand trailers"
+                                                        >
+                                                            {js.trailer_count} {isExpanded ? '▾' : '▸'}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <select
+                                                            className={`status-select status-select-${js.status}`}
+                                                            value={js.status}
+                                                            onChange={e => handleStatusChange(js.id, e.target.value)}
+                                                        >
+                                                            <option value="active">Active</option>
+                                                            <option value="standby">Standby</option>
+                                                            <option value="completed">Completed</option>
+                                                        </select>
+                                                    </td>
+                                                    <td className="jobsite-mgmt-address">
+                                                        {js.address || '—'}
+                                                    </td>
+                                                </tr>
+                                                {isExpanded && trailers.map(t => (
+                                                    <tr key={t.site_id} className="trailer-assign-row">
+                                                        <td className="trailer-assign-name">{t.site_name}</td>
+                                                        <td colSpan={3}>
+                                                            <select
+                                                                className="reassign-select"
+                                                                value={js.id}
+                                                                onChange={e => handleReassignTrailer(t.site_id, parseInt(e.target.value))}
+                                                            >
+                                                                {sortedJobSites.map(target => (
+                                                                    <option key={target.id} value={target.id}>
+                                                                        {target.name}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </Fragment>
+                                        )
+                                    })}
                                 </tbody>
                             </table>
                         </div>
