@@ -112,10 +112,10 @@ export async function runClustering(thresholdMeters = 300) {
             jobSiteId = bestMatch;
             updated++;
         } else {
-            // Create new job site
-            const letter = String.fromCharCode(65 + existingJobSites.length + created);
+            // Create new job site (Site 1, Site 2, ...)
+            const siteNum = existingJobSites.length + created + 1;
             const newSite = await insertJobSite({
-                name: `Site ${letter}`,
+                name: `Site ${siteNum}`,
                 latitude: cluster.centroid_lat,
                 longitude: cluster.centroid_lng,
             });
