@@ -414,25 +414,6 @@ app.get('/api/fleet/network/:name', (req, res) => {
     res.json({ success: true, data: device });
 });
 
-// Debug: test IC2 location API for a specific device
-app.get('/api/debug/ic2-location/:deviceId', async (req, res) => {
-    try {
-        const deviceId = req.params.deviceId;
-        // Try fetching device detail
-        const detail = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d/${deviceId}`);
-        // Try fetching location
-        let loc = null;
-        try {
-            loc = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d/${deviceId}/loc`);
-        } catch (e) {
-            loc = { error: e.message };
-        }
-        res.json({ success: true, detail, location: loc });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
 // ============================================================
 // Fleet combined: VRM snapshots + Pepwave data merged by name
 // ============================================================
@@ -1155,29 +1136,47 @@ async function pollIc2Devices() {
             else offlineCount++;
         }
 
-        // Map IC2 GPS coordinates to VRM trailers by matching device names
+        // Fetch GPS locations from per-device /loc endpoint for devices with gps_exist
         if (sitesCache) {
             const vrmSites = sitesCache.records || [];
+            const gpsDevices = devices.filter(d => d.gps_exist || d.gps_support);
             let gpsMatched = 0;
-            for (const dev of devices) {
-                const lat = dev.latitude;
-                const lon = dev.longitude;
-                if (lat != null && lon != null && lat !== 0 && lon !== 0) {
-                    // Find VRM trailer with matching name
-                    const vrmSite = vrmSites.find(s => s.name === dev.name);
-                    if (vrmSite) {
-                        gpsCache.set(vrmSite.idSite, { latitude: lat, longitude: lon, updatedAt: Date.now() });
-                        gpsMatched++;
-                        if (dbAvailable) {
-                            try {
-                                await upsertTrailerAssignment(vrmSite.idSite, vrmSite.name, lat, lon);
-                            } catch (e) { /* non-critical */ }
+
+            // Batch in groups of 5 to avoid rate limits
+            for (let i = 0; i < gpsDevices.length; i += 5) {
+                const batch = gpsDevices.slice(i, i + 5);
+                const locPromises = batch.map(async (dev) => {
+                    try {
+                        const locData = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d/${dev.id}/loc`);
+                        const loc = (locData.data || [])[0];
+                        if (loc && loc.la && loc.lo) {
+                            // Update pepwaveCache with GPS
+                            const cached = pepwaveCache.get(dev.name);
+                            if (cached) {
+                                cached.latitude = loc.la;
+                                cached.longitude = loc.lo;
+                            }
+                            // Match to VRM trailer by name
+                            const vrmSite = vrmSites.find(s => s.name === dev.name);
+                            if (vrmSite) {
+                                gpsCache.set(vrmSite.idSite, { latitude: loc.la, longitude: loc.lo, updatedAt: Date.now() });
+                                gpsMatched++;
+                                if (dbAvailable) {
+                                    try {
+                                        await upsertTrailerAssignment(vrmSite.idSite, vrmSite.name, loc.la, loc.lo);
+                                    } catch (e) { /* non-critical */ }
+                                }
+                            }
                         }
-                    }
+                    } catch (e) { /* skip device on error */ }
+                });
+                await Promise.all(locPromises);
+                if (i + 5 < gpsDevices.length) {
+                    await new Promise(r => setTimeout(r, 500));
                 }
             }
             if (gpsMatched > 0) {
-                console.log(`  IC2 GPS: matched ${gpsMatched} devices to VRM trailers`);
+                console.log(`  IC2 GPS: fetched locations for ${gpsMatched} VRM-matched devices`);
             }
         }
 
