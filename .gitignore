@@ -8,7 +8,19 @@ test_semantic_search.js
 # Claude Code memory
 .claude/
 
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
 # Environment
+.env
 .env.local
 .env.*.local
 
