@@ -414,6 +414,25 @@ app.get('/api/fleet/network/:name', (req, res) => {
     res.json({ success: true, data: device });
 });
 
+// Debug: test IC2 location API for a specific device
+app.get('/api/debug/ic2-location/:deviceId', async (req, res) => {
+    try {
+        const deviceId = req.params.deviceId;
+        // Try fetching device detail
+        const detail = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d/${deviceId}`);
+        // Try fetching location
+        let loc = null;
+        try {
+            loc = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d/${deviceId}/loc`);
+        } catch (e) {
+            loc = { error: e.message };
+        }
+        res.json({ success: true, detail, location: loc });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============================================================
 // Fleet combined: VRM snapshots + Pepwave data merged by name
 // ============================================================
