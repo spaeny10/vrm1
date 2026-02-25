@@ -1,15 +1,23 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSites, fetchFleetLatest, fetchFleetCombined } from '../api/vrm'
+import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
-import SiteCard from '../components/SiteCard'
+import TrailerCard from '../components/TrailerCard'
+import JobSiteCard from '../components/JobSiteCard'
 import QueryBar from '../components/QueryBar'
 
 function FleetOverview() {
+    const [viewMode, setViewMode] = useState('sites') // 'sites' or 'trailers'
     const [sortBy, setSortBy] = useState('name')
     const [filterAlarm, setFilterAlarm] = useState('all')
     const [searchTerm, setSearchTerm] = useState('')
 
+    // Job sites data
+    const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
+    const { data: jobSitesData, loading: jobSitesLoading } = useApiPolling(fetchJobSitesFn, 30000)
+    const jobSites = jobSitesData?.job_sites || []
+
+    // Trailer-level data (for "All Trailers" view)
     const fetchSitesFn = useCallback(() => fetchSites(), [])
     const fetchLatestFn = useCallback(() => fetchFleetLatest(), [])
     const fetchCombinedFn = useCallback(() => fetchFleetCombined(), [])
@@ -29,57 +37,101 @@ function FleetOverview() {
         return map
     }, [snapshots])
 
-    // Compute KPIs
-    const kpis = useMemo(() => {
-        const total = sites.length
-        let online = 0
-        let alarmCount = 0
-        let totalSoc = 0
-        let socCount = 0
-        let totalYield = 0
+    // Build lookup: siteId -> job site name
+    const trailerJobSiteMap = useMemo(() => {
+        const map = {}
+        for (const js of jobSites) {
+            for (const t of (js.trailers || [])) {
+                map[t.site_id] = js.name
+            }
+        }
+        return map
+    }, [jobSites])
 
+    // KPIs — computed from job sites when in sites view, trailers when in trailers view
+    const kpis = useMemo(() => {
+        if (viewMode === 'sites') {
+            const activeSites = jobSites.filter(js => js.status === 'active')
+            const atRisk = activeSites.filter(js => js.worst_status === 'critical').length
+            const totalTrailers = activeSites.reduce((s, js) => s + js.trailer_count, 0)
+            const trailersOnline = activeSites.reduce((s, js) => s + js.trailers_online, 0)
+            const totalYield = activeSites.reduce((s, js) => {
+                const trailerYield = (js.trailers || []).reduce((ts, t) => ts + (t.solar_yield_today || 0), 0)
+                return s + trailerYield
+            }, 0)
+            let totalSoc = 0, socCount = 0
+            activeSites.forEach(js => {
+                if (js.avg_soc != null) { totalSoc += js.avg_soc * js.trailer_count; socCount += js.trailer_count }
+            })
+
+            return {
+                jobSiteCount: activeSites.length,
+                totalTrailers,
+                trailersOnline,
+                atRisk,
+                avgSoc: socCount > 0 ? (totalSoc / socCount).toFixed(1) : '--',
+                totalYield: totalYield.toFixed(1),
+            }
+        }
+
+        // Trailer view KPIs
+        const total = sites.length
+        let online = 0, alarmCount = 0, totalSoc = 0, socCount = 0, totalYield = 0
         sites.forEach(site => {
             const snap = snapshotMap[site.idSite]
             if (snap) {
                 online++
                 if (snap.battery_soc !== null && snap.battery_soc < 20) alarmCount++
-                if (snap.battery_soc !== null) {
-                    totalSoc += snap.battery_soc
-                    socCount++
-                }
-                if (snap.solar_yield_today !== null) {
-                    totalYield += snap.solar_yield_today
-                }
+                if (snap.battery_soc !== null) { totalSoc += snap.battery_soc; socCount++ }
+                if (snap.solar_yield_today !== null) totalYield += snap.solar_yield_today
             }
         })
 
-        // Pepwave KPIs
-        const pepValues = Object.values(pepwaveMap)
-        const netOnline = pepValues.filter(p => p.online).length
-        const netTotal = pepValues.length
-
         return {
-            total,
-            online,
-            alarmCount,
-            avgSoc: socCount > 0 ? (totalSoc / socCount).toFixed(1) : '—',
+            jobSiteCount: jobSites.length,
+            totalTrailers: total,
+            trailersOnline: online,
+            atRisk: alarmCount,
+            avgSoc: socCount > 0 ? (totalSoc / socCount).toFixed(1) : '--',
             totalYield: totalYield.toFixed(1),
-            netOnline,
-            netTotal,
         }
-    }, [sites, snapshotMap, pepwaveMap])
+    }, [viewMode, jobSites, sites, snapshotMap])
 
-    // Filter and sort
+    // Filter + sort job sites
+    const filteredJobSites = useMemo(() => {
+        let result = [...jobSites]
+
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase()
+            result = result.filter(js =>
+                js.name.toLowerCase().includes(term) ||
+                (js.trailers || []).some(t => t.site_name.toLowerCase().includes(term))
+            )
+        }
+
+        if (filterAlarm === 'alarm') result = result.filter(js => js.worst_status === 'critical')
+        else if (filterAlarm === 'warning') result = result.filter(js => js.worst_status === 'warning' || js.worst_status === 'critical')
+
+        result.sort((a, b) => {
+            if (sortBy === 'name') return a.name.localeCompare(b.name, undefined, { numeric: true })
+            if (sortBy === 'soc') return (a.avg_soc ?? -1) - (b.avg_soc ?? -1)
+            if (sortBy === 'soc-desc') return (b.avg_soc ?? -1) - (a.avg_soc ?? -1)
+            if (sortBy === 'trailers') return b.trailer_count - a.trailer_count
+            return 0
+        })
+
+        return result
+    }, [jobSites, sortBy, filterAlarm, searchTerm])
+
+    // Filter + sort trailers (existing logic)
     const filteredSites = useMemo(() => {
         let result = [...sites]
 
-        // Search
         if (searchTerm) {
             const term = searchTerm.toLowerCase()
             result = result.filter(s => s.name.toLowerCase().includes(term))
         }
 
-        // Filter by alarm
         if (filterAlarm === 'alarm') {
             result = result.filter(s => {
                 const snap = snapshotMap[s.idSite]
@@ -99,36 +151,21 @@ function FleetOverview() {
             })
         }
 
-        // Sort
         result.sort((a, b) => {
             if (sortBy === 'name') return a.name.localeCompare(b.name, undefined, { numeric: true })
-            if (sortBy === 'soc') {
-                const socA = snapshotMap[a.idSite]?.battery_soc ?? -1
-                const socB = snapshotMap[b.idSite]?.battery_soc ?? -1
-                return socA - socB
-            }
-            if (sortBy === 'soc-desc') {
-                const socA = snapshotMap[a.idSite]?.battery_soc ?? -1
-                const socB = snapshotMap[b.idSite]?.battery_soc ?? -1
-                return socB - socA
-            }
-            if (sortBy === 'solar') {
-                const sA = snapshotMap[a.idSite]?.solar_watts ?? -1
-                const sB = snapshotMap[b.idSite]?.solar_watts ?? -1
-                return sB - sA
-            }
-            if (sortBy === 'signal') {
-                const rsrpA = pepwaveMap[a.name]?.rsrp ?? -999
-                const rsrpB = pepwaveMap[b.name]?.rsrp ?? -999
-                return rsrpA - rsrpB // weakest first
-            }
+            if (sortBy === 'soc') return (snapshotMap[a.idSite]?.battery_soc ?? -1) - (snapshotMap[b.idSite]?.battery_soc ?? -1)
+            if (sortBy === 'soc-desc') return (snapshotMap[b.idSite]?.battery_soc ?? -1) - (snapshotMap[a.idSite]?.battery_soc ?? -1)
+            if (sortBy === 'solar') return (snapshotMap[b.idSite]?.solar_watts ?? -1) - (snapshotMap[a.idSite]?.solar_watts ?? -1)
+            if (sortBy === 'signal') return (pepwaveMap[a.name]?.rsrp ?? -999) - (pepwaveMap[b.name]?.rsrp ?? -999)
             return 0
         })
 
         return result
     }, [sites, snapshotMap, sortBy, filterAlarm, searchTerm, pepwaveMap])
 
-    if (sitesLoading && !sitesData) {
+    const isLoading = viewMode === 'sites' ? (jobSitesLoading && !jobSitesData) : (sitesLoading && !sitesData)
+
+    if (isLoading) {
         return (
             <div className="page-loading">
                 <div className="spinner"></div>
@@ -141,42 +178,17 @@ function FleetOverview() {
         <div className="fleet-overview">
             <div className="page-header">
                 <h1>Fleet Overview</h1>
-                <p className="page-subtitle">{sites.length} sites monitored</p>
+                <p className="page-subtitle">
+                    {kpis.jobSiteCount} job sites, {kpis.totalTrailers} trailers monitored
+                </p>
             </div>
 
             <div className="kpi-row">
-                <KpiCard
-                    title="Total Sites"
-                    value={kpis.total}
-                    color="blue"
-                    trend="ok"
-                />
-                <KpiCard
-                    title="Online"
-                    value={kpis.online}
-                    color="green"
-                    trend="up"
-                />
-                <KpiCard
-                    title="Low Battery"
-                    value={kpis.alarmCount}
-                    color={kpis.alarmCount > 0 ? 'red' : 'teal'}
-                    trend={kpis.alarmCount > 0 ? 'warning' : 'ok'}
-                />
-                <KpiCard
-                    title="Avg SOC"
-                    value={kpis.avgSoc}
-                    unit="%"
-                    color="teal"
-                    trend="ok"
-                />
-                <KpiCard
-                    title="Total Yield"
-                    value={kpis.totalYield}
-                    unit="kWh"
-                    color="yellow"
-                    trend="up"
-                />
+                <KpiCard title="Job Sites" value={kpis.jobSiteCount} color="blue" />
+                <KpiCard title="Trailers Online" value={`${kpis.trailersOnline}/${kpis.totalTrailers}`} color="green" />
+                <KpiCard title="Sites at Risk" value={kpis.atRisk} color={kpis.atRisk > 0 ? 'red' : 'teal'} />
+                <KpiCard title="Fleet Avg SOC" value={kpis.avgSoc} unit="%" color="teal" />
+                <KpiCard title="Total Yield" value={kpis.totalYield} unit="kWh" color="yellow" />
             </div>
 
             <QueryBar />
@@ -189,48 +201,81 @@ function FleetOverview() {
                     </svg>
                     <input
                         type="text"
-                        placeholder="Search sites..."
+                        placeholder={viewMode === 'sites' ? 'Search sites or trailers...' : 'Search trailers...'}
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
+                </div>
+
+                {/* View Toggle */}
+                <div className="view-toggle">
+                    <button
+                        className={`view-toggle-btn ${viewMode === 'sites' ? 'active' : ''}`}
+                        onClick={() => setViewMode('sites')}
+                    >
+                        Sites
+                    </button>
+                    <button
+                        className={`view-toggle-btn ${viewMode === 'trailers' ? 'active' : ''}`}
+                        onClick={() => setViewMode('trailers')}
+                    >
+                        All Trailers
+                    </button>
                 </div>
 
                 <div className="control-group">
                     <label>Sort:</label>
                     <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
                         <option value="name">Name</option>
-                        <option value="soc">SOC ↑</option>
-                        <option value="soc-desc">SOC ↓</option>
-                        <option value="solar">Solar ↓</option>
-                        <option value="signal">Signal ↑</option>
+                        <option value="soc">SOC &#8593;</option>
+                        <option value="soc-desc">SOC &#8595;</option>
+                        {viewMode === 'sites' && <option value="trailers">Trailers &#8595;</option>}
+                        {viewMode === 'trailers' && <option value="solar">Solar &#8595;</option>}
+                        {viewMode === 'trailers' && <option value="signal">Signal &#8593;</option>}
                     </select>
                 </div>
 
                 <div className="control-group">
                     <label>Filter:</label>
                     <select value={filterAlarm} onChange={(e) => setFilterAlarm(e.target.value)}>
-                        <option value="all">All Sites</option>
-                        <option value="alarm">Low Battery</option>
+                        <option value="all">All</option>
+                        <option value="alarm">{viewMode === 'sites' ? 'Critical Sites' : 'Low Battery'}</option>
                         <option value="warning">Warning</option>
-                        <option value="offline">VRM Offline</option>
-                        <option value="net-offline">Network Offline</option>
+                        {viewMode === 'trailers' && <option value="offline">VRM Offline</option>}
+                        {viewMode === 'trailers' && <option value="net-offline">Network Offline</option>}
                     </select>
                 </div>
             </div>
 
             <div className="site-grid">
-                {filteredSites.map(site => (
-                    <SiteCard
-                        key={site.idSite}
-                        site={site}
-                        snapshot={snapshotMap[site.idSite]}
-                        pepwave={pepwaveMap[site.name]}
-                    />
-                ))}
-                {filteredSites.length === 0 && (
-                    <div className="no-results">
-                        <p>No sites match your filters</p>
-                    </div>
+                {viewMode === 'sites' ? (
+                    <>
+                        {filteredJobSites.map(js => (
+                            <JobSiteCard key={js.id} jobSite={js} />
+                        ))}
+                        {filteredJobSites.length === 0 && (
+                            <div className="no-results">
+                                <p>No job sites found. GPS data needed for automatic clustering.</p>
+                            </div>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        {filteredSites.map(site => (
+                            <TrailerCard
+                                key={site.idSite}
+                                site={site}
+                                snapshot={snapshotMap[site.idSite]}
+                                pepwave={pepwaveMap[site.name]}
+                                jobSiteName={trailerJobSiteMap[site.idSite]}
+                            />
+                        ))}
+                        {filteredSites.length === 0 && (
+                            <div className="no-results">
+                                <p>No trailers match your filters</p>
+                            </div>
+                        )}
+                    </>
                 )}
             </div>
         </div>

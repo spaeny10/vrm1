@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchFleetNetwork } from '../api/vrm'
+import { fetchFleetNetwork, fetchJobSites } from '../api/vrm'
 
 function SignalBars({ bars, size = 20 }) {
     const maxBars = 5
@@ -59,16 +59,32 @@ function NetworkPage() {
     const [searchTerm, setSearchTerm] = useState('')
     const [statusFilter, setStatusFilter] = useState('all')
     const [selectedDevice, setSelectedDevice] = useState(null)
+    const [collapsedSites, setCollapsedSites] = useState(new Set())
 
     const fetchNetwork = useCallback(() => fetchFleetNetwork(), [])
+    const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
     const { data, loading } = useApiPolling(fetchNetwork, 60000)
+    const { data: jobSitesData } = useApiPolling(fetchJobSitesFn, 60000)
 
     const devices = data?.records || []
+    const jobSites = jobSitesData?.job_sites || []
+
+    // Build device-name-to-job-site mapping from job sites trailer data
+    const deviceToJobSite = useMemo(() => {
+        const map = {}
+        for (const js of jobSites) {
+            for (const t of (js.trailers || [])) {
+                map[t.site_name] = { jobSiteId: js.id, jobSiteName: js.name }
+            }
+        }
+        return map
+    }, [jobSites])
 
     // KPIs
     const kpis = useMemo(() => {
         let online = 0, offline = 0, totalSignal = 0, signalCount = 0
         let totalUsage = 0, weakestRsrp = 0, weakestName = '—'
+        let sitesAllOnline = 0, sitesWithOffline = 0
 
         devices.forEach(d => {
             if (d.online) online++
@@ -86,14 +102,34 @@ function NetworkPage() {
             }
         })
 
+        // Compute site-level online stats
+        const siteDeviceStatus = new Map()
+        devices.forEach(d => {
+            const js = deviceToJobSite[d.name]
+            if (js) {
+                if (!siteDeviceStatus.has(js.jobSiteId)) {
+                    siteDeviceStatus.set(js.jobSiteId, { total: 0, online: 0 })
+                }
+                const s = siteDeviceStatus.get(js.jobSiteId)
+                s.total++
+                if (d.online) s.online++
+            }
+        })
+        for (const [, s] of siteDeviceStatus) {
+            if (s.online === s.total) sitesAllOnline++
+            else sitesWithOffline++
+        }
+
         return {
             online, offline, total: devices.length,
             avgRsrp: signalCount > 0 ? Math.round(totalSignal / signalCount) : null,
             totalUsage,
             weakestRsrp: weakestRsrp || null,
             weakestName,
+            sitesAllOnline,
+            sitesWithOffline,
         }
-    }, [devices])
+    }, [devices, deviceToJobSite])
 
     // Filter and search
     const filtered = useMemo(() => {
@@ -102,7 +138,8 @@ function NetworkPage() {
             const term = searchTerm.toLowerCase()
             result = result.filter(d =>
                 d.name.toLowerCase().includes(term) ||
-                (d.cellular?.carrier || '').toLowerCase().includes(term)
+                (d.cellular?.carrier || '').toLowerCase().includes(term) ||
+                (deviceToJobSite[d.name]?.jobSiteName || '').toLowerCase().includes(term)
             )
         }
         if (statusFilter === 'online') result = result.filter(d => d.online)
@@ -114,7 +151,104 @@ function NetworkPage() {
             })
         }
         return result
-    }, [devices, searchTerm, statusFilter])
+    }, [devices, searchTerm, statusFilter, deviceToJobSite])
+
+    // Group filtered devices by job site
+    const groupedDevices = useMemo(() => {
+        const groups = new Map()
+        const ungrouped = []
+
+        for (const d of filtered) {
+            const js = deviceToJobSite[d.name]
+            if (js) {
+                if (!groups.has(js.jobSiteId)) {
+                    groups.set(js.jobSiteId, {
+                        jobSiteId: js.jobSiteId,
+                        jobSiteName: js.jobSiteName,
+                        devices: [],
+                        online: 0,
+                        total: 0,
+                    })
+                }
+                const g = groups.get(js.jobSiteId)
+                g.devices.push(d)
+                g.total++
+                if (d.online) g.online++
+            } else {
+                ungrouped.push(d)
+            }
+        }
+
+        const sorted = [...groups.values()].sort((a, b) =>
+            a.jobSiteName.localeCompare(b.jobSiteName, undefined, { numeric: true })
+        )
+
+        return { groups: sorted, ungrouped }
+    }, [filtered, deviceToJobSite])
+
+    const toggleCollapse = (jobSiteId) => {
+        setCollapsedSites(prev => {
+            const next = new Set(prev)
+            if (next.has(jobSiteId)) next.delete(jobSiteId)
+            else next.add(jobSiteId)
+            return next
+        })
+    }
+
+    const renderDeviceCard = (device) => {
+        const rsrp = device.cellular?.signal?.rsrp
+        const quality = signalQuality(rsrp)
+
+        return (
+            <div
+                key={device.id}
+                className={`network-card ${device.online ? 'network-card-online' : 'network-card-offline'} ${selectedDevice?.id === device.id ? 'network-card-selected' : ''}`}
+                onClick={() => setSelectedDevice(selectedDevice?.id === device.id ? null : device)}
+            >
+                <div className="network-card-header">
+                    <h3 className="network-card-name">{device.name}</h3>
+                    <span className={`network-status-badge network-status-${device.online ? 'online' : 'offline'}`}>
+                        {device.online ? 'Online' : 'Offline'}
+                    </span>
+                </div>
+
+                <div className="network-card-signal">
+                    <SignalBars bars={device.cellular?.signal_bar} size={28} />
+                    <div className="signal-info">
+                        <span className="signal-carrier">
+                            {device.cellular?.carrier || '—'}
+                        </span>
+                        <span className="signal-tech">
+                            {device.cellular?.technology || ''}
+                        </span>
+                    </div>
+                    <span className="signal-quality" style={{ color: quality.color }}>
+                        {rsrp != null ? `${rsrp} dBm` : '—'}
+                    </span>
+                </div>
+
+                <div className="network-card-stats">
+                    <div className="net-stat">
+                        <span className="net-stat-label">Clients</span>
+                        <span className="net-stat-value">{device.client_count}</span>
+                    </div>
+                    <div className="net-stat">
+                        <span className="net-stat-label">Data</span>
+                        <span className="net-stat-value">{formatMB(device.usage_mb)}</span>
+                    </div>
+                    <div className="net-stat">
+                        <span className="net-stat-label">Uptime</span>
+                        <span className="net-stat-value">{formatUptime(device.uptime)}</span>
+                    </div>
+                </div>
+
+                <div className="network-card-footer">
+                    <span className="net-model">{device.model}</span>
+                    <span className="net-fw">{device.firmware}</span>
+                </div>
+            </div>
+        )
+    }
 
     if (loading && !data) {
         return (
@@ -128,16 +262,16 @@ function NetworkPage() {
     return (
         <div className="network-page">
             <div className="page-header">
-                <h1>📡 Network</h1>
+                <h1>Network</h1>
                 <p className="page-subtitle">
-                    Pepwave InControl2 &bull; {devices.length} devices monitored
+                    Pepwave InControl2 &bull; {devices.length} devices across {groupedDevices.groups.length} sites
                 </p>
             </div>
 
             {/* KPI Row */}
             <div className="kpi-row">
                 <div className="kpi-card kpi-blue">
-                    <div className="kpi-label">Total</div>
+                    <div className="kpi-label">Total Devices</div>
                     <div className="kpi-value">{kpis.total}</div>
                 </div>
                 <div className="kpi-card kpi-green">
@@ -149,8 +283,8 @@ function NetworkPage() {
                     <div className="kpi-value">{kpis.offline}</div>
                 </div>
                 <div className="kpi-card kpi-teal">
-                    <div className="kpi-label">Avg Signal</div>
-                    <div className="kpi-value">{kpis.avgRsrp != null ? `${kpis.avgRsrp} dBm` : '—'}</div>
+                    <div className="kpi-label">Sites All Online</div>
+                    <div className="kpi-value">{kpis.sitesAllOnline}</div>
                 </div>
                 <div className="kpi-card kpi-yellow">
                     <div className="kpi-label">Total Data</div>
@@ -167,7 +301,7 @@ function NetworkPage() {
                     </svg>
                     <input
                         type="text"
-                        placeholder="Search devices..."
+                        placeholder="Search devices or sites..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
@@ -183,62 +317,57 @@ function NetworkPage() {
                 </div>
             </div>
 
-            {/* Device Grid */}
-            <div className="network-grid">
-                {filtered.map(device => {
-                    const rsrp = device.cellular?.signal?.rsrp
-                    const quality = signalQuality(rsrp)
+            {/* Device Grid — grouped by job site */}
+            <div className="network-grouped">
+                {groupedDevices.groups.map(group => {
+                    const isCollapsed = collapsedSites.has(group.jobSiteId)
+                    const allOnline = group.online === group.total
 
                     return (
-                        <div
-                            key={device.id}
-                            className={`network-card ${device.online ? 'network-card-online' : 'network-card-offline'} ${selectedDevice?.id === device.id ? 'network-card-selected' : ''}`}
-                            onClick={() => setSelectedDevice(selectedDevice?.id === device.id ? null : device)}
-                        >
-                            <div className="network-card-header">
-                                <h3 className="network-card-name">{device.name}</h3>
-                                <span className={`network-status-badge network-status-${device.online ? 'online' : 'offline'}`}>
-                                    {device.online ? 'Online' : 'Offline'}
-                                </span>
-                            </div>
-
-                            <div className="network-card-signal">
-                                <SignalBars bars={device.cellular?.signal_bar} size={28} />
-                                <div className="signal-info">
-                                    <span className="signal-carrier">
-                                        {device.cellular?.carrier || '—'}
-                                    </span>
-                                    <span className="signal-tech">
-                                        {device.cellular?.technology || ''}
+                        <div key={group.jobSiteId} className="network-site-group">
+                            <div
+                                className={`network-site-header ${allOnline ? 'site-all-online' : 'site-has-offline'}`}
+                                onClick={() => toggleCollapse(group.jobSiteId)}
+                            >
+                                <div className="network-site-header-left">
+                                    <span className="expand-icon">{isCollapsed ? '▸' : '▾'}</span>
+                                    <h3>{group.jobSiteName}</h3>
+                                    <span className="network-site-count">
+                                        {group.total} device{group.total !== 1 ? 's' : ''}
                                     </span>
                                 </div>
-                                <span className="signal-quality" style={{ color: quality.color }}>
-                                    {rsrp != null ? `${rsrp} dBm` : '—'}
-                                </span>
-                            </div>
-
-                            <div className="network-card-stats">
-                                <div className="net-stat">
-                                    <span className="net-stat-label">Clients</span>
-                                    <span className="net-stat-value">{device.client_count}</span>
-                                </div>
-                                <div className="net-stat">
-                                    <span className="net-stat-label">Data</span>
-                                    <span className="net-stat-value">{formatMB(device.usage_mb)}</span>
-                                </div>
-                                <div className="net-stat">
-                                    <span className="net-stat-label">Uptime</span>
-                                    <span className="net-stat-value">{formatUptime(device.uptime)}</span>
+                                <div className="network-site-header-right">
+                                    <span className={`network-site-status ${allOnline ? 'all-online' : 'has-offline'}`}>
+                                        {group.online}/{group.total} online
+                                    </span>
                                 </div>
                             </div>
-
-                            <div className="network-card-footer">
-                                <span className="net-model">{device.model}</span>
-                                <span className="net-fw">{device.firmware}</span>
-                            </div>
+                            {!isCollapsed && (
+                                <div className="network-grid">
+                                    {group.devices.map(renderDeviceCard)}
+                                </div>
+                            )}
                         </div>
                     )
                 })}
+
+                {/* Ungrouped devices */}
+                {groupedDevices.ungrouped.length > 0 && (
+                    <div className="network-site-group">
+                        <div className="network-site-header site-unassigned">
+                            <div className="network-site-header-left">
+                                <h3>Unassigned Devices</h3>
+                                <span className="network-site-count">
+                                    {groupedDevices.ungrouped.length} device{groupedDevices.ungrouped.length !== 1 ? 's' : ''}
+                                </span>
+                            </div>
+                        </div>
+                        <div className="network-grid">
+                            {groupedDevices.ungrouped.map(renderDeviceCard)}
+                        </div>
+                    </div>
+                )}
+
                 {filtered.length === 0 && (
                     <div className="no-results">
                         <p>No devices match your filters</p>
@@ -254,6 +383,12 @@ function NetworkPage() {
                             <h2>{selectedDevice.name}</h2>
                             <button className="detail-close" onClick={() => setSelectedDevice(null)}>✕</button>
                         </div>
+
+                        {deviceToJobSite[selectedDevice.name] && (
+                            <div className="detail-site-tag">
+                                Site: {deviceToJobSite[selectedDevice.name].jobSiteName}
+                            </div>
+                        )}
 
                         <div className="detail-section">
                             <h4>Device Info</h4>
@@ -346,7 +481,7 @@ function NetworkPage() {
                                                     </span>
                                                 </div>
                                                 <div className="sim-details">
-                                                    {sim.carrier && <span>📱 {sim.carrier}</span>}
+                                                    {sim.carrier && <span>{sim.carrier}</span>}
                                                     {sim.iccid && <span className="sim-iccid">ICCID: {sim.iccid}</span>}
                                                 </div>
                                             </div>

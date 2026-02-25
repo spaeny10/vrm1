@@ -8,12 +8,22 @@ import {
     initDb, insertSnapshot, getHistory, getLatestSnapshots,
     getRetentionDays, setRetentionDays, pruneOldData, getDbStats,
     insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
-    upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding
+    upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding,
+    getJobSites, getJobSite, insertJobSite, updateJobSite,
+    getTrailerAssignments, getTrailersByJobSite, upsertTrailerAssignment,
+    assignTrailerToJobSite, getTrailersWithGps,
+    getMaintenanceLogs, getMaintenanceLog, insertMaintenanceLog,
+    updateMaintenanceLog, deleteMaintenanceLog, getMaintenanceStats,
+    getUpcomingMaintenance,
+    getComponents, insertComponent, updateComponent,
+    computeDailyMetrics, getFleetAnalyticsSummary, getJobSiteRankings,
+    getAnalyticsByJobSite, getAnalyticsByTrailer, getAnalyticsDateRange
 } from './db.js';
 import {
     generateQueryEmbedding, embedSiteSnapshots, embedPepwaveDevices,
     embedAlerts, isConfigured as isEmbeddingsConfigured
 } from './embeddings.js';
+import { runClustering } from './clustering.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -134,6 +144,10 @@ let dbAvailable = false;
 const pepwaveCache = new Map();
 let lastIc2Poll = 0;
 let dbPool = null;
+
+// GPS cache: siteId -> { latitude, longitude, updatedAt }
+const gpsCache = new Map();
+let initialClusteringDone = false;
 
 // ============================================================
 // Daily energy tracker: siteId -> { [dateStr]: { yield_wh, consumed_wh, site_name } }
@@ -513,6 +527,397 @@ app.post('/api/settings/purge', async (req, res) => {
     }
 });
 
+// ============================================================
+// Job Sites API
+// ============================================================
+
+// GET all job sites with aggregated live metrics
+app.get('/api/job-sites', async (req, res) => {
+    try {
+        const jobSites = await getJobSites();
+        const assignments = await getTrailerAssignments();
+
+        // Group assignments by job_site_id
+        const assignmentsByJobSite = new Map();
+        for (const a of assignments) {
+            if (!assignmentsByJobSite.has(a.job_site_id)) {
+                assignmentsByJobSite.set(a.job_site_id, []);
+            }
+            assignmentsByJobSite.get(a.job_site_id).push(a);
+        }
+
+        const result = jobSites.map(js => {
+            const trailers = assignmentsByJobSite.get(js.id) || [];
+            let totalSoc = 0, socCount = 0, minSoc = Infinity;
+            let totalSolar = 0, trailersOnline = 0;
+            let netOnline = 0, netTotal = 0;
+            let worstStatus = 'healthy';
+
+            for (const t of trailers) {
+                const snap = snapshotCache.get(t.site_id);
+                if (snap) {
+                    trailersOnline++;
+                    if (snap.battery_soc != null) {
+                        totalSoc += snap.battery_soc;
+                        socCount++;
+                        if (snap.battery_soc < minSoc) minSoc = snap.battery_soc;
+                        if (snap.battery_soc < 20) worstStatus = 'critical';
+                        else if (snap.battery_soc < 50 && worstStatus !== 'critical') worstStatus = 'warning';
+                    }
+                    totalSolar += snap.solar_watts || 0;
+                } else {
+                    worstStatus = 'critical';
+                }
+
+                const pw = pepwaveCache.get(t.site_name);
+                if (pw) {
+                    netTotal++;
+                    if (pw.online) netOnline++;
+                }
+            }
+
+            return {
+                ...js,
+                trailer_count: trailers.length,
+                trailers_online: trailersOnline,
+                avg_soc: socCount > 0 ? +(totalSoc / socCount).toFixed(1) : null,
+                min_soc: minSoc === Infinity ? null : +minSoc.toFixed(1),
+                total_solar_watts: +totalSolar.toFixed(0),
+                worst_status: trailers.length === 0 ? 'unknown' : worstStatus,
+                net_online: netOnline,
+                net_total: netTotal,
+                trailers: trailers.map(t => {
+                    const snap = snapshotCache.get(t.site_id);
+                    return {
+                        site_id: t.site_id,
+                        site_name: t.site_name,
+                        battery_soc: snap?.battery_soc ?? null,
+                        solar_watts: snap?.solar_watts ?? null,
+                        charge_state: snap?.charge_state ?? null,
+                        online: !!snap,
+                    };
+                }),
+            };
+        });
+
+        res.json({ success: true, job_sites: result });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET single job site with full details
+app.get('/api/job-sites/:id', async (req, res) => {
+    try {
+        const jobSite = await getJobSite(parseInt(req.params.id));
+        if (!jobSite) return res.status(404).json({ success: false, error: 'Job site not found' });
+
+        const trailers = await getTrailersByJobSite(jobSite.id);
+        const enrichedTrailers = trailers.map(t => {
+            const snap = snapshotCache.get(t.site_id);
+            const pw = pepwaveCache.get(t.site_name);
+            return {
+                ...t,
+                snapshot: snap || null,
+                pepwave: pw || null,
+            };
+        });
+
+        res.json({ success: true, job_site: { ...jobSite, trailers: enrichedTrailers } });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// PUT update job site (rename, address, status, notes)
+app.put('/api/job-sites/:id', async (req, res) => {
+    try {
+        const updated = await updateJobSite(parseInt(req.params.id), req.body);
+        if (!updated) return res.status(404).json({ success: false, error: 'Job site not found' });
+        res.json({ success: true, job_site: updated });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST manually assign a trailer to a job site
+app.post('/api/job-sites/:id/assign', async (req, res) => {
+    try {
+        const { site_id } = req.body;
+        if (!site_id) return res.status(400).json({ success: false, error: 'site_id required' });
+
+        const result = await assignTrailerToJobSite(site_id, parseInt(req.params.id), true);
+        if (!result) return res.status(404).json({ success: false, error: 'Trailer assignment not found' });
+        res.json({ success: true, assignment: result });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST force reclustering
+app.post('/api/job-sites/recluster', async (req, res) => {
+    try {
+        if (!dbAvailable) {
+            return res.json({ success: false, error: 'Database not connected' });
+        }
+        const threshold = parseInt(req.body?.threshold) || 200;
+        const result = await runClustering(threshold);
+        res.json({ success: true, ...result });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET map data (lightweight for markers)
+app.get('/api/map/sites', async (req, res) => {
+    try {
+        const jobSites = await getJobSites();
+        const assignments = await getTrailerAssignments();
+
+        const assignmentsByJobSite = new Map();
+        for (const a of assignments) {
+            if (!assignmentsByJobSite.has(a.job_site_id)) {
+                assignmentsByJobSite.set(a.job_site_id, []);
+            }
+            assignmentsByJobSite.get(a.job_site_id).push(a);
+        }
+
+        const markers = jobSites
+            .filter(js => js.latitude != null && js.longitude != null)
+            .map(js => {
+                const trailers = assignmentsByJobSite.get(js.id) || [];
+                let worstStatus = 'healthy';
+                let trailersOnline = 0;
+                let totalSoc = 0, socCount = 0;
+
+                for (const t of trailers) {
+                    const snap = snapshotCache.get(t.site_id);
+                    if (snap) {
+                        trailersOnline++;
+                        if (snap.battery_soc != null) {
+                            totalSoc += snap.battery_soc;
+                            socCount++;
+                            if (snap.battery_soc < 20) worstStatus = 'critical';
+                            else if (snap.battery_soc < 50 && worstStatus !== 'critical') worstStatus = 'warning';
+                        }
+                    } else {
+                        worstStatus = 'critical';
+                    }
+                }
+
+                return {
+                    id: js.id,
+                    name: js.name,
+                    latitude: js.latitude,
+                    longitude: js.longitude,
+                    status: js.status,
+                    trailer_count: trailers.length,
+                    trailers_online: trailersOnline,
+                    avg_soc: socCount > 0 ? +(totalSoc / socCount).toFixed(1) : null,
+                    worst_status: trailers.length === 0 ? 'unknown' : worstStatus,
+                };
+            });
+
+        res.json({ success: true, markers });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Maintenance API
+// ============================================================
+
+app.get('/api/maintenance', async (req, res) => {
+    try {
+        const filters = {};
+        if (req.query.job_site_id) filters.job_site_id = parseInt(req.query.job_site_id);
+        if (req.query.site_id) filters.site_id = parseInt(req.query.site_id);
+        if (req.query.status) filters.status = req.query.status;
+        if (req.query.limit) filters.limit = parseInt(req.query.limit);
+        const logs = await getMaintenanceLogs(filters);
+        res.json({ success: true, logs });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/maintenance/stats', async (req, res) => {
+    try {
+        const stats = await getMaintenanceStats();
+        res.json({ success: true, stats });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/maintenance/upcoming', async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const logs = await getUpcomingMaintenance(days);
+        res.json({ success: true, logs });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/maintenance/:id', async (req, res) => {
+    try {
+        const log = await getMaintenanceLog(parseInt(req.params.id));
+        if (!log) return res.status(404).json({ success: false, error: 'Not found' });
+        res.json({ success: true, log });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/maintenance', async (req, res) => {
+    try {
+        const { visit_type, title } = req.body;
+        if (!visit_type || !title) {
+            return res.status(400).json({ success: false, error: 'visit_type and title are required' });
+        }
+        const log = await insertMaintenanceLog(req.body);
+        res.json({ success: true, log });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/maintenance/:id', async (req, res) => {
+    try {
+        const log = await updateMaintenanceLog(parseInt(req.params.id), req.body);
+        if (!log) return res.status(404).json({ success: false, error: 'Not found' });
+        res.json({ success: true, log });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.delete('/api/maintenance/:id', async (req, res) => {
+    try {
+        const log = await deleteMaintenanceLog(parseInt(req.params.id));
+        if (!log) return res.status(404).json({ success: false, error: 'Not found' });
+        res.json({ success: true, log });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Trailer Components API
+// ============================================================
+
+app.get('/api/components/:siteId', async (req, res) => {
+    try {
+        const components = await getComponents(parseInt(req.params.siteId));
+        res.json({ success: true, components });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/components', async (req, res) => {
+    try {
+        const { site_id, component_type } = req.body;
+        if (!site_id || !component_type) {
+            return res.status(400).json({ success: false, error: 'site_id and component_type are required' });
+        }
+        const component = await insertComponent(req.body);
+        res.json({ success: true, component });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/components/:id', async (req, res) => {
+    try {
+        const component = await updateComponent(parseInt(req.params.id), req.body);
+        if (!component) return res.status(404).json({ success: false, error: 'Not found' });
+        res.json({ success: true, component });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Analytics API
+// ============================================================
+
+// Lazy daily metrics computation — call after VRM poll
+let lastMetricsDate = null;
+async function computeYesterdayMetrics() {
+    if (!dbAvailable) return;
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    if (lastMetricsDate === yesterday) return; // already computed today
+    try {
+        const count = await computeDailyMetrics(yesterday);
+        if (count > 0) {
+            lastMetricsDate = yesterday;
+            console.log(`  ✓ Analytics: computed ${count} daily metrics for ${yesterday}`);
+        }
+    } catch (err) {
+        console.error('  Analytics computation error:', err.message);
+    }
+}
+
+app.get('/api/analytics/fleet-summary', async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const daily = await getFleetAnalyticsSummary(days);
+        const dateRange = await getAnalyticsDateRange();
+        res.json({ success: true, daily, date_range: dateRange });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/analytics/rankings', async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 7;
+        const rankings = await getJobSiteRankings(days);
+        res.json({ success: true, rankings });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/analytics/job-site/:id', async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const data = await getAnalyticsByJobSite(parseInt(req.params.id), days);
+        res.json({ success: true, data });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/analytics/trailer/:id', async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const data = await getAnalyticsByTrailer(parseInt(req.params.id), days);
+        res.json({ success: true, data });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Backfill: compute metrics for past N days
+app.post('/api/analytics/backfill', async (req, res) => {
+    try {
+        const days = parseInt(req.body?.days) || 7;
+        let totalRows = 0;
+        for (let i = 1; i <= days; i++) {
+            const date = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+            const count = await computeDailyMetrics(date);
+            totalRows += count;
+        }
+        res.json({ success: true, days_processed: days, rows_computed: totalRows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // --- Helper: extract values from diagnostics records ---
 function extractDiagValue(records, code) {
     const match = records.find(r => r.code === code && r.Device !== 'Gateway');
@@ -557,6 +962,14 @@ async function pollAllSites() {
                     const consumedAh = extractDiagValue(records, 'CE');
                     const batteryVoltage = extractDiagValue(records, 'V') ?? extractDiagValue(records, 'bv');
 
+                    // Extract GPS coordinates
+                    const latitude = extractDiagValue(records, 'lt') ?? site.latitude ?? null;
+                    const longitude = extractDiagValue(records, 'lg') ?? site.longitude ?? null;
+
+                    if (latitude != null && longitude != null) {
+                        gpsCache.set(site.idSite, { latitude, longitude, updatedAt: Date.now() });
+                    }
+
                     const snapshot = {
                         site_id: site.idSite,
                         site_name: site.name,
@@ -596,6 +1009,10 @@ async function pollAllSites() {
                         try {
                             await insertSnapshot({ ...snapshot, raw_battery: null, raw_solar: null });
                         } catch (dbErr) { /* in memory */ }
+                        // Persist GPS + trailer assignment
+                        try {
+                            await upsertTrailerAssignment(site.idSite, site.name, latitude, longitude);
+                        } catch (dbErr) { /* non-critical */ }
                     }
 
                     successCount++;
@@ -624,6 +1041,17 @@ async function pollAllSites() {
                 console.error('  Background embedding generation failed:', err.message)
             );
         }
+
+        // Run GPS clustering on first poll (async, don't block)
+        if (dbAvailable && !initialClusteringDone && gpsCache.size > 0) {
+            initialClusteringDone = true;
+            runClustering().catch(err =>
+                console.error('  Initial clustering failed:', err.message)
+            );
+        }
+
+        // Lazy analytics: compute yesterday's daily metrics
+        computeYesterdayMetrics();
     } catch (err) {
         console.error('  VRM poll error:', err.message);
     } finally {
@@ -759,11 +1187,13 @@ async function generateEmbeddingsAsync() {
 // Natural Language Query (Claude-powered)
 // ============================================================
 const FLEET_SCHEMA = `
-You are a fleet data assistant for a solar-powered trailer monitoring system. The system tracks ~110 trailers.
+You are a fleet data assistant for a solar-powered trailer monitoring system.
+The system tracks ~63 trailers across ~15 construction job sites (1-6 trailers per site).
+"Site" = construction job site. "Trailer" = individual VRM solar installation.
 
 Database tables:
 
-1. site_snapshots — VRM power data (one row per site per 5-min poll)
+1. site_snapshots — VRM power data (one row per trailer per 5-min poll)
    Columns: id SERIAL, site_id INTEGER, site_name TEXT, timestamp BIGINT (ms),
    battery_soc REAL (0-100%), battery_voltage REAL (V), battery_current REAL (A),
    battery_temp REAL (°C), battery_power REAL (W), solar_watts REAL (W),
@@ -776,19 +1206,48 @@ Database tables:
    carrier TEXT, technology TEXT (LTE/5G/etc), usage_mb REAL (cumulative MB),
    tx_mb REAL, rx_mb REAL, client_count INTEGER, uptime INTEGER (seconds), wan_ip TEXT
 
+3. job_sites — Construction locations (one row per physical location)
+   Columns: id SERIAL, name TEXT, latitude DOUBLE PRECISION, longitude DOUBLE PRECISION,
+   address TEXT, status TEXT ('active'|'standby'|'completed'), notes TEXT,
+   created_at BIGINT (ms), updated_at BIGINT (ms)
+
+4. trailer_assignments — Links trailers to job sites
+   Columns: id SERIAL, site_id INTEGER (VRM idSite, UNIQUE), site_name TEXT,
+   job_site_id INTEGER REFERENCES job_sites(id), latitude DOUBLE PRECISION,
+   longitude DOUBLE PRECISION, manual_override BOOLEAN, assigned_at BIGINT (ms)
+
+5. maintenance_logs — Service/repair tracking
+   Columns: id SERIAL, job_site_id INTEGER REFERENCES job_sites(id), site_id INTEGER (trailer, nullable),
+   visit_type TEXT ('inspection'|'repair'|'scheduled'|'emergency'|'installation'|'decommission'),
+   status TEXT ('scheduled'|'in_progress'|'completed'|'cancelled'),
+   title TEXT, description TEXT, technician TEXT,
+   scheduled_date BIGINT (ms), completed_date BIGINT (ms),
+   labor_hours REAL, labor_cost_cents INTEGER, parts_cost_cents INTEGER,
+   parts_used JSONB, created_at BIGINT (ms), updated_at BIGINT (ms)
+
+6. analytics_daily_metrics — Pre-computed daily aggregates per trailer
+   Columns: id SERIAL, date DATE, site_id INTEGER, avg_soc REAL, min_soc REAL, max_soc REAL,
+   solar_yield_kwh REAL, avg_voltage REAL, avg_signal_bar REAL, data_usage_mb REAL,
+   uptime_percent REAL, created_at BIGINT (ms). UNIQUE(site_id, date)
+
 IMPORTANT:
-- site_snapshots.site_name can be matched to pepwave_snapshots.device_name (they share trailer names)
-- Timestamps are in epoch milliseconds. Use to_timestamp(timestamp/1000) for date operations.
+- site_snapshots.site_name matches pepwave_snapshots.device_name (they share trailer names)
+- trailer_assignments.site_id matches site_snapshots.site_id
+- trailer_assignments.site_name matches pepwave_snapshots.device_name
+- To find trailers at a job site: JOIN trailer_assignments ta ON ta.job_site_id = job_sites.id
+- Timestamps are epoch milliseconds. Use to_timestamp(timestamp/1000) for date ops.
+- Costs in maintenance_logs are in cents (divide by 100 for dollars).
 - Always LIMIT results to 50 rows max.
 - Only generate SELECT queries. Never INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL/DML.
 - For "latest" queries, use DISTINCT ON or subqueries with MAX(timestamp).
 - For daily aggregations, group by DATE(to_timestamp(timestamp/1000)).
-- PostgreSQL REAL columns: When using round() or math functions, cast to numeric first: round(column::numeric, 2)
+- PostgreSQL REAL columns: cast to numeric for round(): round(column::numeric, 2)
 
 Examples:
-- "trailers with weak signal" → query pepwave_snapshots for latest rsrp < -105
-- "which trailers are offline" → query pepwave_snapshots for latest where online = false
-- "low battery trailers" → query site_snapshots for latest where battery_soc < 30
+- "trailers at Downtown site" → JOIN trailer_assignments + job_sites WHERE js.name ILIKE '%downtown%'
+- "which sites have most maintenance costs" → SUM(labor_cost_cents + parts_cost_cents) from maintenance_logs GROUP BY job_site_id
+- "low battery trailers" → DISTINCT ON site_snapshots for latest where battery_soc < 30
+- "site rankings by SOC" → analytics_daily_metrics AVG(avg_soc) GROUP BY site_id, JOIN job_sites
 - "data usage this week" → aggregate pepwave_snapshots usage_mb grouped by device_name
 `;
 

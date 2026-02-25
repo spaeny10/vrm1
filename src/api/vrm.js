@@ -125,3 +125,137 @@ export async function getEmbeddingStats() {
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     return res.json();
 }
+
+// ============================================================
+// Job Sites
+// ============================================================
+
+export async function fetchJobSites() {
+    const res = await fetch(`${API_BASE}/job-sites`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchJobSite(id) {
+    const res = await fetch(`${API_BASE}/job-sites/${id}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function updateJobSite(id, data) {
+    const res = await fetch(`${API_BASE}/job-sites/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function assignTrailer(jobSiteId, siteId) {
+    const res = await fetch(`${API_BASE}/job-sites/${jobSiteId}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ site_id: siteId }),
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function reclusterJobSites() {
+    const res = await fetch(`${API_BASE}/job-sites/recluster`, { method: 'POST' });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchMapSites() {
+    const res = await fetch(`${API_BASE}/map/sites`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+// ============================================================
+// Maintenance
+// ============================================================
+
+export async function fetchMaintenanceLogs(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.job_site_id) params.set('job_site_id', filters.job_site_id);
+    if (filters.site_id) params.set('site_id', filters.site_id);
+    if (filters.status) params.set('status', filters.status);
+    if (filters.limit) params.set('limit', filters.limit);
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/maintenance${qs ? '?' + qs : ''}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchMaintenanceStats() {
+    const res = await fetch(`${API_BASE}/maintenance/stats`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function createMaintenanceLog(data) {
+    const res = await fetch(`${API_BASE}/maintenance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function updateMaintenanceLog(id, data) {
+    const res = await fetch(`${API_BASE}/maintenance/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function deleteMaintenanceLog(id) {
+    const res = await fetch(`${API_BASE}/maintenance/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+// ============================================================
+// Analytics
+// ============================================================
+
+export async function fetchFleetAnalytics(days = 30) {
+    const res = await fetch(`${API_BASE}/analytics/fleet-summary?days=${days}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchAnalyticsRankings(days = 7) {
+    const res = await fetch(`${API_BASE}/analytics/rankings?days=${days}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchJobSiteAnalytics(id, days = 30) {
+    const res = await fetch(`${API_BASE}/analytics/job-site/${id}?days=${days}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchTrailerAnalytics(id, days = 30) {
+    const res = await fetch(`${API_BASE}/analytics/trailer/${id}?days=${days}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function backfillAnalytics(days = 7) {
+    const res = await fetch(`${API_BASE}/analytics/backfill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days }),
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
