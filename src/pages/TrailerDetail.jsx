@@ -7,10 +7,11 @@ import {
 } from 'chart.js'
 import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory } from '../api/vrm'
+import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import AlarmBadge from '../components/AlarmBadge'
+import ComponentForm from '../components/ComponentForm'
 
 ChartJS.register(
     CategoryScale, LinearScale, PointElement, LineElement,
@@ -97,16 +98,23 @@ function TrailerDetail() {
     const [range, setRange] = useState('24h')
     const [historyData, setHistoryData] = useState([])
     const [pepwaveHistoryData, setPepwaveHistoryData] = useState([])
+    const [showComponentForm, setShowComponentForm] = useState(false)
+    const [editingComponent, setEditingComponent] = useState(null)
 
     const fetchDiagFn = useCallback(() => fetchDiagnostics(id), [id])
     const fetchAlarmsFn = useCallback(() => fetchAlarms(id), [id])
     const fetchSystemFn = useCallback(() => fetchSystemOverview(id), [id])
     const fetchNetworkFn = useCallback(() => fetchFleetNetwork(), [])
 
+    const fetchComponentsFn = useCallback(() => fetchComponents(id), [id])
+
     const { data: diagData } = useApiPolling(fetchDiagFn, 30000)
     const { data: alarmsData } = useApiPolling(fetchAlarmsFn, 60000)
     const { data: systemData } = useApiPolling(fetchSystemFn, 120000)
     const { data: networkData } = useApiPolling(fetchNetworkFn, 60000)
+    const { data: componentsData, refetch: refetchComponents } = useApiPolling(fetchComponentsFn, 120000)
+
+    const components = componentsData?.components || []
 
     // Fetch local history based on range
     useEffect(() => {
@@ -593,6 +601,77 @@ function TrailerDetail() {
                     </div>
                 )}
             </div>
+
+            {/* Component Inventory */}
+            <div className="detail-section">
+                <div className="detail-section-header">
+                    <h2>Component Inventory</h2>
+                    <button className="btn btn-primary btn-sm" onClick={() => { setEditingComponent(null); setShowComponentForm(true) }}>
+                        + Add Component
+                    </button>
+                </div>
+                {components.length === 0 ? (
+                    <div className="empty-section">
+                        <p>No components logged yet. Add components to track warranty and installation details.</p>
+                    </div>
+                ) : (
+                    <div className="table-wrapper">
+                        <table className="components-table">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th>Make</th>
+                                    <th>Model</th>
+                                    <th>Serial Number</th>
+                                    <th>Installed</th>
+                                    <th>Warranty Expiry</th>
+                                    <th>Status</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {components.map(comp => {
+                                    const typeLabel = { battery: 'Battery', solar_panel: 'Solar Panel', inverter: 'Inverter', charge_controller: 'Charge Controller', router: 'Router', camera: 'Camera' }[comp.component_type] || comp.component_type
+                                    const fmtDate = (ts) => ts ? new Date(Number(ts)).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
+                                    const warrantyExpired = comp.warranty_expiry && Number(comp.warranty_expiry) < Date.now()
+                                    return (
+                                        <tr key={comp.id} className="component-row">
+                                            <td><span className="component-type-badge">{typeLabel}</span></td>
+                                            <td>{comp.make || '—'}</td>
+                                            <td>{comp.model || '—'}</td>
+                                            <td className="mono">{comp.serial_number || '—'}</td>
+                                            <td>{fmtDate(comp.installed_date)}</td>
+                                            <td className={warrantyExpired ? 'warranty-expired' : ''}>{fmtDate(comp.warranty_expiry)}</td>
+                                            <td><span className={`comp-status comp-status-${comp.status}`}>{comp.status}</span></td>
+                                            <td>
+                                                <button className="btn btn-ghost btn-sm" onClick={() => { setEditingComponent(comp); setShowComponentForm(true) }}>Edit</button>
+                                            </td>
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+
+            {showComponentForm && (
+                <ComponentForm
+                    component={editingComponent}
+                    siteId={parseInt(id)}
+                    onSave={async (data) => {
+                        if (editingComponent) {
+                            await updateComponent(editingComponent.id, data)
+                        } else {
+                            await createComponent(data)
+                        }
+                        setShowComponentForm(false)
+                        setEditingComponent(null)
+                        refetchComponents()
+                    }}
+                    onClose={() => { setShowComponentForm(false); setEditingComponent(null) }}
+                />
+            )}
         </div>
     )
 }

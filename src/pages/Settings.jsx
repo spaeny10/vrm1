@@ -1,6 +1,37 @@
 import { Fragment, useState, useCallback, useMemo } from 'react'
+import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer } from '../api/vrm'
+
+function DraggableTrailerRow({ trailer, jobSite, children }) {
+    const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+        id: `trailer-${trailer.site_id}`,
+        data: { trailerId: trailer.site_id, fromJobSiteId: jobSite.id, trailerName: trailer.site_name },
+    })
+    return (
+        <tr
+            ref={setNodeRef}
+            className={`trailer-assign-row ${isDragging ? 'dragging' : ''}`}
+            {...listeners}
+            {...attributes}
+            style={{ opacity: isDragging ? 0.4 : 1, cursor: 'grab' }}
+        >
+            {children}
+        </tr>
+    )
+}
+
+function DroppableJobSiteRow({ jobSiteId, isOver, children }) {
+    const { setNodeRef } = useDroppable({ id: `jobsite-${jobSiteId}` })
+    return (
+        <tr
+            ref={setNodeRef}
+            className={`jobsite-mgmt-row ${isOver ? 'drop-target' : ''}`}
+        >
+            {children}
+        </tr>
+    )
+}
 
 function Settings() {
     const fetchSettingsFn = useCallback(() => fetchSettings(), [])
@@ -16,6 +47,12 @@ function Settings() {
     const [editName, setEditName] = useState('')
     const [reclustering, setReclustering] = useState(false)
     const [expandedSite, setExpandedSite] = useState(null)
+    const [activeDrag, setActiveDrag] = useState(null)
+    const [overJobSiteId, setOverJobSiteId] = useState(null)
+
+    const sensors = useSensors(
+        useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+    )
 
     const settings = data || {}
     const jobSites = jobSitesData?.job_sites || []
@@ -102,6 +139,33 @@ function Settings() {
         }
     }
 
+    const handleDragStart = (event) => {
+        setActiveDrag(event.active.data.current)
+    }
+
+    const handleDragOver = (event) => {
+        const overId = event.over?.id
+        if (overId && String(overId).startsWith('jobsite-')) {
+            setOverJobSiteId(parseInt(String(overId).replace('jobsite-', '')))
+        } else {
+            setOverJobSiteId(null)
+        }
+    }
+
+    const handleDragEnd = (event) => {
+        const { active, over } = event
+        setActiveDrag(null)
+        setOverJobSiteId(null)
+        if (!over) return
+        const overId = String(over.id)
+        if (!overId.startsWith('jobsite-')) return
+        const newJobSiteId = parseInt(overId.replace('jobsite-', ''))
+        const trailerId = active.data.current.trailerId
+        const fromJobSiteId = active.data.current.fromJobSiteId
+        if (newJobSiteId === fromJobSiteId) return
+        handleReassignTrailer(trailerId, newJobSiteId)
+    }
+
     const formatBytes = (bytes) => {
         if (!bytes) return '0 B'
         const sizes = ['B', 'KB', 'MB', 'GB']
@@ -140,100 +204,116 @@ function Settings() {
                     </div>
                     <p className="settings-desc">
                         Manage construction sites. Trailers are automatically grouped by GPS proximity (300m threshold).
-                        Click a name to rename. Click a trailer count to expand and reassign trailers.
+                        Click a name to rename. Expand a site to reassign trailers via dropdown or drag-and-drop.
                     </p>
                     {sortedJobSites.length > 0 ? (
-                        <div className="jobsite-mgmt-table-wrapper">
-                            <table className="jobsite-mgmt-table">
-                                <thead>
-                                    <tr>
-                                        <th>Name</th>
-                                        <th>Trailers</th>
-                                        <th>Status</th>
-                                        <th>Address</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {sortedJobSites.map(js => {
-                                        const isExpanded = expandedSite === js.id
-                                        const trailers = js.trailers || []
-                                        return (
-                                            <Fragment key={js.id}>
-                                                <tr className={`jobsite-mgmt-row jobsite-mgmt-${js.status}`}>
-                                                    <td className="jobsite-mgmt-name">
-                                                        {editingSiteId === js.id ? (
-                                                            <div className="inline-edit-compact">
-                                                                <input
-                                                                    type="text"
-                                                                    value={editName}
-                                                                    onChange={e => setEditName(e.target.value)}
-                                                                    onKeyDown={e => {
-                                                                        if (e.key === 'Enter') handleSaveSiteName(js.id)
-                                                                        if (e.key === 'Escape') setEditingSiteId(null)
-                                                                    }}
-                                                                    autoFocus
-                                                                />
-                                                                <button onClick={() => handleSaveSiteName(js.id)} className="btn btn-sm">Save</button>
-                                                                <button onClick={() => setEditingSiteId(null)} className="btn btn-sm btn-ghost">Cancel</button>
-                                                            </div>
-                                                        ) : (
+                        <DndContext
+                            sensors={sensors}
+                            onDragStart={handleDragStart}
+                            onDragOver={handleDragOver}
+                            onDragEnd={handleDragEnd}
+                        >
+                            <div className="jobsite-mgmt-table-wrapper">
+                                <table className="jobsite-mgmt-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Trailers</th>
+                                            <th>Status</th>
+                                            <th>Address</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {sortedJobSites.map(js => {
+                                            const isExpanded = expandedSite === js.id
+                                            const trailers = js.trailers || []
+                                            const isDropTarget = overJobSiteId === js.id && activeDrag?.fromJobSiteId !== js.id
+                                            return (
+                                                <Fragment key={js.id}>
+                                                    <DroppableJobSiteRow jobSiteId={js.id} isOver={isDropTarget}>
+                                                        <td className={`jobsite-mgmt-name jobsite-mgmt-${js.status}`}>
+                                                            {editingSiteId === js.id ? (
+                                                                <div className="inline-edit-compact">
+                                                                    <input
+                                                                        type="text"
+                                                                        value={editName}
+                                                                        onChange={e => setEditName(e.target.value)}
+                                                                        onKeyDown={e => {
+                                                                            if (e.key === 'Enter') handleSaveSiteName(js.id)
+                                                                            if (e.key === 'Escape') setEditingSiteId(null)
+                                                                        }}
+                                                                        autoFocus
+                                                                    />
+                                                                    <button onClick={() => handleSaveSiteName(js.id)} className="btn btn-sm">Save</button>
+                                                                    <button onClick={() => setEditingSiteId(null)} className="btn btn-sm btn-ghost">Cancel</button>
+                                                                </div>
+                                                            ) : (
+                                                                <span
+                                                                    className="clickable-name"
+                                                                    onClick={() => { setEditingSiteId(js.id); setEditName(js.name) }}
+                                                                    title="Click to rename"
+                                                                >
+                                                                    {js.name}
+                                                                </span>
+                                                            )}
+                                                        </td>
+                                                        <td className="jobsite-mgmt-trailers">
                                                             <span
-                                                                className="clickable-name"
-                                                                onClick={() => { setEditingSiteId(js.id); setEditName(js.name) }}
-                                                                title="Click to rename"
+                                                                className="trailer-count-badge clickable"
+                                                                onClick={() => setExpandedSite(isExpanded ? null : js.id)}
+                                                                title="Click to expand trailers"
                                                             >
-                                                                {js.name}
+                                                                {js.trailer_count} {isExpanded ? '▾' : '▸'}
                                                             </span>
-                                                        )}
-                                                    </td>
-                                                    <td className="jobsite-mgmt-trailers">
-                                                        <span
-                                                            className="trailer-count-badge clickable"
-                                                            onClick={() => setExpandedSite(isExpanded ? null : js.id)}
-                                                            title="Click to expand trailers"
-                                                        >
-                                                            {js.trailer_count} {isExpanded ? '▾' : '▸'}
-                                                        </span>
-                                                    </td>
-                                                    <td>
-                                                        <select
-                                                            className={`status-select status-select-${js.status}`}
-                                                            value={js.status}
-                                                            onChange={e => handleStatusChange(js.id, e.target.value)}
-                                                        >
-                                                            <option value="active">Active</option>
-                                                            <option value="standby">Standby</option>
-                                                            <option value="completed">Completed</option>
-                                                        </select>
-                                                    </td>
-                                                    <td className="jobsite-mgmt-address">
-                                                        {js.address || '—'}
-                                                    </td>
-                                                </tr>
-                                                {isExpanded && trailers.map(t => (
-                                                    <tr key={t.site_id} className="trailer-assign-row">
-                                                        <td className="trailer-assign-name">{t.site_name}</td>
-                                                        <td colSpan={3}>
+                                                        </td>
+                                                        <td>
                                                             <select
-                                                                className="reassign-select"
-                                                                value={js.id}
-                                                                onChange={e => handleReassignTrailer(t.site_id, parseInt(e.target.value))}
+                                                                className={`status-select status-select-${js.status}`}
+                                                                value={js.status}
+                                                                onChange={e => handleStatusChange(js.id, e.target.value)}
                                                             >
-                                                                {sortedJobSites.map(target => (
-                                                                    <option key={target.id} value={target.id}>
-                                                                        {target.name}
-                                                                    </option>
-                                                                ))}
+                                                                <option value="active">Active</option>
+                                                                <option value="standby">Standby</option>
+                                                                <option value="completed">Completed</option>
                                                             </select>
                                                         </td>
-                                                    </tr>
-                                                ))}
-                                            </Fragment>
-                                        )
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
+                                                        <td className="jobsite-mgmt-address">
+                                                            {js.address || '—'}
+                                                        </td>
+                                                    </DroppableJobSiteRow>
+                                                    {isExpanded && trailers.map(t => (
+                                                        <DraggableTrailerRow key={t.site_id} trailer={t} jobSite={js}>
+                                                            <td className="trailer-assign-name">⠿ {t.site_name}</td>
+                                                            <td colSpan={3}>
+                                                                <select
+                                                                    className="reassign-select"
+                                                                    value={js.id}
+                                                                    onChange={e => handleReassignTrailer(t.site_id, parseInt(e.target.value))}
+                                                                    onClick={e => e.stopPropagation()}
+                                                                >
+                                                                    {sortedJobSites.map(target => (
+                                                                        <option key={target.id} value={target.id}>
+                                                                            {target.name}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            </td>
+                                                        </DraggableTrailerRow>
+                                                    ))}
+                                                </Fragment>
+                                            )
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <DragOverlay>
+                                {activeDrag ? (
+                                    <div className="drag-overlay-trailer">
+                                        {activeDrag.trailerName}
+                                    </div>
+                                ) : null}
+                            </DragOverlay>
+                        </DndContext>
                     ) : (
                         <div className="empty-section">
                             <p>No job sites yet. Sites are created automatically after the first VRM poll with GPS data.</p>

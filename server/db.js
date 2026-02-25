@@ -763,6 +763,30 @@ function getMonthStart() {
     return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 }
 
+export async function getMaintenanceCostsByJobSite(days = 30) {
+    if (!pool) return [];
+    const cutoffMs = Date.now() - days * 86400000;
+    const result = await pool.query(
+        `SELECT
+            js.id as job_site_id,
+            js.name as job_site_name,
+            COUNT(ml.id) as log_count,
+            COALESCE(SUM(ml.labor_cost_cents), 0) as labor_cost_cents,
+            COALESCE(SUM(ml.parts_cost_cents), 0) as parts_cost_cents,
+            COALESCE(SUM(ml.labor_cost_cents + ml.parts_cost_cents), 0) as total_cost_cents
+         FROM job_sites js
+         INNER JOIN maintenance_logs ml ON ml.job_site_id = js.id
+            AND ml.created_at >= $1
+            AND ml.status != 'cancelled'
+         WHERE js.status = 'active'
+         GROUP BY js.id, js.name
+         HAVING SUM(ml.labor_cost_cents + ml.parts_cost_cents) > 0
+         ORDER BY total_cost_cents DESC`,
+        [cutoffMs]
+    );
+    return result.rows;
+}
+
 export async function getUpcomingMaintenance(days = 30) {
     if (!pool) return [];
     const cutoff = Date.now() + days * 86400000;

@@ -13,7 +13,7 @@ import {
     getTrailerAssignments, getTrailersByJobSite, upsertTrailerAssignment,
     assignTrailerToJobSite, getTrailersWithGps,
     getMaintenanceLogs, getMaintenanceLog, insertMaintenanceLog,
-    updateMaintenanceLog, deleteMaintenanceLog, getMaintenanceStats,
+    updateMaintenanceLog, deleteMaintenanceLog, getMaintenanceStats, getMaintenanceCostsByJobSite,
     getUpcomingMaintenance,
     getComponents, insertComponent, updateComponent,
     computeDailyMetrics, getFleetAnalyticsSummary, getJobSiteRankings,
@@ -746,6 +746,16 @@ app.get('/api/maintenance/stats', async (req, res) => {
     try {
         const stats = await getMaintenanceStats();
         res.json({ success: true, stats });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/maintenance/costs-by-site', async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const costs = await getMaintenanceCostsByJobSite(days);
+        res.json({ success: true, costs });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }

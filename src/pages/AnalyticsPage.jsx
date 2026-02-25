@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import {
     Chart as ChartJS,
     CategoryScale, LinearScale, PointElement, LineElement,
@@ -7,8 +7,10 @@ import {
 import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
 import {
-    fetchFleetAnalytics, fetchAnalyticsRankings, fetchJobSites, backfillAnalytics
+    fetchFleetAnalytics, fetchAnalyticsRankings, fetchJobSites,
+    fetchJobSiteAnalytics, backfillAnalytics
 } from '../api/vrm'
+import { generateCSV, downloadCSV } from '../utils/csv'
 
 ChartJS.register(
     CategoryScale, LinearScale, PointElement, LineElement,
@@ -34,10 +36,15 @@ function AnalyticsPage() {
     const { data: rankingsData, refetch: refetchRankings } = useApiPolling(fetchRankingsFn, 120000)
     const { data: jobSitesData } = useApiPolling(fetchJobSitesFn, 60000)
 
+    const [selectedSites, setSelectedSites] = useState([])
+    const [comparisonData, setComparisonData] = useState({})
+    const [comparisonLoading, setComparisonLoading] = useState(false)
+
     const daily = fleetData?.daily || []
     const dateRange = fleetData?.date_range || {}
     const rankings = rankingsData?.rankings || []
     const jobSites = jobSitesData?.job_sites || []
+    const activeJobSites = useMemo(() => jobSites.filter(js => js.status === 'active'), [jobSites])
 
     const handleBackfill = async () => {
         setBackfilling(true)
@@ -52,6 +59,103 @@ function AnalyticsPage() {
         }
         setBackfilling(false)
     }
+
+    const handleExportCSV = () => {
+        const headers = ['Date', 'Avg SOC (%)', 'Min SOC (%)', 'Solar Yield (kWh)', 'Data Usage (MB)', 'Uptime (%)']
+        const rows = daily.map(d => [
+            d.date,
+            d.fleet_avg_soc ? Number(d.fleet_avg_soc).toFixed(1) : '',
+            d.fleet_min_soc ? Number(d.fleet_min_soc).toFixed(1) : '',
+            d.fleet_yield_kwh ? Number(d.fleet_yield_kwh).toFixed(2) : '',
+            d.fleet_data_mb ? Number(d.fleet_data_mb).toFixed(1) : '',
+            d.fleet_uptime ? Number(d.fleet_uptime).toFixed(1) : '',
+        ])
+        const csv = generateCSV(headers, rows)
+        downloadCSV(csv, `fleet-analytics-${days}d-${new Date().toISOString().slice(0, 10)}.csv`)
+    }
+
+    // Fetch comparison data when sites selected
+    useEffect(() => {
+        if (selectedSites.length < 2) {
+            setComparisonData({})
+            return
+        }
+        let cancelled = false
+        setComparisonLoading(true)
+        Promise.all(
+            selectedSites.map(id =>
+                fetchJobSiteAnalytics(id, days).then(res => ({ id, data: res.data || [] }))
+            )
+        ).then(results => {
+            if (cancelled) return
+            const map = {}
+            for (const r of results) map[r.id] = r.data
+            setComparisonData(map)
+            setComparisonLoading(false)
+        }).catch(() => {
+            if (!cancelled) setComparisonLoading(false)
+        })
+        return () => { cancelled = true }
+    }, [selectedSites, days])
+
+    const toggleSite = (id) => {
+        setSelectedSites(prev => {
+            if (prev.includes(id)) return prev.filter(s => s !== id)
+            if (prev.length >= 4) return prev
+            return [...prev, id]
+        })
+    }
+
+    const COMPARISON_COLORS = ['#3498db', '#2ecc71', '#f39c12', '#e74c3c']
+
+    const comparisonSocChart = useMemo(() => {
+        if (selectedSites.length < 2 || !Object.keys(comparisonData).length) return null
+        const allDates = new Set()
+        for (const siteData of Object.values(comparisonData)) {
+            for (const d of siteData) allDates.add(d.date)
+        }
+        const dates = [...allDates].sort()
+        const labels = dates.map(d => new Date(d).toLocaleDateString([], { month: 'short', day: 'numeric' }))
+        const datasets = selectedSites.map((siteId, i) => {
+            const site = activeJobSites.find(js => js.id === siteId)
+            const siteData = comparisonData[siteId] || []
+            const dateMap = Object.fromEntries(siteData.map(d => [d.date, d]))
+            return {
+                label: site?.name || `Site ${siteId}`,
+                data: dates.map(d => dateMap[d] ? +Number(dateMap[d].avg_soc).toFixed(1) : null),
+                borderColor: COMPARISON_COLORS[i],
+                backgroundColor: 'transparent',
+                tension: 0.3,
+                pointRadius: 2,
+                spanGaps: true,
+            }
+        })
+        return { labels, datasets }
+    }, [selectedSites, comparisonData, activeJobSites])
+
+    const comparisonYieldChart = useMemo(() => {
+        if (selectedSites.length < 2 || !Object.keys(comparisonData).length) return null
+        const allDates = new Set()
+        for (const siteData of Object.values(comparisonData)) {
+            for (const d of siteData) allDates.add(d.date)
+        }
+        const dates = [...allDates].sort()
+        const labels = dates.map(d => new Date(d).toLocaleDateString([], { month: 'short', day: 'numeric' }))
+        const datasets = selectedSites.map((siteId, i) => {
+            const site = activeJobSites.find(js => js.id === siteId)
+            const siteData = comparisonData[siteId] || []
+            const dateMap = Object.fromEntries(siteData.map(d => [d.date, d]))
+            return {
+                label: site?.name || `Site ${siteId}`,
+                data: dates.map(d => dateMap[d] ? +Number(dateMap[d].total_yield_kwh).toFixed(2) : 0),
+                backgroundColor: COMPARISON_COLORS[i] + 'BB',
+                borderColor: COMPARISON_COLORS[i],
+                borderWidth: 1,
+                borderRadius: 3,
+            }
+        })
+        return { labels, datasets }
+    }, [selectedSites, comparisonData, activeJobSites])
 
     // Fleet SOC trend chart
     const socChartData = useMemo(() => {
@@ -173,6 +277,9 @@ function AnalyticsPage() {
                     ))}
                 </div>
                 <div className="analytics-actions">
+                    <button className="btn btn-secondary" onClick={handleExportCSV} disabled={daily.length === 0}>
+                        Export CSV
+                    </button>
                     <button
                         className="btn btn-secondary"
                         onClick={handleBackfill}
@@ -231,6 +338,51 @@ function AnalyticsPage() {
                             <p>No analytics data yet. Click "Backfill Data" to compute metrics from existing snapshots.</p>
                             <p className="text-muted">Daily metrics are automatically computed after each VRM poll.</p>
                         </>
+                    )}
+                </div>
+            )}
+
+            {/* Site Comparison */}
+            {activeJobSites.length >= 2 && (
+                <div className="comparison-section">
+                    <div className="comparison-header">
+                        <h2>Site Comparison</h2>
+                        <span className="comparison-hint">Select 2–4 sites to compare</span>
+                    </div>
+                    <div className="comparison-site-selector">
+                        {activeJobSites.map(js => (
+                            <button
+                                key={js.id}
+                                className={`comparison-chip ${selectedSites.includes(js.id) ? 'active' : ''}`}
+                                onClick={() => toggleSite(js.id)}
+                                style={selectedSites.includes(js.id) ? {
+                                    borderColor: COMPARISON_COLORS[selectedSites.indexOf(js.id)],
+                                    backgroundColor: COMPARISON_COLORS[selectedSites.indexOf(js.id)] + '22',
+                                } : undefined}
+                            >
+                                {js.name}
+                            </button>
+                        ))}
+                    </div>
+                    {comparisonLoading && <p className="text-muted" style={{ padding: '1rem' }}>Loading comparison...</p>}
+                    {selectedSites.length >= 2 && !comparisonLoading && comparisonSocChart && (
+                        <div className="comparison-charts">
+                            <div className="analytics-chart-card">
+                                <h3>SOC Comparison</h3>
+                                <div className="analytics-chart-container">
+                                    <Line data={comparisonSocChart} options={chartOptions('SOC Comparison', '%')} />
+                                </div>
+                            </div>
+                            <div className="analytics-chart-card">
+                                <h3>Yield Comparison</h3>
+                                <div className="analytics-chart-container">
+                                    {comparisonYieldChart && <Bar data={comparisonYieldChart} options={chartOptions('Yield Comparison', ' kWh')} />}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    {selectedSites.length === 1 && (
+                        <p className="text-muted" style={{ padding: '1rem' }}>Select at least one more site to compare.</p>
                     )}
                 </div>
             )}

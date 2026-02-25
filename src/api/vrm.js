@@ -259,3 +259,43 @@ export async function backfillAnalytics(days = 7) {
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     return res.json();
 }
+
+// ============================================================
+// Components
+// ============================================================
+
+export async function fetchComponents(siteId) {
+    const res = await fetch(`${API_BASE}/components/${siteId}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function createComponent(data) {
+    const res = await fetch(`${API_BASE}/components`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function updateComponent(id, data) {
+    const res = await fetch(`${API_BASE}/components/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+// ============================================================
+// Maintenance Costs
+// ============================================================
+
+export async function fetchMaintenanceCostsBySite(days = 30) {
+    const res = await fetch(`${API_BASE}/maintenance/costs-by-site?days=${days}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}

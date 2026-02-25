@@ -1,10 +1,19 @@
 import { useState, useCallback, useMemo } from 'react'
+import {
+    Chart as ChartJS,
+    CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend
+} from 'chart.js'
+import { Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
 import {
     fetchMaintenanceLogs, fetchMaintenanceStats, fetchJobSites,
-    createMaintenanceLog, updateMaintenanceLog, deleteMaintenanceLog
+    createMaintenanceLog, updateMaintenanceLog, deleteMaintenanceLog,
+    fetchMaintenanceCostsBySite
 } from '../api/vrm'
 import MaintenanceForm from '../components/MaintenanceForm'
+import { generateCSV, downloadCSV } from '../utils/csv'
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 const STATUS_TABS = [
     { key: 'all', label: 'All' },
@@ -37,18 +46,59 @@ function MaintenancePage() {
     const [searchTerm, setSearchTerm] = useState('')
     const [showForm, setShowForm] = useState(false)
     const [editingLog, setEditingLog] = useState(null)
+    const [costDays, setCostDays] = useState(30)
 
     const fetchLogsFn = useCallback(() => fetchMaintenanceLogs(), [])
     const fetchStatsFn = useCallback(() => fetchMaintenanceStats(), [])
     const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
+    const fetchCostsFn = useCallback(() => fetchMaintenanceCostsBySite(costDays), [costDays])
 
     const { data: logsData, loading: logsLoading, refetch: refetchLogs } = useApiPolling(fetchLogsFn, 60000)
     const { data: statsData, refetch: refetchStats } = useApiPolling(fetchStatsFn, 60000)
     const { data: jobSitesData } = useApiPolling(fetchJobSitesFn, 60000)
+    const { data: costsData } = useApiPolling(fetchCostsFn, 120000)
 
     const logs = logsData?.logs || []
     const stats = statsData?.stats || {}
     const jobSites = jobSitesData?.job_sites || []
+    const costsBySite = costsData?.costs || []
+
+    const costChartData = useMemo(() => {
+        if (!costsBySite.length) return null
+        return {
+            labels: costsBySite.map(c => c.job_site_name),
+            datasets: [
+                {
+                    label: 'Labor',
+                    data: costsBySite.map(c => (c.labor_cost_cents / 100)),
+                    backgroundColor: 'rgba(52, 152, 219, 0.7)',
+                    borderColor: '#3498db',
+                    borderWidth: 1,
+                },
+                {
+                    label: 'Parts',
+                    data: costsBySite.map(c => (c.parts_cost_cents / 100)),
+                    backgroundColor: 'rgba(230, 126, 34, 0.7)',
+                    borderColor: '#e67e22',
+                    borderWidth: 1,
+                },
+            ],
+        }
+    }, [costsBySite])
+
+    const costChartOptions = {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { labels: { color: '#bdc3c7', font: { family: 'Inter', size: 12 } } },
+            tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: $${ctx.parsed.x.toFixed(2)}` } },
+        },
+        scales: {
+            x: { stacked: true, ticks: { color: '#7f8c8d', callback: (v) => `$${v}` }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { stacked: true, ticks: { color: '#7f8c8d', font: { size: 11 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        },
+    }
 
     // Filter logs
     const filteredLogs = useMemo(() => {
@@ -126,6 +176,26 @@ function MaintenancePage() {
         )
     }
 
+    const handleExportCSV = () => {
+        const headers = ['Date', 'Job Site', 'Trailer', 'Title', 'Type', 'Status', 'Technician', 'Labor Hours', 'Labor Cost', 'Parts Cost', 'Total Cost', 'Description']
+        const rows = filteredLogs.map(log => [
+            formatDate(log.scheduled_date || log.created_at),
+            log.job_site_name || '',
+            log.trailer_name || '',
+            log.title,
+            TYPE_LABELS[log.visit_type] || log.visit_type,
+            log.status,
+            log.technician || '',
+            log.labor_hours || 0,
+            formatCost(log.labor_cost_cents),
+            formatCost(log.parts_cost_cents),
+            formatCost((log.labor_cost_cents || 0) + (log.parts_cost_cents || 0)),
+            log.description || '',
+        ])
+        const csv = generateCSV(headers, rows)
+        downloadCSV(csv, `maintenance-logs-${new Date().toISOString().slice(0, 10)}.csv`)
+    }
+
     if (logsLoading && !logsData) {
         return (
             <div className="page-loading">
@@ -162,6 +232,29 @@ function MaintenancePage() {
                 </div>
             </div>
 
+            {/* Cost Chart by Site */}
+            {costChartData && (
+                <div className="maint-cost-section">
+                    <div className="maint-cost-header">
+                        <h2>Cost by Site</h2>
+                        <div className="maint-cost-range">
+                            {[7, 30, 90].map(d => (
+                                <button
+                                    key={d}
+                                    className={`retention-btn ${costDays === d ? 'active' : ''}`}
+                                    onClick={() => setCostDays(d)}
+                                >
+                                    {d}d
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    <div style={{ height: Math.max(200, costsBySite.length * 40 + 60) }}>
+                        <Bar data={costChartData} options={costChartOptions} />
+                    </div>
+                </div>
+            )}
+
             {/* Controls */}
             <div className="fleet-controls">
                 <div className="search-box">
@@ -189,6 +282,9 @@ function MaintenancePage() {
                     ))}
                 </div>
 
+                <button className="btn btn-secondary" onClick={handleExportCSV} disabled={filteredLogs.length === 0}>
+                    Export CSV
+                </button>
                 <button className="btn btn-primary" onClick={() => { setEditingLog(null); setShowForm(true) }}>
                     + New Log
                 </button>
