@@ -1098,6 +1098,9 @@ async function pollIc2Devices() {
                 tags: dev.tags || [],
                 gps_support: dev.gps_support || false,
                 gps_exist: dev.gps_exist || false,
+                latitude: dev.latitude || null,
+                longitude: dev.longitude || null,
+                address: dev.address || null,
                 cellular,
                 wan_interfaces: wanInterfaces,
                 timestamp: Date.now(),
@@ -1131,6 +1134,40 @@ async function pollIc2Devices() {
 
             if (dev.status === 'online') onlineCount++;
             else offlineCount++;
+        }
+
+        // Map IC2 GPS coordinates to VRM trailers by matching device names
+        if (sitesCache) {
+            const vrmSites = sitesCache.records || [];
+            let gpsMatched = 0;
+            for (const dev of devices) {
+                const lat = dev.latitude;
+                const lon = dev.longitude;
+                if (lat != null && lon != null && lat !== 0 && lon !== 0) {
+                    // Find VRM trailer with matching name
+                    const vrmSite = vrmSites.find(s => s.name === dev.name);
+                    if (vrmSite) {
+                        gpsCache.set(vrmSite.idSite, { latitude: lat, longitude: lon, updatedAt: Date.now() });
+                        gpsMatched++;
+                        if (dbAvailable) {
+                            try {
+                                await upsertTrailerAssignment(vrmSite.idSite, vrmSite.name, lat, lon);
+                            } catch (e) { /* non-critical */ }
+                        }
+                    }
+                }
+            }
+            if (gpsMatched > 0) {
+                console.log(`  IC2 GPS: matched ${gpsMatched} devices to VRM trailers`);
+            }
+        }
+
+        // Run clustering if we have GPS data and haven't clustered yet
+        if (dbAvailable && !initialClusteringDone && gpsCache.size > 0) {
+            initialClusteringDone = true;
+            runClustering().catch(err =>
+                console.error('  IC2-triggered clustering failed:', err.message)
+            );
         }
 
         lastIc2Poll = Date.now();
