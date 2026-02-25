@@ -20,7 +20,7 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
  * Cluster trailers by GPS proximity.
  * Returns array of clusters: [{ centroid_lat, centroid_lng, trailers: [...] }]
  */
-function clusterTrailers(trailers, thresholdMeters = 200) {
+function clusterTrailers(trailers, thresholdMeters = 300) {
     const assigned = new Set();
     const clusters = [];
 
@@ -68,7 +68,7 @@ function clusterTrailers(trailers, thresholdMeters = 200) {
  * - Creates new job sites for unmatched clusters
  * - Respects manual_override on trailer assignments
  */
-export async function runClustering(thresholdMeters = 200) {
+export async function runClustering(thresholdMeters = 300) {
     const trailers = await getTrailersWithGps();
     if (trailers.length === 0) {
         console.log('  Clustering: No trailers with GPS data yet');
