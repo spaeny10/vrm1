@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchFleetNetwork, fetchJobSites } from '../api/vrm'
+import DataFreshness from '../components/DataFreshness'
 
 function SignalBars({ bars, size = 20 }) {
     const maxBars = 5
@@ -63,7 +64,7 @@ function NetworkPage() {
 
     const fetchNetwork = useCallback(() => fetchFleetNetwork(), [])
     const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
-    const { data, loading } = useApiPolling(fetchNetwork, 60000)
+    const { data, loading, lastUpdated } = useApiPolling(fetchNetwork, 60000)
     const { data: jobSitesData } = useApiPolling(fetchJobSitesFn, 60000)
 
     const devices = data?.records || []
@@ -262,7 +263,10 @@ function NetworkPage() {
     return (
         <div className="network-page">
             <div className="page-header">
-                <h1>Network</h1>
+                <div className="page-header-row">
+                    <h1>Network</h1>
+                    <DataFreshness lastUpdated={lastUpdated} />
+                </div>
                 <p className="page-subtitle">
                     Pepwave InControl2 &bull; {devices.length} devices across {groupedDevices.groups.length} sites
                 </p>

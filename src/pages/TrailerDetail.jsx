@@ -14,6 +14,8 @@ import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import AlarmBadge from '../components/AlarmBadge'
 import ComponentForm from '../components/ComponentForm'
+import DataFreshness from '../components/DataFreshness'
+import Breadcrumbs from '../components/Breadcrumbs'
 
 ChartJS.register(
     CategoryScale, LinearScale, TimeScale, PointElement, LineElement,
@@ -116,7 +118,7 @@ function TrailerDetail() {
 
     const fetchComponentsFn = useCallback(() => fetchComponents(id), [id])
 
-    const { data: diagData } = useApiPolling(fetchDiagFn, 30000)
+    const { data: diagData, lastUpdated } = useApiPolling(fetchDiagFn, 30000)
     const { data: alarmsData } = useApiPolling(fetchAlarmsFn, 60000)
     const { data: systemData } = useApiPolling(fetchSystemFn, 120000)
     const { data: networkData } = useApiPolling(fetchNetworkFn, 60000)
@@ -326,13 +328,11 @@ function TrailerDetail() {
     return (
         <div className="site-detail">
             <div className="page-header">
-                <button className="back-btn" onClick={() => navigate('/')}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <polyline points="15 18 9 12 15 6" />
-                    </svg>
-                    Back to Fleet
-                </button>
-                <h1>{siteName || `Site #${id}`}</h1>
+                <Breadcrumbs items={[{ label: 'Fleet', to: '/' }, { label: siteName || `Site #${id}` }]} />
+                <div className="page-header-row">
+                    <h1>{siteName || `Site #${id}`}</h1>
+                    <DataFreshness lastUpdated={lastUpdated} />
+                </div>
             </div>
 
             {/* KPI Cards */}
@@ -405,6 +405,29 @@ function TrailerDetail() {
                             <span>Yield Yesterday</span>
                             <span>{solar.yieldYesterday !== null ? `${Number(solar.yieldYesterday).toFixed(2)} kWh` : '—'}</span>
                         </div>
+                        {solar.yieldToday !== null && solar.yieldYesterday !== null && solar.yieldYesterday > 0 && (() => {
+                            const pct = ((solar.yieldToday - solar.yieldYesterday) / solar.yieldYesterday * 100).toFixed(0)
+                            const maxVal = Math.max(solar.yieldToday, solar.yieldYesterday, 0.01)
+                            return (
+                                <div className="yield-comparison">
+                                    <div className="yield-bar-row">
+                                        <span className="yield-bar-label">Today</span>
+                                        <div className="yield-bar-track">
+                                            <div className="yield-bar yield-bar-today" style={{ width: `${(solar.yieldToday / maxVal) * 100}%` }} />
+                                        </div>
+                                    </div>
+                                    <div className="yield-bar-row">
+                                        <span className="yield-bar-label">Yest.</span>
+                                        <div className="yield-bar-track">
+                                            <div className="yield-bar yield-bar-yesterday" style={{ width: `${(solar.yieldYesterday / maxVal) * 100}%` }} />
+                                        </div>
+                                    </div>
+                                    <span className={`yield-diff-badge ${Number(pct) >= 0 ? 'yield-up' : 'yield-down'}`}>
+                                        {Number(pct) >= 0 ? '+' : ''}{pct}%
+                                    </span>
+                                </div>
+                            )
+                        })()}
                     </div>
                 </div>
 

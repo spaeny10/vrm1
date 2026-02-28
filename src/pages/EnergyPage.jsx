@@ -7,18 +7,20 @@ import {
 import { Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchFleetEnergy, fetchFleetAlerts, fetchJobSites } from '../api/vrm'
+import DataFreshness from '../components/DataFreshness'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 function EnergyPage() {
     const [selectedSite, setSelectedSite] = useState(null)
     const [expandedJobSites, setExpandedJobSites] = useState(new Set())
+    const [expandedAlerts, setExpandedAlerts] = useState(new Set())
 
     const fetchEnergyFn = useCallback(() => fetchFleetEnergy(), [])
     const fetchAlertsFn = useCallback(() => fetchFleetAlerts(), [])
     const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
 
-    const { data: energyData, loading: energyLoading } = useApiPolling(fetchEnergyFn, 60000)
+    const { data: energyData, loading: energyLoading, lastUpdated } = useApiPolling(fetchEnergyFn, 60000)
     const { data: alertsData } = useApiPolling(fetchAlertsFn, 60000)
     const { data: jobSitesData } = useApiPolling(fetchJobSitesFn, 60000)
 
@@ -167,7 +169,10 @@ function EnergyPage() {
     return (
         <div className="energy-page">
             <div className="page-header">
-                <h1>Energy Analysis</h1>
+                <div className="page-header-row">
+                    <h1>Energy Analysis</h1>
+                    <DataFreshness lastUpdated={lastUpdated} />
+                </div>
                 <p className="page-subtitle">Daily solar yield vs consumption across your fleet</p>
             </div>
 
@@ -183,13 +188,56 @@ function EnergyPage() {
                         <span>{alerts.length} trailer{alerts.length > 1 ? 's' : ''} with energy deficit alerts</span>
                     </div>
                     <div className="alert-banner-items">
-                        {alerts.map(alert => (
-                            <div key={alert.site_id} className={`alert-item alert-${alert.severity}`}>
-                                <span className="alert-site-name">{alert.site_name}</span>
-                                <span className="alert-streak">{alert.streak_days} day streak</span>
-                                <span className="alert-badge">{alert.severity}</span>
-                            </div>
-                        ))}
+                        {alerts.map(alert => {
+                            const isExpanded = expandedAlerts.has(alert.site_id)
+                            return (
+                                <div key={alert.site_id} className={`alert-card alert-card-${alert.severity}`}>
+                                    <div
+                                        className="alert-card-header"
+                                        onClick={() => setExpandedAlerts(prev => {
+                                            const next = new Set(prev)
+                                            if (next.has(alert.site_id)) next.delete(alert.site_id)
+                                            else next.add(alert.site_id)
+                                            return next
+                                        })}
+                                    >
+                                        <span className="alert-severity-icon">
+                                            {alert.severity === 'critical' ? '!!' : '!'}
+                                        </span>
+                                        <span className="alert-site-name">{alert.site_name}</span>
+                                        <span className="alert-streak">{alert.streak_days} day streak</span>
+                                        <span className="alert-badge">{alert.severity}</span>
+                                        <span className="alert-expand-icon">{isExpanded ? '▾' : '▸'}</span>
+                                    </div>
+                                    {isExpanded && alert.deficit_days?.length > 0 && (
+                                        <div className="alert-deficit-detail">
+                                            <table className="alert-deficit-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Date</th>
+                                                        <th>Yield</th>
+                                                        <th>Consumed</th>
+                                                        <th>Balance</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {alert.deficit_days.map(day => (
+                                                        <tr key={day.date}>
+                                                            <td>{new Date(day.date + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' })}</td>
+                                                            <td>{Math.round(day.yield_wh)} Wh</td>
+                                                            <td>{Math.round(day.consumed_wh)} Wh</td>
+                                                            <td className={day.yield_wh - day.consumed_wh >= 0 ? 'positive' : 'negative'}>
+                                                                {Math.round(day.yield_wh - day.consumed_wh)} Wh
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        })}
                     </div>
                 </div>
             )}

@@ -10,6 +10,7 @@ import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchJobSite } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
+import Breadcrumbs from '../components/Breadcrumbs'
 
 ChartJS.register(
     CategoryScale, LinearScale, PointElement, LineElement,
@@ -100,12 +101,7 @@ function JobSiteDetail() {
     return (
         <div className="site-detail">
             <div className="detail-top-bar">
-                <button className="back-button" onClick={() => navigate('/')}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M19 12H5M12 19l-7-7 7-7" />
-                    </svg>
-                    Fleet
-                </button>
+                <Breadcrumbs items={[{ label: 'Fleet', to: '/' }, { label: jobSite.name }]} />
                 <div className="detail-title-section">
                     {editingName ? (
                         <div className="inline-edit">

@@ -5,6 +5,7 @@ import KpiCard from '../components/KpiCard'
 import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
 import QueryBar from '../components/QueryBar'
+import DataFreshness from '../components/DataFreshness'
 
 function FleetOverview() {
     const [viewMode, setViewMode] = useState('sites') // 'sites' or 'trailers'
@@ -14,7 +15,7 @@ function FleetOverview() {
 
     // Job sites data
     const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
-    const { data: jobSitesData, loading: jobSitesLoading } = useApiPolling(fetchJobSitesFn, 30000)
+    const { data: jobSitesData, loading: jobSitesLoading, lastUpdated } = useApiPolling(fetchJobSitesFn, 30000)
     const jobSites = jobSitesData?.job_sites || []
 
     // Trailer-level data (for "All Trailers" view)
@@ -177,7 +178,10 @@ function FleetOverview() {
     return (
         <div className="fleet-overview">
             <div className="page-header">
-                <h1>Fleet Overview</h1>
+                <div className="page-header-row">
+                    <h1>Fleet Overview</h1>
+                    <DataFreshness lastUpdated={lastUpdated} />
+                </div>
                 <p className="page-subtitle">
                     {kpis.jobSiteCount} job sites, {kpis.totalTrailers} trailers monitored
                 </p>

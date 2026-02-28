@@ -2,6 +2,7 @@ import { Fragment, useState, useCallback, useMemo } from 'react'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer } from '../api/vrm'
+import { useToast } from '../components/ToastProvider'
 
 function DraggableTrailerRow({ trailer, jobSite, children }) {
     const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -39,10 +40,10 @@ function Settings() {
     const { data, loading, refetch } = useApiPolling(fetchSettingsFn, 60000)
     const { data: jobSitesData, refetch: refetchJobSites } = useApiPolling(fetchJobSitesFn, 60000)
 
+    const toast = useToast()
     const [retentionDays, setRetentionDays] = useState(null)
     const [saving, setSaving] = useState(false)
     const [purging, setPurging] = useState(false)
-    const [message, setMessage] = useState('')
     const [editingSiteId, setEditingSiteId] = useState(null)
     const [editName, setEditName] = useState('')
     const [reclustering, setReclustering] = useState(false)
@@ -69,13 +70,12 @@ function Settings() {
 
     const handleSave = async () => {
         setSaving(true)
-        setMessage('')
         try {
             await updateSettings({ retention_days: displayRetention })
-            setMessage('Settings saved successfully!')
+            toast.success('Settings saved successfully!')
             refetch()
         } catch (err) {
-            setMessage('Error saving settings: ' + err.message)
+            toast.error('Error saving settings: ' + err.message)
         }
         setSaving(false)
     }
@@ -83,13 +83,12 @@ function Settings() {
     const handlePurge = async () => {
         if (!confirm('Are you sure you want to purge old data? This cannot be undone.')) return
         setPurging(true)
-        setMessage('')
         try {
             const result = await purgeData()
-            setMessage(`Purge complete. ${result.snapshot_count} snapshots remain.`)
+            toast.success(`Purge complete. ${result.snapshot_count} snapshots remain.`)
             refetch()
         } catch (err) {
-            setMessage('Error purging data: ' + err.message)
+            toast.error('Error purging data: ' + err.message)
         }
         setPurging(false)
     }
@@ -97,13 +96,12 @@ function Settings() {
     const handleRecluster = async () => {
         if (!confirm('Re-run GPS clustering? This will reassign trailers that are not manually overridden.')) return
         setReclustering(true)
-        setMessage('')
         try {
             const result = await reclusterJobSites()
-            setMessage(`Clustering complete. ${result.job_site_count} job sites, ${result.assignments} trailer assignments.`)
+            toast.success(`Clustering complete. ${result.job_site_count} job sites, ${result.assignments} trailer assignments.`)
             refetchJobSites()
         } catch (err) {
-            setMessage('Error reclustering: ' + err.message)
+            toast.error('Error reclustering: ' + err.message)
         }
         setReclustering(false)
     }
@@ -116,7 +114,7 @@ function Settings() {
             setEditName('')
             refetchJobSites()
         } catch (err) {
-            setMessage('Error renaming site: ' + err.message)
+            toast.error('Error renaming site: ' + err.message)
         }
     }
 
@@ -125,17 +123,17 @@ function Settings() {
             await updateJobSite(siteId, { status: newStatus })
             refetchJobSites()
         } catch (err) {
-            setMessage('Error updating status: ' + err.message)
+            toast.error('Error updating status: ' + err.message)
         }
     }
 
     const handleReassignTrailer = async (trailerId, newJobSiteId) => {
         try {
             await assignTrailer(newJobSiteId, trailerId)
-            setMessage('Trailer reassigned successfully')
+            toast.success('Trailer reassigned successfully')
             refetchJobSites()
         } catch (err) {
-            setMessage('Error reassigning trailer: ' + err.message)
+            toast.error('Error reassigning trailer: ' + err.message)
         }
     }
 
@@ -386,11 +384,6 @@ function Settings() {
                 </div>
             </div>
 
-            {message && (
-                <div className={`settings-message ${message.includes('Error') ? 'error' : 'success'}`}>
-                    {message}
-                </div>
-            )}
         </div>
     )
 }

@@ -1,6 +1,13 @@
 import { NavLink } from 'react-router-dom'
+import { useCallback } from 'react'
+import { useApiPolling } from '../hooks/useApiPolling'
+import { fetchFleetAlerts } from '../api/vrm'
 
 function Sidebar() {
+    const fetchAlertsFn = useCallback(() => fetchFleetAlerts(), [])
+    const { data: alertsData } = useApiPolling(fetchAlertsFn, 60000)
+    const alertCount = alertsData?.alerts?.length || 0
+
     return (
         <aside className="sidebar">
             <div className="sidebar-brand">
@@ -39,6 +46,7 @@ function Sidebar() {
                         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
                     </svg>
                     <span>Energy</span>
+                    {alertCount > 0 && <span className="nav-badge">{alertCount}</span>}
                 </NavLink>
 
                 <NavLink to="/network" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>

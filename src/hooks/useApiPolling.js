@@ -4,6 +4,7 @@ export function useApiPolling(fetchFn, intervalMs = 30000, deps = []) {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [lastUpdated, setLastUpdated] = useState(null);
     const mountedRef = useRef(true);
 
     const doFetch = useCallback(async () => {
@@ -13,6 +14,7 @@ export function useApiPolling(fetchFn, intervalMs = 30000, deps = []) {
                 setData(result);
                 setError(null);
                 setLoading(false);
+                setLastUpdated(Date.now());
             }
         } catch (err) {
             if (mountedRef.current) {
@@ -32,5 +34,5 @@ export function useApiPolling(fetchFn, intervalMs = 30000, deps = []) {
         };
     }, [doFetch, intervalMs, ...deps]);
 
-    return { data, loading, error, refetch: doFetch };
+    return { data, loading, error, refetch: doFetch, lastUpdated };
 }
