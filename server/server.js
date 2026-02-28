@@ -405,6 +405,28 @@ app.get('/api/fleet/network', (req, res) => {
     });
 });
 
+// Debug: list all IC2 groups and device counts
+app.get('/api/debug/ic2-groups', async (req, res) => {
+    try {
+        const groupsResult = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g`);
+        const groups = groupsResult.data || [];
+        const details = [];
+        for (const g of groups) {
+            const devResult = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${g.id}/d?has_status=true`);
+            const devs = devResult.data || [];
+            details.push({
+                id: g.id,
+                name: g.name,
+                device_count: devs.length,
+                device_names: devs.map(d => d.name).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+            });
+        }
+        res.json({ success: true, org: IC2_ORG_ID, current_group: IC2_GROUP_ID, groups: details });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/fleet/network/:name', (req, res) => {
     const name = decodeURIComponent(req.params.name);
     const device = pepwaveCache.get(name);
