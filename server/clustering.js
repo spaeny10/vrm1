@@ -4,6 +4,34 @@ import {
 } from './db.js';
 
 /**
+ * Reverse geocode coordinates to get a city/location name.
+ * Uses OpenStreetMap Nominatim (free, 1 req/sec rate limit).
+ */
+async function reverseGeocode(lat, lng) {
+    try {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=16&addressdetails=1`;
+        const res = await fetch(url, {
+            headers: { 'User-Agent': 'VRM-Fleet-Dashboard/1.0' }
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        const addr = data.address || {};
+        const road = addr.road || addr.hamlet || '';
+        const city = addr.city || addr.town || addr.village || addr.county || 'Unknown';
+        const state = addr.state || '';
+        const zip = addr.postcode || '';
+        const parts = [];
+        if (road) parts.push(road);
+        if (city) parts.push(city);
+        if (state) parts.push(state);
+        if (zip) parts.push(zip);
+        return { city, state, address: parts.join(', ') || null };
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Haversine distance between two GPS points in meters.
  */
 function haversineMeters(lat1, lon1, lat2, lon2) {
@@ -112,15 +140,31 @@ export async function runClustering(thresholdMeters = 300) {
             jobSiteId = bestMatch;
             updated++;
         } else {
-            // Create new job site (Site 1, Site 2, ...)
-            const siteNum = existingJobSites.length + created + 1;
+            // Create new job site — reverse geocode for name
+            let siteName = `Site ${existingJobSites.length + created + 1}`;
+            let address = null;
+            const geo = await reverseGeocode(cluster.centroid_lat, cluster.centroid_lng);
+            if (geo) {
+                siteName = `${geo.city}, ${geo.state}`.replace(/, $/, '');
+                address = geo.address;
+                // Disambiguate if name already exists
+                const existingNames = existingJobSites.map(s => s.name);
+                if (existingNames.some(n => n === siteName || n.startsWith(siteName + ' #'))) {
+                    const count = existingNames.filter(n => n === siteName || n.startsWith(siteName + ' #')).length;
+                    siteName = `${siteName} #${count + 1}`;
+                }
+            }
             const newSite = await insertJobSite({
-                name: `Site ${siteNum}`,
+                name: siteName,
                 latitude: cluster.centroid_lat,
                 longitude: cluster.centroid_lng,
+                address,
             });
             jobSiteId = newSite.id;
+            existingJobSites.push({ id: jobSiteId, name: siteName });
             created++;
+            // Rate limit Nominatim
+            await new Promise(r => setTimeout(r, 1100));
         }
 
         // Assign all trailers in this cluster to the job site
