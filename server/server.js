@@ -421,21 +421,6 @@ app.get('/api/fleet/network', (req, res) => {
     });
 });
 
-// Debug: compare raw IC2 API vs cached data for a device
-app.get('/api/debug/ic2-usage', async (req, res) => {
-    try {
-        const result = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d?has_status=true`);
-        const devices = result.data || [];
-        const sample = devices.slice(0, 5).map(d => ({
-            name: d.name, raw_usage: d.usage, raw_tx: d.tx, raw_rx: d.rx,
-            cached_usage: pepwaveCache.get(d.name)?.usage_mb,
-            cached_tx: pepwaveCache.get(d.name)?.tx_mb,
-        }));
-        res.json({ sample, total_devices: devices.length });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 
 app.get('/api/fleet/network/:name', (req, res) => {
     const name = decodeURIComponent(req.params.name);
@@ -1124,11 +1109,6 @@ async function pollIc2Devices() {
         // Fetch devices from BIGView group only (group 1 has full status data including usage)
         const result = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d?has_status=true`);
         const devices = result.data || [];
-
-        // Debug: log usage fields for first online device
-        const _dbg = devices.find(d => d.status === 'online' && d.usage > 0);
-        if (_dbg) console.log(`  IC2 DEBUG: ${_dbg.name} usage=${_dbg.usage} tx=${_dbg.tx} rx=${_dbg.rx} type=${typeof _dbg.usage}`);
-        else console.log(`  IC2 DEBUG: no device has usage > 0 out of ${devices.length} devices`);
 
         let onlineCount = 0;
         let offlineCount = 0;
