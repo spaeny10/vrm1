@@ -1,10 +1,11 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
     Chart as ChartJS,
     CategoryScale, LinearScale, PointElement, LineElement,
     BarElement, Title, Tooltip, Legend, Filler
 } from 'chart.js'
+import zoomPlugin from 'chartjs-plugin-zoom'
 import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent } from '../api/vrm'
@@ -15,7 +16,7 @@ import ComponentForm from '../components/ComponentForm'
 
 ChartJS.register(
     CategoryScale, LinearScale, PointElement, LineElement,
-    BarElement, Title, Tooltip, Legend, Filler
+    BarElement, Title, Tooltip, Legend, Filler, zoomPlugin
 )
 
 const RANGES = {
@@ -100,6 +101,12 @@ function TrailerDetail() {
     const [pepwaveHistoryData, setPepwaveHistoryData] = useState([])
     const [showComponentForm, setShowComponentForm] = useState(false)
     const [editingComponent, setEditingComponent] = useState(null)
+
+    const socChartRef = useRef(null)
+    const voltageChartRef = useRef(null)
+    const solarChartRef = useRef(null)
+    const rsrpChartRef = useRef(null)
+    const usageChartRef = useRef(null)
 
     const fetchDiagFn = useCallback(() => fetchDiagnostics(id), [id])
     const fetchAlarmsFn = useCallback(() => fetchAlarms(id), [id])
@@ -287,6 +294,17 @@ function TrailerDetail() {
         responsive: true, maintainAspectRatio: false,
         plugins: {
             legend: { labels: { color: '#bdc3c7', font: { family: 'Inter' } } },
+            zoom: {
+                zoom: {
+                    wheel: { enabled: true },
+                    pinch: { enabled: true },
+                    mode: 'x',
+                },
+                pan: {
+                    enabled: true,
+                    mode: 'x',
+                },
+            },
         },
         scales: {
             x: {
@@ -449,10 +467,13 @@ function TrailerDetail() {
             {/* Charts */}
             <div className="charts-grid">
                 <div className="chart-card">
-                    <h3>Battery SOC</h3>
+                    <div className="chart-card-header">
+                        <h3>Battery SOC</h3>
+                        {socChartData && <button className="reset-zoom-btn" onClick={() => socChartRef.current?.resetZoom()}>Reset Zoom</button>}
+                    </div>
                     <div className="chart-container">
                         {socChartData ? (
-                            <Line data={socChartData} options={{
+                            <Line ref={socChartRef} data={socChartData} options={{
                                 ...chartOptions,
                                 scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, min: 0, max: 100 } },
                             }} />
@@ -462,20 +483,26 @@ function TrailerDetail() {
                     </div>
                 </div>
                 <div className="chart-card">
-                    <h3>Battery Voltage</h3>
+                    <div className="chart-card-header">
+                        <h3>Battery Voltage</h3>
+                        {voltageChartData && <button className="reset-zoom-btn" onClick={() => voltageChartRef.current?.resetZoom()}>Reset Zoom</button>}
+                    </div>
                     <div className="chart-container">
                         {voltageChartData ? (
-                            <Line data={voltageChartData} options={chartOptions} />
+                            <Line ref={voltageChartRef} data={voltageChartData} options={chartOptions} />
                         ) : (
                             <div className="chart-empty">No history data yet.</div>
                         )}
                     </div>
                 </div>
                 <div className="chart-card chart-card-full">
-                    <h3>Solar Production</h3>
+                    <div className="chart-card-header">
+                        <h3>Solar Production</h3>
+                        {solarChartData && <button className="reset-zoom-btn" onClick={() => solarChartRef.current?.resetZoom()}>Reset Zoom</button>}
+                    </div>
                     <div className="chart-container">
                         {solarChartData ? (
-                            <Bar data={solarChartData} options={chartOptions} />
+                            <Bar ref={solarChartRef} data={solarChartData} options={chartOptions} />
                         ) : (
                             <div className="chart-empty">No history data yet.</div>
                         )}
@@ -527,10 +554,13 @@ function TrailerDetail() {
             {pepwaveDevice && (
                 <div className="charts-grid">
                     <div className="chart-card">
-                        <h3>📶 Signal Strength</h3>
+                        <div className="chart-card-header">
+                            <h3>Signal Strength</h3>
+                            {rsrpChartData && <button className="reset-zoom-btn" onClick={() => rsrpChartRef.current?.resetZoom()}>Reset Zoom</button>}
+                        </div>
                         <div className="chart-container">
                             {rsrpChartData ? (
-                                <Line data={rsrpChartData} options={{
+                                <Line ref={rsrpChartRef} data={rsrpChartData} options={{
                                     ...chartOptions,
                                     scales: {
                                         ...chartOptions.scales,
@@ -543,10 +573,13 @@ function TrailerDetail() {
                         </div>
                     </div>
                     <div className="chart-card">
-                        <h3>📊 Data Usage</h3>
+                        <div className="chart-card-header">
+                            <h3>Data Usage</h3>
+                            {usageChartData && <button className="reset-zoom-btn" onClick={() => usageChartRef.current?.resetZoom()}>Reset Zoom</button>}
+                        </div>
                         <div className="chart-container">
                             {usageChartData ? (
-                                <Line data={usageChartData} options={chartOptions} />
+                                <Line ref={usageChartRef} data={usageChartData} options={chartOptions} />
                             ) : (
                                 <div className="chart-empty">Data usage history will build up as data is polled.</div>
                             )}
