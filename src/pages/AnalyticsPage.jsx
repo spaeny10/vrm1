@@ -8,7 +8,7 @@ import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
 import {
     fetchFleetAnalytics, fetchAnalyticsRankings, fetchJobSites,
-    fetchJobSiteAnalytics, backfillAnalytics
+    fetchJobSiteAnalytics, backfillAnalytics, fetchFleetIntelligence
 } from '../api/vrm'
 import { generateCSV, downloadCSV } from '../utils/csv'
 
@@ -35,6 +35,24 @@ function AnalyticsPage() {
     const { data: fleetData, loading: fleetLoading, refetch: refetchFleet } = useApiPolling(fetchFleetFn, 120000)
     const { data: rankingsData, refetch: refetchRankings } = useApiPolling(fetchRankingsFn, 120000)
     const { data: jobSitesData } = useApiPolling(fetchJobSitesFn, 60000)
+
+    // Fleet intelligence (trailer-by-trailer)
+    const fetchIntelFn = useCallback(() => fetchFleetIntelligence(), [])
+    const { data: intelData } = useApiPolling(fetchIntelFn, 60000)
+    const fleetIntel = intelData?.fleet || null
+    const allTrailerIntel = intelData?.trailers || []
+    const [intelSort, setIntelSort] = useState('score') // 'score' | 'autonomy' | 'performance' | 'name'
+
+    const sortedTrailerIntel = useMemo(() => {
+        const list = [...allTrailerIntel]
+        switch (intelSort) {
+            case 'score': return list.sort((a, b) => (a.solar.score ?? 999) - (b.solar.score ?? 999))
+            case 'autonomy': return list.sort((a, b) => (a.battery.days_of_autonomy ?? 999) - (b.battery.days_of_autonomy ?? 999))
+            case 'performance': return list.sort((a, b) => (a.solar.panel_performance_pct ?? 999) - (b.solar.panel_performance_pct ?? 999))
+            case 'name': return list.sort((a, b) => (a.site_name || '').localeCompare(b.site_name || ''))
+            default: return list
+        }
+    }, [allTrailerIntel, intelSort])
 
     const [selectedSites, setSelectedSites] = useState([])
     const [comparisonData, setComparisonData] = useState({})
@@ -309,6 +327,145 @@ function AnalyticsPage() {
                     <div className="kpi-card kpi-yellow">
                         <div className="kpi-label">Data Usage</div>
                         <div className="kpi-value">{summaryKpis.totalData}</div>
+                    </div>
+                </div>
+            )}
+
+            {/* Fleet Intelligence — Trailer by Trailer */}
+            {allTrailerIntel.length > 0 && (
+                <div className="analytics-intelligence">
+                    <div className="analytics-intel-header">
+                        <h2>Fleet Intelligence</h2>
+                        <span className="intel-specs-badge">
+                            {fleetIntel?.specs?.solar?.total_watts || 1305}W Solar / {((fleetIntel?.specs?.battery?.total_wh || 11040) / 1000).toFixed(1)} kWh Battery per trailer
+                        </span>
+                    </div>
+
+                    {/* Intelligence KPIs */}
+                    {fleetIntel && (
+                        <div className="kpi-row" style={{ marginBottom: '20px' }}>
+                            <div className="kpi-card kpi-yellow">
+                                <div className="kpi-label">Avg Solar Score</div>
+                                <div className="kpi-value">{fleetIntel.avg_solar_score !== null ? `${fleetIntel.avg_solar_score}%` : '--'}</div>
+                            </div>
+                            <div className={`kpi-card ${fleetIntel.avg_days_autonomy > 2 ? 'kpi-green' : 'kpi-red'}`}>
+                                <div className="kpi-label">Avg Autonomy</div>
+                                <div className="kpi-value">{fleetIntel.avg_days_autonomy !== null ? `${fleetIntel.avg_days_autonomy} days` : '--'}</div>
+                            </div>
+                            <div className={`kpi-card ${fleetIntel.underperforming_count > 0 ? 'kpi-red' : 'kpi-teal'}`}>
+                                <div className="kpi-label">Underperforming</div>
+                                <div className="kpi-value">{fleetIntel.underperforming_count}</div>
+                            </div>
+                            <div className={`kpi-card ${fleetIntel.low_autonomy_count > 0 ? 'kpi-red' : 'kpi-teal'}`}>
+                                <div className="kpi-label">Low Autonomy</div>
+                                <div className="kpi-value">{fleetIntel.low_autonomy_count}</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Sort controls */}
+                    <div className="intel-table-controls">
+                        <span className="intel-table-count">{allTrailerIntel.length} trailers</span>
+                        <div className="intel-sort-btns">
+                            <span className="intel-sort-label">Sort:</span>
+                            {[
+                                { key: 'score', label: 'Solar Score' },
+                                { key: 'autonomy', label: 'Autonomy' },
+                                { key: 'performance', label: 'Panel %' },
+                                { key: 'name', label: 'Name' },
+                            ].map(opt => (
+                                <button
+                                    key={opt.key}
+                                    className={`range-btn ${intelSort === opt.key ? 'active' : ''}`}
+                                    onClick={() => setIntelSort(opt.key)}
+                                >
+                                    {opt.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Trailer-by-trailer intelligence table */}
+                    <div className="intel-table-wrapper">
+                        <table className="intel-table">
+                            <thead>
+                                <tr>
+                                    <th>Trailer</th>
+                                    <th>Solar Score</th>
+                                    <th>7d Avg</th>
+                                    <th>Panel Output</th>
+                                    <th>Autonomy</th>
+                                    <th>Yield Today</th>
+                                    <th>Expected</th>
+                                    <th>Stored</th>
+                                    <th>Charge Time</th>
+                                    <th>PSH</th>
+                                    <th>Source</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {sortedTrailerIntel.map(t => {
+                                    const scoreClass = t.solar.score !== null
+                                        ? (t.solar.score >= 90 ? 'rank-good' : t.solar.score >= 50 ? 'rank-warn' : 'rank-bad')
+                                        : ''
+                                    const autonomyClass = t.battery.days_of_autonomy !== null
+                                        ? (t.battery.days_of_autonomy >= 2 ? 'rank-good' : t.battery.days_of_autonomy >= 1 ? 'rank-warn' : 'rank-bad')
+                                        : ''
+                                    return (
+                                        <tr key={t.site_id} className="intel-table-row">
+                                            <td className="intel-table-name">
+                                                <a href={`/trailer/${t.site_id}`}>{t.site_name}</a>
+                                            </td>
+                                            <td className={scoreClass}>
+                                                {t.solar.score !== null ? (
+                                                    <>
+                                                        <strong>{t.solar.score}%</strong>
+                                                        <span className={`intel-score-badge score-${(t.solar.score_label || 'fair').toLowerCase()}`} style={{ marginLeft: '6px' }}>
+                                                            {t.solar.score_label}
+                                                        </span>
+                                                    </>
+                                                ) : '—'}
+                                            </td>
+                                            <td className={t.solar.avg_7d_score !== null
+                                                ? (t.solar.avg_7d_score >= 90 ? 'rank-good' : t.solar.avg_7d_score >= 50 ? 'rank-warn' : 'rank-bad')
+                                                : ''}>
+                                                {t.solar.avg_7d_score !== null ? `${t.solar.avg_7d_score}%` : '—'}
+                                            </td>
+                                            <td>
+                                                {t.solar.panel_performance_pct !== null
+                                                    ? `${t.solar.panel_performance_pct}%`
+                                                    : '—'}
+                                                {t.solar.current_watts !== null && (
+                                                    <span className="intel-table-sub">{Math.round(t.solar.current_watts)}W</span>
+                                                )}
+                                            </td>
+                                            <td className={autonomyClass}>
+                                                {t.battery.days_of_autonomy !== null
+                                                    ? <strong>{t.battery.days_of_autonomy}d</strong>
+                                                    : '—'}
+                                            </td>
+                                            <td>{t.solar.yield_today_wh !== null ? `${t.solar.yield_today_wh} Wh` : '—'}</td>
+                                            <td>{t.location.expected_daily_yield_wh} Wh</td>
+                                            <td>
+                                                {t.battery.stored_wh !== null
+                                                    ? `${(t.battery.stored_wh / 1000).toFixed(1)} kWh`
+                                                    : '—'}
+                                                {t.battery.soc_pct !== null && (
+                                                    <span className="intel-table-sub">{t.battery.soc_pct}%</span>
+                                                )}
+                                            </td>
+                                            <td>{t.battery.charge_time_hours !== null ? `${t.battery.charge_time_hours}h` : '—'}</td>
+                                            <td>{t.location.peak_sun_hours}h</td>
+                                            <td>
+                                                <span className="intel-source-tag">
+                                                    {t.location.data_source === 'open-meteo' ? 'Weather' : t.location.data_source === 'astronomical' ? 'Astro' : 'Default'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}
