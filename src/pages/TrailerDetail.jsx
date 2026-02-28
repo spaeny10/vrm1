@@ -180,7 +180,7 @@ function TrailerDetail() {
         if (!historyData.length) return null
         return {
             labels: historyData.map(h => {
-                const d = new Date(h.timestamp)
+                const d = new Date(Number(h.timestamp))
                 return range === '24h'
                     ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                     : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
@@ -200,7 +200,7 @@ function TrailerDetail() {
         if (!historyData.length) return null
         return {
             labels: historyData.map(h => {
-                const d = new Date(h.timestamp)
+                const d = new Date(Number(h.timestamp))
                 return range === '24h'
                     ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                     : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
@@ -220,7 +220,7 @@ function TrailerDetail() {
         if (!historyData.length) return null
         return {
             labels: historyData.map(h => {
-                const d = new Date(h.timestamp)
+                const d = new Date(Number(h.timestamp))
                 return range === '24h'
                     ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                     : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
