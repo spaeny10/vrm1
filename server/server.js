@@ -1144,6 +1144,16 @@ async function pollIc2Devices() {
         let onlineCount = 0;
         let offlineCount = 0;
 
+        // Debug: log first online device's raw fields to find usage data
+        const debugDev = devices.find(d => d.status === 'online');
+        if (debugDev) {
+            const usageFields = Object.entries(debugDev).filter(([k, v]) =>
+                typeof v === 'number' || (typeof k === 'string' && /usage|traffic|data|byte|tx|rx|upload|download/i.test(k))
+            );
+            console.log(`  IC2 DEBUG device "${debugDev.name}" keys:`, Object.keys(debugDev).join(', '));
+            console.log(`  IC2 DEBUG usage-related:`, JSON.stringify(Object.fromEntries(usageFields)));
+        }
+
         for (const dev of devices) {
             const cellular = extractCellularInfo(dev);
             const wanInterfaces = extractWanInterfaces(dev);
