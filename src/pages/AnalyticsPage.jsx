@@ -41,18 +41,42 @@ function AnalyticsPage() {
     const { data: intelData } = useApiPolling(fetchIntelFn, 60000)
     const fleetIntel = intelData?.fleet || null
     const allTrailerIntel = intelData?.trailers || []
-    const [intelSort, setIntelSort] = useState('score') // 'score' | 'autonomy' | 'performance' | 'name'
+    const [intelSort, setIntelSort] = useState('score')
+    const [intelSortDir, setIntelSortDir] = useState('asc') // 'asc' | 'desc'
+
+    const handleIntelSort = (key) => {
+        if (intelSort === key) {
+            setIntelSortDir(prev => prev === 'asc' ? 'desc' : 'asc')
+        } else {
+            setIntelSort(key)
+            setIntelSortDir('asc')
+        }
+    }
 
     const sortedTrailerIntel = useMemo(() => {
         const list = [...allTrailerIntel]
-        switch (intelSort) {
-            case 'score': return list.sort((a, b) => (a.solar.score ?? 999) - (b.solar.score ?? 999))
-            case 'autonomy': return list.sort((a, b) => (a.battery.days_of_autonomy ?? 999) - (b.battery.days_of_autonomy ?? 999))
-            case 'performance': return list.sort((a, b) => (a.solar.panel_performance_pct ?? 999) - (b.solar.panel_performance_pct ?? 999))
-            case 'name': return list.sort((a, b) => (a.site_name || '').localeCompare(b.site_name || ''))
-            default: return list
+        const dir = intelSortDir === 'asc' ? 1 : -1
+        const nullVal = intelSortDir === 'asc' ? 999 : -999
+        const get = (t) => {
+            switch (intelSort) {
+                case 'name': return t.site_name || ''
+                case 'score': return t.solar.score ?? nullVal
+                case 'avg7d': return t.solar.avg_7d_score ?? nullVal
+                case 'performance': return t.solar.panel_performance_pct ?? nullVal
+                case 'autonomy': return t.battery.days_of_autonomy ?? nullVal
+                case 'yield': return t.solar.yield_today_wh ?? nullVal
+                case 'expected': return t.location.expected_daily_yield_wh ?? nullVal
+                case 'stored': return t.battery.stored_wh ?? nullVal
+                case 'charge': return t.battery.charge_time_hours ?? nullVal
+                case 'psh': return t.location.peak_sun_hours ?? nullVal
+                default: return 0
+            }
         }
-    }, [allTrailerIntel, intelSort])
+        if (intelSort === 'name') {
+            return list.sort((a, b) => dir * get(a).localeCompare(get(b)))
+        }
+        return list.sort((a, b) => dir * (get(a) - get(b)))
+    }, [allTrailerIntel, intelSort, intelSortDir])
 
     const [selectedSites, setSelectedSites] = useState([])
     const [comparisonData, setComparisonData] = useState({})
@@ -363,26 +387,8 @@ function AnalyticsPage() {
                         </div>
                     )}
 
-                    {/* Sort controls */}
                     <div className="intel-table-controls">
                         <span className="intel-table-count">{allTrailerIntel.length} trailers</span>
-                        <div className="intel-sort-btns">
-                            <span className="intel-sort-label">Sort:</span>
-                            {[
-                                { key: 'score', label: 'Solar Score' },
-                                { key: 'autonomy', label: 'Autonomy' },
-                                { key: 'performance', label: 'Panel %' },
-                                { key: 'name', label: 'Name' },
-                            ].map(opt => (
-                                <button
-                                    key={opt.key}
-                                    className={`range-btn ${intelSort === opt.key ? 'active' : ''}`}
-                                    onClick={() => setIntelSort(opt.key)}
-                                >
-                                    {opt.label}
-                                </button>
-                            ))}
-                        </div>
                     </div>
 
                     {/* Trailer-by-trailer intelligence table */}
@@ -390,17 +396,30 @@ function AnalyticsPage() {
                         <table className="intel-table">
                             <thead>
                                 <tr>
-                                    <th>Trailer</th>
-                                    <th>Solar Score</th>
-                                    <th>7d Avg</th>
-                                    <th>Panel Output</th>
-                                    <th>Autonomy</th>
-                                    <th>Yield Today</th>
-                                    <th>Expected</th>
-                                    <th>Stored</th>
-                                    <th>Charge Time</th>
-                                    <th>PSH</th>
-                                    <th>Source</th>
+                                    {[
+                                        { key: 'name', label: 'Trailer' },
+                                        { key: 'score', label: 'Solar Score' },
+                                        { key: 'avg7d', label: '7d Avg' },
+                                        { key: 'performance', label: 'Panel Output' },
+                                        { key: 'autonomy', label: 'Autonomy' },
+                                        { key: 'yield', label: 'Yield Today' },
+                                        { key: 'expected', label: 'Expected' },
+                                        { key: 'stored', label: 'Stored' },
+                                        { key: 'charge', label: 'Charge Time' },
+                                        { key: 'psh', label: 'PSH' },
+                                        { key: null, label: 'Source' },
+                                    ].map(col => (
+                                        <th
+                                            key={col.label}
+                                            className={col.key ? 'intel-th-sortable' : ''}
+                                            onClick={col.key ? () => handleIntelSort(col.key) : undefined}
+                                        >
+                                            {col.label}
+                                            {col.key && intelSort === col.key && (
+                                                <span className="intel-sort-arrow">{intelSortDir === 'asc' ? ' ▲' : ' ▼'}</span>
+                                            )}
+                                        </th>
+                                    ))}
                                 </tr>
                             </thead>
                             <tbody>
