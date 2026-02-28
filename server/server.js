@@ -421,27 +421,6 @@ app.get('/api/fleet/network', (req, res) => {
     });
 });
 
-// Debug: list all IC2 groups and device counts
-app.get('/api/debug/ic2-groups', async (req, res) => {
-    try {
-        const groupsResult = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g`);
-        const groups = groupsResult.data || [];
-        const details = [];
-        for (const g of groups) {
-            const devResult = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${g.id}/d?has_status=true`);
-            const devs = devResult.data || [];
-            details.push({
-                id: g.id,
-                name: g.name,
-                device_count: devs.length,
-                device_names: devs.map(d => d.name).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-            });
-        }
-        res.json({ success: true, org: IC2_ORG_ID, current_group: IC2_GROUP_ID, groups: details });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 
 app.get('/api/fleet/network/:name', (req, res) => {
     const name = decodeURIComponent(req.params.name);
@@ -1127,32 +1106,12 @@ async function pollIc2Devices() {
     console.log(`[${new Date().toISOString()}] Polling InControl2 devices...`);
 
     try {
-        // Fetch devices from ALL groups in the organization
-        const groupsResult = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g`);
-        const groups = groupsResult.data || [];
-        let devices = [];
-        for (const g of groups) {
-            try {
-                const result = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${g.id}/d?has_status=true`);
-                const groupDevices = (result.data || []).map(d => ({ ...d, _groupId: g.id }));
-                devices.push(...groupDevices);
-            } catch (e) {
-                console.log(`  IC2: failed to fetch group ${g.id} (${g.name}): ${e.message}`);
-            }
-        }
+        // Fetch devices from BIGView group only (group 1 has full status data including usage)
+        const result = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d?has_status=true`);
+        const devices = result.data || [];
 
         let onlineCount = 0;
         let offlineCount = 0;
-
-        // Debug: log first online device's raw fields to find usage data
-        const debugDev = devices.find(d => d.status === 'online');
-        if (debugDev) {
-            const usageFields = Object.entries(debugDev).filter(([k, v]) =>
-                typeof v === 'number' || (typeof k === 'string' && /usage|traffic|data|byte|tx|rx|upload|download/i.test(k))
-            );
-            console.log(`  IC2 DEBUG device "${debugDev.name}" keys:`, Object.keys(debugDev).join(', '));
-            console.log(`  IC2 DEBUG usage-related:`, JSON.stringify(Object.fromEntries(usageFields)));
-        }
 
         for (const dev of devices) {
             const cellular = extractCellularInfo(dev);
@@ -1225,8 +1184,7 @@ async function pollIc2Devices() {
                 const batch = gpsDevices.slice(i, i + 5);
                 const locPromises = batch.map(async (dev) => {
                     try {
-                        const gId = dev._groupId || IC2_GROUP_ID;
-                        const locData = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${gId}/d/${dev.id}/loc`);
+                        const locData = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d/${dev.id}/loc`);
                         const loc = (locData.data || [])[0];
                         if (loc && loc.la && loc.lo) {
                             // Update pepwaveCache with GPS
