@@ -2,9 +2,10 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
     Chart as ChartJS,
-    CategoryScale, LinearScale, PointElement, LineElement,
+    CategoryScale, LinearScale, TimeScale, PointElement, LineElement,
     BarElement, Title, Tooltip, Legend, Filler
 } from 'chart.js'
+import 'chartjs-adapter-date-fns'
 import zoomPlugin from 'chartjs-plugin-zoom'
 import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
@@ -15,7 +16,7 @@ import AlarmBadge from '../components/AlarmBadge'
 import ComponentForm from '../components/ComponentForm'
 
 ChartJS.register(
-    CategoryScale, LinearScale, PointElement, LineElement,
+    CategoryScale, LinearScale, TimeScale, PointElement, LineElement,
     BarElement, Title, Tooltip, Legend, Filler, zoomPlugin
 )
 
@@ -182,19 +183,16 @@ function TrailerDetail() {
         return networkData.records.find(d => d.name === siteName)
     }, [siteName, networkData])
 
-    // Chart data
+    // Chart data — use {x: timestamp, y: value} for time scale
+    const toTimePoints = (arr, field) =>
+        arr.map(h => ({ x: Number(h.timestamp), y: h[field] })).filter(p => p.y != null)
+
     const socChartData = useMemo(() => {
         if (!historyData.length) return null
         return {
-            labels: historyData.map(h => {
-                const d = new Date(Number(h.timestamp))
-                return range === '24h'
-                    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
-            }),
             datasets: [{
                 label: 'SOC %',
-                data: historyData.map(h => h.battery_soc),
+                data: toTimePoints(historyData, 'battery_soc'),
                 borderColor: '#2ecc71',
                 backgroundColor: 'rgba(46, 204, 113, 0.1)',
                 fill: true, tension: 0.3,
@@ -206,15 +204,9 @@ function TrailerDetail() {
     const voltageChartData = useMemo(() => {
         if (!historyData.length) return null
         return {
-            labels: historyData.map(h => {
-                const d = new Date(Number(h.timestamp))
-                return range === '24h'
-                    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
-            }),
             datasets: [{
                 label: 'Voltage (V)',
-                data: historyData.map(h => h.battery_voltage),
+                data: toTimePoints(historyData, 'battery_voltage'),
                 borderColor: '#3498db',
                 backgroundColor: 'rgba(52, 152, 219, 0.1)',
                 fill: true, tension: 0.3,
@@ -226,41 +218,29 @@ function TrailerDetail() {
     const solarChartData = useMemo(() => {
         if (!historyData.length) return null
         return {
-            labels: historyData.map(h => {
-                const d = new Date(Number(h.timestamp))
-                return range === '24h'
-                    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
-            }),
             datasets: [{
                 label: 'Solar (W)',
-                data: historyData.map(h => h.solar_watts),
+                data: toTimePoints(historyData, 'solar_watts'),
                 backgroundColor: 'rgba(241, 196, 15, 0.7)',
                 borderColor: '#f1c40f', borderWidth: 1,
             }],
         }
-    }, [historyData, range])
+    }, [historyData])
 
     // Pepwave signal history chart
     const rsrpChartData = useMemo(() => {
         if (!pepwaveHistoryData.length) return null
         return {
-            labels: pepwaveHistoryData.map(h => {
-                const d = new Date(Number(h.timestamp))
-                return range === '24h'
-                    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
-            }),
             datasets: [{
                 label: 'RSRP (dBm)',
-                data: pepwaveHistoryData.map(h => h.rsrp),
+                data: toTimePoints(pepwaveHistoryData, 'rsrp'),
                 borderColor: '#9b59b6',
                 backgroundColor: 'rgba(155, 89, 182, 0.1)',
                 fill: true, tension: 0.3,
                 pointRadius: range === '24h' ? 2 : 0,
             }, {
                 label: 'SINR (dB)',
-                data: pepwaveHistoryData.map(h => h.sinr),
+                data: toTimePoints(pepwaveHistoryData, 'sinr'),
                 borderColor: '#1abc9c',
                 backgroundColor: 'rgba(26, 188, 156, 0.05)',
                 fill: false, tension: 0.3,
@@ -273,15 +253,9 @@ function TrailerDetail() {
     const usageChartData = useMemo(() => {
         if (!pepwaveHistoryData.length) return null
         return {
-            labels: pepwaveHistoryData.map(h => {
-                const d = new Date(Number(h.timestamp))
-                return range === '24h'
-                    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
-            }),
             datasets: [{
                 label: 'Cumulative Usage (MB)',
-                data: pepwaveHistoryData.map(h => h.usage_mb),
+                data: toTimePoints(pepwaveHistoryData, 'usage_mb'),
                 borderColor: '#e67e22',
                 backgroundColor: 'rgba(230, 126, 34, 0.1)',
                 fill: true, tension: 0.3,
@@ -292,8 +266,27 @@ function TrailerDetail() {
 
     const chartOptions = {
         responsive: true, maintainAspectRatio: false,
+        interaction: {
+            mode: 'nearest',
+            axis: 'x',
+            intersect: false,
+        },
         plugins: {
             legend: { labels: { color: '#bdc3c7', font: { family: 'Inter' } } },
+            tooltip: {
+                mode: 'nearest',
+                intersect: false,
+                callbacks: {
+                    title: (items) => {
+                        if (!items.length) return ''
+                        const ts = items[0].parsed.x
+                        return new Date(ts).toLocaleString([], {
+                            month: 'short', day: 'numeric',
+                            hour: '2-digit', minute: '2-digit', second: '2-digit',
+                        })
+                    },
+                },
+            },
             zoom: {
                 zoom: {
                     wheel: { enabled: true },
@@ -308,6 +301,15 @@ function TrailerDetail() {
         },
         scales: {
             x: {
+                type: 'time',
+                time: {
+                    displayFormats: {
+                        minute: 'HH:mm',
+                        hour: 'MMM d, HH:mm',
+                        day: 'MMM d',
+                        week: 'MMM d',
+                    },
+                },
                 ticks: { color: '#7f8c8d', maxTicksLimit: 12, font: { family: 'Inter', size: 11 } },
                 grid: { color: 'rgba(255,255,255,0.05)' },
             },
