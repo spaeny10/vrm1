@@ -154,6 +154,207 @@ const gpsCache = new Map();
 let initialClusteringDone = false;
 
 // ============================================================
+// Trailer Hardware Specifications
+// ============================================================
+const TRAILER_SPECS = {
+    solar: { panels: 3, panel_watts: 435, total_watts: 1305, system_efficiency: 0.80 },
+    battery: { count: 2, ah_per_battery: 230, voltage: 24, total_ah: 460, total_wh: 11040, min_soc_threshold: 20, usable_wh: 8832 },
+};
+
+// ============================================================
+// Weather / Solar Irradiance Cache (Open-Meteo, free, no API key)
+// Key: "lat,lon" (rounded to 0.1°), Value: { data, fetchedAt }
+// ============================================================
+const weatherCache = new Map();
+const WEATHER_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+async function fetchSolarIrradiance(latitude, longitude) {
+    const cacheKey = `${Math.round(latitude * 10) / 10},${Math.round(longitude * 10) / 10}`;
+    const cached = weatherCache.get(cacheKey);
+    if (cached && Date.now() - cached.fetchedAt < WEATHER_CACHE_TTL) {
+        return cached.data;
+    }
+
+    try {
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&daily=shortwave_radiation_sum,sunshine_duration&current=cloud_cover&timezone=auto&forecast_days=1`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Open-Meteo ${res.status}`);
+        const json = await res.json();
+
+        const radiationMJ = json.daily?.shortwave_radiation_sum?.[0] ?? null;
+        const sunshineSec = json.daily?.sunshine_duration?.[0] ?? null;
+        const cloudCover = json.current?.cloud_cover ?? null;
+
+        const data = {
+            peak_sun_hours: radiationMJ !== null ? Math.round((radiationMJ / 3.6) * 100) / 100 : null,
+            sunshine_hours: sunshineSec !== null ? Math.round((sunshineSec / 3600) * 10) / 10 : null,
+            cloud_cover_pct: cloudCover,
+            data_source: 'open-meteo',
+        };
+
+        weatherCache.set(cacheKey, { data, fetchedAt: Date.now() });
+        return data;
+    } catch (err) {
+        // Fallback to astronomical calculation
+        const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
+        const fallback = {
+            peak_sun_hours: computeAstronomicalPSH(latitude, dayOfYear),
+            sunshine_hours: null,
+            cloud_cover_pct: null,
+            data_source: 'astronomical',
+        };
+        weatherCache.set(cacheKey, { data: fallback, fetchedAt: Date.now() - WEATHER_CACHE_TTL + 600000 }); // retry in 10 min
+        return fallback;
+    }
+}
+
+function computeAstronomicalPSH(latitude, dayOfYear) {
+    const toRad = (deg) => deg * Math.PI / 180;
+    const toDeg = (rad) => rad * 180 / Math.PI;
+    // Solar declination angle
+    const declination = 23.45 * Math.sin(toRad(360 / 365 * (284 + dayOfYear)));
+    const latRad = toRad(latitude);
+    const declRad = toRad(declination);
+    // Sunset hour angle
+    const cosOmega = -Math.tan(latRad) * Math.tan(declRad);
+    if (cosOmega > 1) return 0;   // polar night
+    if (cosOmega < -1) return 12; // midnight sun
+    const omega = toDeg(Math.acos(cosOmega));
+    // Day length in hours
+    const dayLength = 2 * omega / 15;
+    // Clear-sky PSH estimate (atmospheric attenuation ~60%)
+    return Math.round(dayLength * 0.60 * 100) / 100;
+}
+
+// ============================================================
+// Trailer Intelligence Computation (spec + location aware)
+// ============================================================
+async function computeTrailerIntelligence(siteId) {
+    const snapshot = snapshotCache.get(siteId);
+    if (!snapshot) return null;
+
+    const specs = TRAILER_SPECS;
+
+    // --- Location & Weather ---
+    const gps = gpsCache.get(siteId);
+    let weather = null;
+    if (gps) {
+        try { weather = await fetchSolarIrradiance(gps.latitude, gps.longitude); } catch {}
+    }
+    const peakSunHours = weather?.peak_sun_hours ?? 5; // fallback to 5h US average
+
+    // --- Location-adjusted expected yield ---
+    const expectedDailyYieldWh = specs.solar.total_watts * peakSunHours * specs.solar.system_efficiency;
+
+    // --- Solar Score (location+weather adjusted) ---
+    const actualYieldTodayWh = snapshot.solar_yield_today !== null ? snapshot.solar_yield_today * 1000 : null;
+    const solarScore = (actualYieldTodayWh !== null && expectedDailyYieldWh > 0)
+        ? Math.round((actualYieldTodayWh / expectedDailyYieldWh) * 1000) / 10
+        : null;
+
+    // --- Panel performance (instantaneous) ---
+    const panelPerformance = snapshot.solar_watts !== null
+        ? Math.round((snapshot.solar_watts / specs.solar.total_watts) * 1000) / 10
+        : null;
+
+    // --- Historical data from dailyEnergy ---
+    const siteEnergy = dailyEnergy.get(siteId) || {};
+    const today = todayStr();
+    const pastDays = Object.entries(siteEnergy)
+        .filter(([d]) => d < today)
+        .sort(([a], [b]) => b.localeCompare(a))
+        .slice(0, 7);
+
+    let avgDailyConsumptionWh = null;
+    if (pastDays.length > 0) {
+        const consumptionValues = pastDays.map(([, i]) => i.consumed_wh).filter(v => v !== null && v > 0);
+        if (consumptionValues.length > 0) {
+            avgDailyConsumptionWh = Math.round(consumptionValues.reduce((s, v) => s + v, 0) / consumptionValues.length);
+        }
+    }
+
+    let avgDailyYieldWh = null;
+    if (pastDays.length > 0) {
+        const yieldValues = pastDays.map(([, i]) => i.yield_wh).filter(v => v !== null && v > 0);
+        if (yieldValues.length > 0) {
+            avgDailyYieldWh = Math.round(yieldValues.reduce((s, v) => s + v, 0) / yieldValues.length);
+        }
+    }
+    const avg7dScore = (avgDailyYieldWh !== null && expectedDailyYieldWh > 0)
+        ? Math.round((avgDailyYieldWh / expectedDailyYieldWh) * 1000) / 10
+        : null;
+
+    // --- Days of autonomy ---
+    const currentStoredWh = snapshot.battery_soc !== null ? Math.round(specs.battery.total_wh * snapshot.battery_soc / 100) : null;
+    const daysOfAutonomy = (currentStoredWh !== null && avgDailyConsumptionWh !== null && avgDailyConsumptionWh > 0)
+        ? Math.round((currentStoredWh / avgDailyConsumptionWh) * 10) / 10
+        : null;
+
+    // --- Charge time estimate ---
+    const remainingToFullWh = snapshot.battery_soc !== null ? Math.round(specs.battery.total_wh * (1 - snapshot.battery_soc / 100)) : null;
+    const currentSolarW = snapshot.solar_watts || 0;
+    const chargeTimeHours = (remainingToFullWh !== null && currentSolarW > 50)
+        ? Math.round((remainingToFullWh / currentSolarW) * 10) / 10
+        : null;
+
+    // --- Battery temp status ---
+    const bt = snapshot.battery_temp;
+    const batteryTempStatus = bt !== null
+        ? (bt > 45 ? 'critical' : bt > 35 ? 'warning' : bt < 5 ? 'cold' : 'normal')
+        : null;
+
+    // --- Energy balance today ---
+    const todayEnergy = siteEnergy[today] || {};
+    const todayYieldWh = todayEnergy.yield_wh ?? actualYieldTodayWh;
+    const todayConsumedWh = todayEnergy.consumed_wh ?? null;
+    const energyBalanceWh = (todayYieldWh !== null && todayConsumedWh !== null) ? Math.round(todayYieldWh - todayConsumedWh) : null;
+
+    return {
+        site_id: siteId,
+        site_name: snapshot.site_name,
+        timestamp: Date.now(),
+        specs: {
+            solar_capacity_w: specs.solar.total_watts,
+            battery_capacity_wh: specs.battery.total_wh,
+            usable_capacity_wh: specs.battery.usable_wh,
+        },
+        location: {
+            latitude: gps?.latitude ?? null,
+            longitude: gps?.longitude ?? null,
+            peak_sun_hours: peakSunHours,
+            cloud_cover_pct: weather?.cloud_cover_pct ?? null,
+            sunshine_hours: weather?.sunshine_hours ?? null,
+            data_source: weather?.data_source ?? 'default',
+            expected_daily_yield_wh: Math.round(expectedDailyYieldWh),
+        },
+        solar: {
+            score: solarScore,
+            score_label: solarScore !== null ? (solarScore >= 90 ? 'Excellent' : solarScore >= 70 ? 'Good' : solarScore >= 50 ? 'Fair' : 'Poor') : null,
+            panel_performance_pct: panelPerformance,
+            current_watts: snapshot.solar_watts,
+            yield_today_wh: actualYieldTodayWh !== null ? Math.round(actualYieldTodayWh) : null,
+            avg_7d_yield_wh: avgDailyYieldWh,
+            avg_7d_score: avg7dScore,
+        },
+        battery: {
+            soc_pct: snapshot.battery_soc,
+            stored_wh: currentStoredWh,
+            remaining_to_full_wh: remainingToFullWh,
+            days_of_autonomy: daysOfAutonomy,
+            charge_time_hours: chargeTimeHours,
+            temp_status: batteryTempStatus,
+            temp_celsius: snapshot.battery_temp,
+        },
+        energy: {
+            today_yield_wh: todayYieldWh !== null ? Math.round(todayYieldWh) : null,
+            today_consumed_wh: todayConsumedWh !== null ? Math.round(todayConsumedWh) : null,
+            today_balance_wh: energyBalanceWh,
+            avg_daily_consumption_wh: avgDailyConsumptionWh,
+        },
+    };
+}
+
+// ============================================================
 // Daily energy tracker: siteId -> { [dateStr]: { yield_wh, consumed_wh, site_name } }
 // Keeps up to 14 days of data in memory
 // ============================================================
@@ -1132,6 +1333,236 @@ app.get('/api/analytics/trailer/:id/battery-health', async (req, res) => {
     }
 });
 
+// ============================================================
+// Intelligence API: Spec + location-aware metrics
+// ============================================================
+app.get('/api/intelligence/trailer/:id', async (req, res) => {
+    try {
+        const siteId = parseInt(req.params.id);
+        const intel = await computeTrailerIntelligence(siteId);
+        if (!intel) {
+            return res.status(404).json({ success: false, error: 'Trailer not found or no data' });
+        }
+        res.json({ success: true, intelligence: intel });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/fleet/intelligence', async (req, res) => {
+    try {
+        const results = [];
+        // Batch weather fetches by unique GPS locations first
+        const uniqueLocations = new Map();
+        for (const [siteId] of snapshotCache) {
+            const gps = gpsCache.get(siteId);
+            if (gps) {
+                const key = `${Math.round(gps.latitude * 10) / 10},${Math.round(gps.longitude * 10) / 10}`;
+                if (!uniqueLocations.has(key)) {
+                    uniqueLocations.set(key, { lat: gps.latitude, lon: gps.longitude });
+                }
+            }
+        }
+        // Pre-fetch weather for all unique locations (in parallel, max 10)
+        const locationEntries = Array.from(uniqueLocations.values()).slice(0, 10);
+        await Promise.allSettled(locationEntries.map(loc => fetchSolarIrradiance(loc.lat, loc.lon)));
+
+        // Now compute intelligence for all trailers (weather is cached)
+        for (const [siteId] of snapshotCache) {
+            const intel = await computeTrailerIntelligence(siteId);
+            if (intel) results.push(intel);
+        }
+
+        // Fleet-wide aggregates
+        const withScore = results.filter(r => r.solar.score !== null);
+        const withAutonomy = results.filter(r => r.battery.days_of_autonomy !== null);
+        const withPerformance = results.filter(r => r.solar.panel_performance_pct !== null);
+
+        const underperforming = results.filter(r => r.solar.avg_7d_score !== null && r.solar.avg_7d_score < 50);
+        const lowAutonomy = results.filter(r => r.battery.days_of_autonomy !== null && r.battery.days_of_autonomy < 1.5);
+
+        res.json({
+            success: true,
+            fleet: {
+                trailer_count: results.length,
+                avg_solar_score: withScore.length > 0
+                    ? Math.round(withScore.reduce((s, r) => s + r.solar.score, 0) / withScore.length * 10) / 10
+                    : null,
+                avg_panel_performance: withPerformance.length > 0
+                    ? Math.round(withPerformance.reduce((s, r) => s + r.solar.panel_performance_pct, 0) / withPerformance.length * 10) / 10
+                    : null,
+                avg_days_autonomy: withAutonomy.length > 0
+                    ? Math.round(withAutonomy.reduce((s, r) => s + r.battery.days_of_autonomy, 0) / withAutonomy.length * 10) / 10
+                    : null,
+                underperforming_count: underperforming.length,
+                low_autonomy_count: lowAutonomy.length,
+                specs: TRAILER_SPECS,
+            },
+            trailers: results,
+            underperforming: underperforming.map(r => ({
+                site_id: r.site_id, site_name: r.site_name, score_7d: r.solar.avg_7d_score,
+            })),
+            low_autonomy: lowAutonomy.map(r => ({
+                site_id: r.site_id, site_name: r.site_name, days: r.battery.days_of_autonomy, soc: r.battery.soc_pct,
+            })),
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Agentic Analysis: Claude-powered trailer intelligence
+// ============================================================
+app.post('/api/analyze/trailer/:id', async (req, res) => {
+    if (!anthropic) {
+        return res.status(501).json({ error: 'Claude API key not configured' });
+    }
+
+    const siteId = parseInt(req.params.id);
+    const snapshot = snapshotCache.get(siteId);
+    if (!snapshot) {
+        return res.status(404).json({ error: 'Trailer not found or no data' });
+    }
+
+    try {
+        const intel = await computeTrailerIntelligence(siteId);
+        const alerts = computeAlerts().filter(a => a.site_id === siteId);
+        const energyHistory = dailyEnergy.get(siteId) || {};
+
+        // Find matching Pepwave device
+        let pepwaveDevice = null;
+        for (const [name, device] of pepwaveCache.entries()) {
+            if (name === snapshot.site_name) { pepwaveDevice = device; break; }
+        }
+
+        // Get battery health trend from DB
+        let batteryTrend = null;
+        if (dbAvailable) {
+            try {
+                const dataPoints = await getBatteryHistory(siteId, 30);
+                if (dataPoints.length >= 3) {
+                    const n = dataPoints.length;
+                    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+                    for (let i = 0; i < n; i++) {
+                        const y = dataPoints[i].min_soc ?? dataPoints[i].avg_soc ?? 0;
+                        sumX += i; sumY += y; sumXY += i * y; sumXX += i * i;
+                    }
+                    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+                    batteryTrend = {
+                        direction: slope < -0.5 ? 'declining' : slope > 0.5 ? 'improving' : 'stable',
+                        daily_change_pct: Math.round(slope * 100) / 100,
+                        data_points: n,
+                    };
+                }
+            } catch {}
+        }
+
+        // Build context for Claude
+        const ctx = [
+            `TRAILER: ${snapshot.site_name} (ID: ${siteId})`,
+            `TIMESTAMP: ${new Date().toISOString()}`,
+            '',
+            '=== HARDWARE SPECIFICATIONS ===',
+            `Solar: ${TRAILER_SPECS.solar.panels}x ${TRAILER_SPECS.solar.panel_watts}W panels = ${TRAILER_SPECS.solar.total_watts}W total capacity`,
+            `Battery: ${TRAILER_SPECS.battery.count}x ${TRAILER_SPECS.battery.ah_per_battery}Ah ${TRAILER_SPECS.battery.voltage}V = ${TRAILER_SPECS.battery.total_wh}Wh (${(TRAILER_SPECS.battery.total_wh / 1000).toFixed(1)} kWh)`,
+            `System efficiency factor: ${TRAILER_SPECS.solar.system_efficiency * 100}%`,
+            '',
+            '=== LOCATION & WEATHER ===',
+            `GPS: ${intel.location.latitude ?? 'unknown'}, ${intel.location.longitude ?? 'unknown'}`,
+            `Peak Sun Hours: ${intel.location.peak_sun_hours}h (source: ${intel.location.data_source})`,
+            `Cloud Cover: ${intel.location.cloud_cover_pct !== null ? intel.location.cloud_cover_pct + '%' : 'unknown'}`,
+            `Expected Daily Yield: ${intel.location.expected_daily_yield_wh}Wh`,
+            '',
+            '=== LIVE READINGS ===',
+            `Battery SOC: ${snapshot.battery_soc}%`,
+            `Battery Voltage: ${snapshot.battery_voltage}V`,
+            `Battery Current: ${snapshot.battery_current}A`,
+            `Battery Temp: ${snapshot.battery_temp}°C`,
+            `Battery Power: ${snapshot.battery_power}W`,
+            `Solar Power (now): ${snapshot.solar_watts}W`,
+            `Solar Yield Today: ${snapshot.solar_yield_today} kWh`,
+            `Solar Yield Yesterday: ${snapshot.solar_yield_yesterday} kWh`,
+            `Charge State: ${snapshot.charge_state}`,
+            '',
+            '=== COMPUTED INTELLIGENCE ===',
+            `Solar Score: ${intel.solar.score}% (${intel.solar.score_label}) — location+weather adjusted`,
+            `Panel Performance (now): ${intel.solar.panel_performance_pct}% of ${TRAILER_SPECS.solar.total_watts}W rated`,
+            `7-Day Avg Score: ${intel.solar.avg_7d_score}%`,
+            `Days of Autonomy: ${intel.battery.days_of_autonomy}`,
+            `Est. Charge Time to Full: ${intel.battery.charge_time_hours ? intel.battery.charge_time_hours + 'h' : 'N/A'}`,
+            `Battery Temp Status: ${intel.battery.temp_status}`,
+            `Stored Energy: ${intel.battery.stored_wh}Wh of ${TRAILER_SPECS.battery.total_wh}Wh`,
+            `Avg Daily Consumption: ${intel.energy.avg_daily_consumption_wh}Wh`,
+            `Today Balance: ${intel.energy.today_balance_wh}Wh`,
+        ];
+
+        if (batteryTrend) {
+            ctx.push('', '=== BATTERY HEALTH TREND (30 days) ===');
+            ctx.push(`Direction: ${batteryTrend.direction}`);
+            ctx.push(`Daily SOC change: ${batteryTrend.daily_change_pct}%/day`);
+        }
+
+        if (alerts.length > 0) {
+            ctx.push('', '=== ACTIVE ALERTS ===');
+            for (const a of alerts) ctx.push(`Energy deficit streak: ${a.streak_days} days (${a.severity})`);
+        }
+
+        const energyDays = Object.entries(energyHistory).sort(([a], [b]) => b.localeCompare(a)).slice(0, 14);
+        if (energyDays.length > 0) {
+            ctx.push('', '=== DAILY ENERGY HISTORY (recent) ===');
+            for (const [date, info] of energyDays) {
+                ctx.push(`${date}: yield=${info.yield_wh !== null ? Math.round(info.yield_wh) : '?'}Wh, consumed=${info.consumed_wh !== null ? Math.round(info.consumed_wh) : '?'}Wh`);
+            }
+        }
+
+        if (pepwaveDevice) {
+            ctx.push('', '=== NETWORK STATUS ===');
+            ctx.push(`Status: ${pepwaveDevice.online ? 'Online' : 'Offline'}`);
+            ctx.push(`Signal: ${pepwaveDevice.cellular?.signal_bar ?? '?'}/5 bars`);
+            ctx.push(`RSRP: ${pepwaveDevice.cellular?.signal?.rsrp ?? '?'} dBm`);
+        }
+
+        const systemPrompt = `You are an expert solar energy systems analyst for a fleet of construction site trailers.
+Each trailer has ${TRAILER_SPECS.solar.panels}x ${TRAILER_SPECS.solar.panel_watts}W solar panels (${TRAILER_SPECS.solar.total_watts}W total) and ${TRAILER_SPECS.battery.count}x ${TRAILER_SPECS.battery.ah_per_battery}Ah ${TRAILER_SPECS.battery.voltage}V batteries (${(TRAILER_SPECS.battery.total_wh / 1000).toFixed(1)} kWh total storage).
+
+Analyze the trailer data and provide:
+1. STATUS SUMMARY (1-2 sentences: overall health assessment)
+2. KEY FINDINGS (3-5 bullet points of the most important observations)
+3. RECOMMENDATIONS (2-4 specific, actionable recommendations)
+4. RISK ASSESSMENT (low/medium/high with brief explanation)
+
+Consider:
+- Is the Solar Score reasonable for the location and weather conditions?
+- Is the battery being drawn down faster than it charges?
+- Are there signs of panel degradation or underperformance?
+- How many days can this trailer run without sunlight?
+- Any temperature or voltage concerns?
+
+Be specific with numbers. Reference the hardware specs. Keep under 400 words.
+Respond in plain text with the section headers above.`;
+
+        const msg = await anthropic.messages.create({
+            model: 'claude-sonnet-4-5-20250929',
+            max_tokens: 1200,
+            messages: [{ role: 'user', content: ctx.join('\n') }],
+            system: systemPrompt,
+        });
+
+        res.json({
+            success: true,
+            site_id: siteId,
+            site_name: snapshot.site_name,
+            analysis: msg.content[0].text,
+            intelligence: intel,
+            generated_at: new Date().toISOString(),
+        });
+    } catch (err) {
+        console.error(`Analyze trailer ${siteId} error:`, err.message);
+        res.status(500).json({ error: `Analysis failed: ${err.message}` });
+    }
+});
+
 // --- Helper: extract values from diagnostics records ---
 function extractDiagValue(records, code) {
     const match = records.find(r => r.code === code && r.Device !== 'Gateway');
@@ -1615,12 +2046,23 @@ IMPORTANT:
 - For daily aggregations, group by DATE(to_timestamp(timestamp/1000)).
 - PostgreSQL REAL columns: cast to numeric for round(): round(column::numeric, 2)
 
+Trailer hardware specs: ${TRAILER_SPECS.solar.panels}x ${TRAILER_SPECS.solar.panel_watts}W solar panels (${TRAILER_SPECS.solar.total_watts}W total), ${TRAILER_SPECS.battery.count}x ${TRAILER_SPECS.battery.ah_per_battery}Ah ${TRAILER_SPECS.battery.voltage}V batteries (${TRAILER_SPECS.battery.total_wh}Wh / ${(TRAILER_SPECS.battery.total_wh / 1000).toFixed(1)} kWh total storage).
+
+Intelligence vocabulary (available in live context below):
+- "solar score" → actual yield vs location+weather-adjusted expected yield (0-100+%)
+- "solar efficiency" → same as solar score
+- "days of autonomy" → stored Wh / avg daily consumption Wh
+- "underperforming trailers" → those with 7-day avg solar score below 50%
+- "panel performance" → instantaneous solar watts / rated ${TRAILER_SPECS.solar.total_watts}W capacity
+
 Examples:
 - "trailers at Downtown site" → JOIN trailer_assignments + job_sites WHERE js.name ILIKE '%downtown%'
 - "which sites have most maintenance costs" → SUM(labor_cost_cents + parts_cost_cents) from maintenance_logs GROUP BY job_site_id
 - "low battery trailers" → DISTINCT ON site_snapshots for latest where battery_soc < 30
 - "site rankings by SOC" → analytics_daily_metrics AVG(avg_soc) GROUP BY site_id, JOIN job_sites
 - "data usage this week" → aggregate pepwave_snapshots usage_mb grouped by device_name
+- "underperforming trailers" → use intelligence metrics from live context
+- "what's the solar score for trailer X" → use intelligence metrics from live context
 `;
 
 app.post('/api/query', async (req, res) => {
@@ -1644,9 +2086,21 @@ app.post('/api/query', async (req, res) => {
             snapshotSummary.push(`${snap.site_name || 'Site ' + siteId}: SOC=${snap.battery_soc}%, ${snap.battery_voltage}V, solar=${snap.solar_watts}W, charge=${snap.charge_state}`);
         }
 
+        // Build intelligence summary from computed metrics
+        const intelSummary = [];
+        for (const [siteId] of snapshotCache) {
+            try {
+                const intel = await computeTrailerIntelligence(siteId);
+                if (intel) {
+                    intelSummary.push(`${intel.site_name}: score=${intel.solar.score ?? '?'}%(${intel.solar.score_label ?? '?'}), autonomy=${intel.battery.days_of_autonomy ?? '?'}d, panel=${intel.solar.panel_performance_pct ?? '?'}%, PSH=${intel.location.peak_sun_hours}h`);
+                }
+            } catch {}
+        }
+
         const liveContext = `\nCurrent live data (${new Date().toISOString()}):\n` +
             `Pepwave devices (${deviceSummary.length} total):\n${deviceSummary.slice(0, 20).join('\n')}${deviceSummary.length > 20 ? '\n...(truncated)' : ''}\n\n` +
-            `VRM sites (${snapshotSummary.length} total):\n${snapshotSummary.slice(0, 20).join('\n')}${snapshotSummary.length > 20 ? '\n...(truncated)' : ''}`;
+            `VRM sites (${snapshotSummary.length} total):\n${snapshotSummary.slice(0, 20).join('\n')}${snapshotSummary.length > 20 ? '\n...(truncated)' : ''}` +
+            (intelSummary.length > 0 ? `\n\nIntelligence metrics (specs: ${TRAILER_SPECS.solar.total_watts}W solar, ${TRAILER_SPECS.battery.total_wh}Wh battery per trailer):\n${intelSummary.slice(0, 20).join('\n')}${intelSummary.length > 20 ? '\n...(truncated)' : ''}` : '');
 
         const systemPrompt = FLEET_SCHEMA + liveContext + `\n\nRespond in this JSON format:\n{\n  "answer": "<human-readable answer to the question>",\n  "sql": "<optional SQL query if database lookup would help, or null>",\n  "data": null\n}\n\nIf you can answer from the live context alone, set sql to null and answer directly.\nIf a SQL query would give better/more complete data, include it. The system will execute it and ask you to refine the answer.\nAlways respond with valid JSON only, no markdown fences.`;
 

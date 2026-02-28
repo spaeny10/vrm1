@@ -3982,6 +3982,214 @@ body {
   color: #95a5a6;
 }
 
+/* ===== System Intelligence ===== */
+.detail-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.detail-section-header h2 { margin-bottom: 0; }
+
+.intel-specs-badge {
+  font-size: 12px;
+  color: var(--text-secondary, #7f8c8d);
+  background: rgba(255,255,255,0.05);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.intel-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.intel-metric-card {
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.intel-metric-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.intel-metric-title {
+  font-size: 13px;
+  color: var(--text-secondary, #7f8c8d);
+  font-weight: 500;
+}
+
+.intel-metric-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary, #ecf0f1);
+  line-height: 1.1;
+}
+.intel-metric-value.intel-critical { color: #e74c3c; }
+.intel-metric-value.intel-warning { color: #f39c12; }
+.intel-metric-value.intel-good { color: #2ecc71; }
+
+.intel-metric-unit {
+  font-size: 14px;
+  font-weight: 500;
+  margin-left: 4px;
+  color: var(--text-secondary, #7f8c8d);
+}
+
+.intel-metric-detail {
+  font-size: 12px;
+  color: var(--text-secondary, #7f8c8d);
+  margin-top: 4px;
+}
+.intel-metric-secondary {
+  font-size: 12px;
+  color: var(--text-muted, #95a5a6);
+  margin-top: 2px;
+}
+
+.intel-score-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.intel-score-badge.score-excellent { background: rgba(46,204,113,0.15); color: #2ecc71; }
+.intel-score-badge.score-good { background: rgba(52,152,219,0.15); color: #3498db; }
+.intel-score-badge.score-fair { background: rgba(243,156,18,0.15); color: #f39c12; }
+.intel-score-badge.score-poor { background: rgba(231,76,60,0.15); color: #e74c3c; }
+
+/* Weather context line */
+.intel-weather-context {
+  font-size: 12px;
+  color: var(--text-secondary, #7f8c8d);
+  padding: 8px 12px;
+  background: rgba(255,255,255,0.02);
+  border-radius: 6px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.intel-source-tag {
+  display: inline-block;
+  background: rgba(52,152,219,0.12);
+  color: #3498db;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+/* Energy Balance Bars */
+.intel-energy-balance {
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 16px;
+}
+.intel-balance-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.intel-balance-header .positive { color: #2ecc71; }
+.intel-balance-header .negative { color: #e74c3c; }
+
+.intel-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.intel-bar-label {
+  width: 38px;
+  font-size: 12px;
+  color: var(--text-secondary, #7f8c8d);
+}
+.intel-bar-track {
+  flex: 1;
+  height: 10px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.intel-bar {
+  height: 100%;
+  border-radius: 5px;
+  transition: width 0.5s ease;
+}
+.intel-bar-yield { background: #2ecc71; }
+.intel-bar-consumed { background: #e74c3c; }
+.intel-bar-value {
+  width: 55px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-secondary, #7f8c8d);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Agentic Analysis */
+.intel-analysis-section { margin-top: 16px; }
+.intel-analyze-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.intel-analysis-error {
+  margin-top: 8px;
+  color: #e74c3c;
+  font-size: 13px;
+}
+.intel-analysis-result {
+  margin-top: 16px;
+  background: rgba(52,152,219,0.08);
+  border: 1px solid rgba(52,152,219,0.2);
+  border-radius: 8px;
+  padding: 16px;
+}
+.intel-analysis-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  font-weight: 600;
+  font-size: 14px;
+  color: #3498db;
+}
+.intel-analysis-time {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary, #7f8c8d);
+}
+.intel-analysis-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary, #ecf0f1);
+  white-space: pre-wrap;
+  font-family: inherit;
+  margin: 0;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
 /* ===== Mobile Responsive (480px) ===== */
 @media (max-width: 480px) {
   .app-layout {
@@ -4084,5 +4292,15 @@ body {
   }
   .breadcrumbs {
     font-size: 13px;
+  }
+  .intel-metrics-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .intel-metric-value {
+    font-size: 22px;
+  }
+  .intel-weather-context {
+    font-size: 11px;
   }
 }

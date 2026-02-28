@@ -323,3 +323,28 @@ export async function fetchSiteMaintenance(jobSiteId) {
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     return res.json();
 }
+
+// ============================================================
+// Intelligence
+// ============================================================
+
+export async function fetchTrailerIntelligence(siteId) {
+    const res = await fetch(`${API_BASE}/intelligence/trailer/${siteId}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchFleetIntelligence() {
+    const res = await fetch(`${API_BASE}/fleet/intelligence`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function analyzeTrailer(siteId) {
+    const res = await fetch(`${API_BASE}/analyze/trailer/${siteId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}

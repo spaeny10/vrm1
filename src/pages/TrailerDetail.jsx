@@ -9,7 +9,7 @@ import 'chartjs-adapter-date-fns'
 import zoomPlugin from 'chartjs-plugin-zoom'
 import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent, fetchBatteryHealth } from '../api/vrm'
+import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent, fetchBatteryHealth, fetchTrailerIntelligence, analyzeTrailer } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import AlarmBadge from '../components/AlarmBadge'
@@ -74,6 +74,26 @@ function TrailerDetail() {
     const { data: networkData } = useApiPolling(fetchNetworkFn, 60000)
     const { data: componentsData, refetch: refetchComponents } = useApiPolling(fetchComponentsFn, 120000)
     const { data: batteryHealthData } = useApiPolling(fetchBatteryHealthFn, 300000)
+
+    const fetchIntelFn = useCallback(() => fetchTrailerIntelligence(id), [id])
+    const { data: intelligenceData } = useApiPolling(fetchIntelFn, 60000)
+
+    const [analysisResult, setAnalysisResult] = useState(null)
+    const [analysisLoading, setAnalysisLoading] = useState(false)
+    const [analysisError, setAnalysisError] = useState(null)
+
+    const handleAnalyze = async () => {
+        setAnalysisLoading(true)
+        setAnalysisError(null)
+        try {
+            const result = await analyzeTrailer(id)
+            setAnalysisResult(result)
+        } catch (err) {
+            setAnalysisError(err.message)
+        } finally {
+            setAnalysisLoading(false)
+        }
+    }
 
     const components = componentsData?.components || []
 
@@ -521,6 +541,164 @@ function TrailerDetail() {
                     </div>
                 </div>
             )}
+
+            {/* System Intelligence */}
+            {intelligenceData?.intelligence && (() => {
+                const intel = intelligenceData.intelligence
+                return (
+                    <div className="detail-section">
+                        <div className="detail-section-header">
+                            <h2>System Intelligence</h2>
+                            <span className="intel-specs-badge">
+                                {intel.specs.solar_capacity_w}W Solar / {(intel.specs.battery_capacity_wh / 1000).toFixed(1)} kWh Battery
+                            </span>
+                        </div>
+
+                        <div className="intel-metrics-grid">
+                            <div className="intel-metric-card">
+                                <div className="intel-metric-header">
+                                    <span className="intel-metric-title">Solar Score</span>
+                                </div>
+                                <div className={`intel-metric-value ${
+                                    intel.solar.score !== null
+                                        ? (intel.solar.score >= 90 ? 'intel-good' : intel.solar.score >= 50 ? 'intel-warning' : 'intel-critical')
+                                        : ''
+                                }`}>
+                                    {intel.solar.score !== null ? intel.solar.score : '--'}
+                                    {intel.solar.score !== null && <span className="intel-metric-unit">%</span>}
+                                </div>
+                                <div className="intel-metric-detail">
+                                    {intel.solar.score_label && <span className={`intel-score-badge score-${intel.solar.score_label.toLowerCase()}`}>{intel.solar.score_label}</span>}
+                                </div>
+                                {intel.solar.avg_7d_score !== null && (
+                                    <div className="intel-metric-secondary">7-day avg: {intel.solar.avg_7d_score}%</div>
+                                )}
+                            </div>
+
+                            <div className="intel-metric-card">
+                                <div className="intel-metric-header">
+                                    <span className="intel-metric-title">Panel Output</span>
+                                </div>
+                                <div className="intel-metric-value">
+                                    {intel.solar.panel_performance_pct !== null ? intel.solar.panel_performance_pct : '--'}
+                                    {intel.solar.panel_performance_pct !== null && <span className="intel-metric-unit">%</span>}
+                                </div>
+                                <div className="intel-metric-detail">
+                                    {intel.solar.current_watts !== null && <span>{Math.round(intel.solar.current_watts)}W of {intel.specs.solar_capacity_w}W rated</span>}
+                                </div>
+                            </div>
+
+                            <div className="intel-metric-card">
+                                <div className="intel-metric-header">
+                                    <span className="intel-metric-title">Days of Autonomy</span>
+                                </div>
+                                <div className={`intel-metric-value ${
+                                    intel.battery.days_of_autonomy !== null
+                                        ? (intel.battery.days_of_autonomy < 1 ? 'intel-critical' : intel.battery.days_of_autonomy < 2 ? 'intel-warning' : 'intel-good')
+                                        : ''
+                                }`}>
+                                    {intel.battery.days_of_autonomy !== null ? intel.battery.days_of_autonomy : '--'}
+                                    {intel.battery.days_of_autonomy !== null && <span className="intel-metric-unit">days</span>}
+                                </div>
+                                <div className="intel-metric-detail">
+                                    {intel.battery.stored_wh !== null && intel.energy.avg_daily_consumption_wh !== null && (
+                                        <span>{intel.battery.stored_wh}Wh / {intel.energy.avg_daily_consumption_wh}Wh per day</span>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="intel-metric-card">
+                                <div className="intel-metric-header">
+                                    <span className="intel-metric-title">Time to Full</span>
+                                </div>
+                                <div className="intel-metric-value">
+                                    {intel.battery.charge_time_hours !== null ? intel.battery.charge_time_hours : '--'}
+                                    {intel.battery.charge_time_hours !== null && <span className="intel-metric-unit">hrs</span>}
+                                </div>
+                                <div className="intel-metric-detail">
+                                    {intel.battery.remaining_to_full_wh !== null && (
+                                        <span>{intel.battery.remaining_to_full_wh}Wh remaining</span>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="intel-metric-card">
+                                <div className="intel-metric-header">
+                                    <span className="intel-metric-title">Yield Today</span>
+                                </div>
+                                <div className="intel-metric-value">
+                                    {intel.solar.yield_today_wh !== null ? Math.round(intel.solar.yield_today_wh) : '--'}
+                                    <span className="intel-metric-unit">Wh</span>
+                                </div>
+                                <div className="intel-metric-detail">
+                                    <span>of {intel.location.expected_daily_yield_wh}Wh expected</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Weather context */}
+                        {intel.location.data_source !== 'default' && (
+                            <div className="intel-weather-context">
+                                PSH: {intel.location.peak_sun_hours}h
+                                {intel.location.cloud_cover_pct !== null && <> | Cloud cover: {intel.location.cloud_cover_pct}%</>}
+                                {intel.location.sunshine_hours !== null && <> | Sunshine: {intel.location.sunshine_hours}h</>}
+                                <span className="intel-source-tag">{intel.location.data_source === 'open-meteo' ? 'Open-Meteo' : 'Astronomical'}</span>
+                            </div>
+                        )}
+
+                        {/* Energy Balance Bar */}
+                        {intel.energy.today_yield_wh !== null && intel.energy.today_consumed_wh !== null && (
+                            <div className="intel-energy-balance">
+                                <div className="intel-balance-header">
+                                    <span>Today's Energy Balance</span>
+                                    <span className={intel.energy.today_balance_wh >= 0 ? 'positive' : 'negative'}>
+                                        {intel.energy.today_balance_wh >= 0 ? '+' : ''}{intel.energy.today_balance_wh}Wh
+                                    </span>
+                                </div>
+                                <div className="intel-balance-bars">
+                                    <div className="intel-bar-row">
+                                        <span className="intel-bar-label">Yield</span>
+                                        <div className="intel-bar-track">
+                                            <div className="intel-bar intel-bar-yield"
+                                                style={{ width: `${Math.min(100, (intel.energy.today_yield_wh / intel.location.expected_daily_yield_wh) * 100)}%` }} />
+                                        </div>
+                                        <span className="intel-bar-value">{intel.energy.today_yield_wh}</span>
+                                    </div>
+                                    <div className="intel-bar-row">
+                                        <span className="intel-bar-label">Used</span>
+                                        <div className="intel-bar-track">
+                                            <div className="intel-bar intel-bar-consumed"
+                                                style={{ width: `${Math.min(100, (intel.energy.today_consumed_wh / intel.location.expected_daily_yield_wh) * 100)}%` }} />
+                                        </div>
+                                        <span className="intel-bar-value">{intel.energy.today_consumed_wh}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* AI Analysis */}
+                        <div className="intel-analysis-section">
+                            <button
+                                className="btn btn-primary intel-analyze-btn"
+                                onClick={handleAnalyze}
+                                disabled={analysisLoading}
+                            >
+                                {analysisLoading ? 'Analyzing...' : 'AI Analysis'}
+                            </button>
+                            {analysisError && <div className="intel-analysis-error">{analysisError}</div>}
+                            {analysisResult && (
+                                <div className="intel-analysis-result">
+                                    <div className="intel-analysis-header">
+                                        <span>AI Analysis</span>
+                                        <span className="intel-analysis-time">{new Date(analysisResult.generated_at).toLocaleTimeString()}</span>
+                                    </div>
+                                    <pre className="intel-analysis-text">{analysisResult.analysis}</pre>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )
+            })()}
 
             {/* Pepwave SIM + WAN section */}
             {pepwaveDevice && (
