@@ -281,13 +281,29 @@ function extractWanInterfaces(device) {
 
 app.get('/api/sites', async (req, res) => {
     try {
-        if (sitesCache && Date.now() - sitesCacheTime < SITES_CACHE_TTL) {
-            return res.json(sitesCache);
+        if (!sitesCache || Date.now() - sitesCacheTime >= SITES_CACHE_TTL) {
+            const data = await vrmFetch(`/users/${VRM_USER_ID}/installations`);
+            sitesCache = data;
+            sitesCacheTime = Date.now();
         }
-        const data = await vrmFetch(`/users/${VRM_USER_ID}/installations`);
-        sitesCache = data;
-        sitesCacheTime = Date.now();
-        res.json(data);
+        // Augment with IC2-only devices (those without VRM)
+        const vrmNames = new Set((sitesCache.records || []).map(r => r.name));
+        const ic2Only = [];
+        for (const [name, dev] of pepwaveCache.entries()) {
+            if (!vrmNames.has(name)) {
+                ic2Only.push({
+                    idSite: -dev.id,
+                    name: name,
+                    identifier: name,
+                    ic2_only: true,
+                });
+            }
+        }
+        const augmented = {
+            ...sitesCache,
+            records: [...(sitesCache.records || []), ...ic2Only],
+        };
+        res.json(augmented);
     } catch (err) {
         console.error('Error fetching sites:', err.message);
         res.status(500).json({ error: err.message });
@@ -577,7 +593,13 @@ app.get('/api/job-sites', async (req, res) => {
 
             for (const t of trailers) {
                 const snap = snapshotCache.get(t.site_id);
-                if (snap) {
+                const pw = pepwaveCache.get(t.site_name);
+                const isIc2Only = t.site_id < 0;
+
+                if (isIc2Only) {
+                    // IC2-only trailer — count as online if Pepwave is online
+                    if (pw?.online) trailersOnline++;
+                } else if (snap) {
                     trailersOnline++;
                     if (snap.battery_soc != null) {
                         totalSoc += snap.battery_soc;
@@ -591,7 +613,6 @@ app.get('/api/job-sites', async (req, res) => {
                     worstStatus = 'critical';
                 }
 
-                const pw = pepwaveCache.get(t.site_name);
                 if (pw) {
                     netTotal++;
                     if (pw.online) netOnline++;
@@ -610,13 +631,18 @@ app.get('/api/job-sites', async (req, res) => {
                 net_total: netTotal,
                 trailers: trailers.map(t => {
                     const snap = snapshotCache.get(t.site_id);
+                    const pw = pepwaveCache.get(t.site_name);
+                    const isIc2Only = t.site_id < 0;
                     return {
                         site_id: t.site_id,
                         site_name: t.site_name,
                         battery_soc: snap?.battery_soc ?? null,
                         solar_watts: snap?.solar_watts ?? null,
+                        solar_yield_today: snap?.solar_yield_today ?? null,
                         charge_state: snap?.charge_state ?? null,
-                        online: !!snap,
+                        online: isIc2Only ? (pw?.online ?? false) : !!snap,
+                        ic2_only: isIc2Only,
+                        network_online: pw?.online ?? false,
                     };
                 }),
             };
@@ -1101,9 +1127,19 @@ async function pollIc2Devices() {
     console.log(`[${new Date().toISOString()}] Polling InControl2 devices...`);
 
     try {
-        const result = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d?has_status=true`);
-        const devices = result.data || [];
-
+        // Fetch devices from ALL groups in the organization
+        const groupsResult = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g`);
+        const groups = groupsResult.data || [];
+        let devices = [];
+        for (const g of groups) {
+            try {
+                const result = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${g.id}/d?has_status=true`);
+                const groupDevices = (result.data || []).map(d => ({ ...d, _groupId: g.id }));
+                devices.push(...groupDevices);
+            } catch (e) {
+                console.log(`  IC2: failed to fetch group ${g.id} (${g.name}): ${e.message}`);
+            }
+        }
 
         let onlineCount = 0;
         let offlineCount = 0;
@@ -1179,7 +1215,8 @@ async function pollIc2Devices() {
                 const batch = gpsDevices.slice(i, i + 5);
                 const locPromises = batch.map(async (dev) => {
                     try {
-                        const locData = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d/${dev.id}/loc`);
+                        const gId = dev._groupId || IC2_GROUP_ID;
+                        const locData = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${gId}/d/${dev.id}/loc`);
                         const loc = (locData.data || [])[0];
                         if (loc && loc.la && loc.lo) {
                             // Update pepwaveCache with GPS
@@ -1198,6 +1235,13 @@ async function pollIc2Devices() {
                                         await upsertTrailerAssignment(vrmSite.idSite, vrmSite.name, loc.la, loc.lo);
                                     } catch (e) { /* non-critical */ }
                                 }
+                            } else if (dbAvailable) {
+                                // IC2-only device (no VRM match) — use negative IC2 device ID
+                                const syntheticId = -dev.id;
+                                gpsCache.set(syntheticId, { latitude: loc.la, longitude: loc.lo, updatedAt: Date.now() });
+                                try {
+                                    await upsertTrailerAssignment(syntheticId, dev.name, loc.la, loc.lo);
+                                } catch (e) { /* non-critical */ }
                             }
                         }
                     } catch (e) { /* skip device on error */ }
@@ -1209,6 +1253,23 @@ async function pollIc2Devices() {
             }
             if (gpsMatched > 0) {
                 console.log(`  IC2 GPS: fetched locations for ${gpsMatched} VRM-matched devices`);
+            }
+        }
+
+        // Ensure IC2-only devices without GPS also get trailer_assignments
+        if (dbAvailable && sitesCache) {
+            const vrmSites = sitesCache.records || [];
+            for (const dev of devices) {
+                const vrmSite = vrmSites.find(s => s.name === dev.name);
+                if (!vrmSite) {
+                    const syntheticId = -dev.id;
+                    // Only insert if not already covered by GPS section above
+                    if (!gpsCache.has(syntheticId)) {
+                        try {
+                            await upsertTrailerAssignment(syntheticId, dev.name, null, null);
+                        } catch (e) { /* non-critical */ }
+                    }
+                }
             }
         }
 

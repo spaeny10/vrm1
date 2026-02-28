@@ -1,9 +1,13 @@
-# Test files
+# Test/debug files
 exhaustive_sweep.js
 sweep_models.js
 test_hardcoded.js
 test_legacy.js
 test_semantic_search.js
+_check.js
+combined.json
+net_latest.json
+vrm_latest.json
 
 # Claude Code memory
 .claude/
