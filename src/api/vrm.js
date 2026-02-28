@@ -299,3 +299,27 @@ export async function fetchMaintenanceCostsBySite(days = 30) {
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     return res.json();
 }
+
+export async function fetchAlertHistory(days = 30) {
+    const res = await fetch(`${API_BASE}/alerts/history?days=${days}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchFleetDashboard() {
+    const res = await fetch(`${API_BASE}/fleet/dashboard`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchBatteryHealth(siteId, days = 30) {
+    const res = await fetch(`${API_BASE}/analytics/trailer/${siteId}/battery-health?days=${days}`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchSiteMaintenance(jobSiteId) {
+    const res = await fetch(`${API_BASE}/maintenance?job_site_id=${jobSiteId}&limit=10`);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}

@@ -2,59 +2,9 @@ import { useState, useCallback, useMemo } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchFleetNetwork, fetchJobSites } from '../api/vrm'
 import DataFreshness from '../components/DataFreshness'
-
-function SignalBars({ bars, size = 20 }) {
-    const maxBars = 5
-    const barWidth = Math.floor(size / 7)
-    const gap = 1
-    return (
-        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-            {Array.from({ length: maxBars }, (_, i) => {
-                const h = ((i + 1) / maxBars) * (size - 2) + 2
-                const x = i * (barWidth + gap)
-                const y = size - h
-                const active = i < (bars ?? 0)
-                return (
-                    <rect
-                        key={i}
-                        x={x}
-                        y={y}
-                        width={barWidth}
-                        height={h}
-                        rx={1}
-                        fill={active
-                            ? (bars >= 4 ? '#2ecc71' : bars >= 2 ? '#f1c40f' : '#e74c3c')
-                            : 'rgba(255,255,255,0.08)'}
-                    />
-                )
-            })}
-        </svg>
-    )
-}
-
-function signalQuality(rsrp) {
-    if (rsrp === null || rsrp === undefined) return { label: 'Unknown', color: '#888' }
-    if (rsrp >= -80) return { label: 'Excellent', color: '#2ecc71' }
-    if (rsrp >= -90) return { label: 'Good', color: '#27ae60' }
-    if (rsrp >= -100) return { label: 'Fair', color: '#f1c40f' }
-    if (rsrp >= -110) return { label: 'Poor', color: '#e67e22' }
-    return { label: 'Weak', color: '#e74c3c' }
-}
-
-function formatUptime(seconds) {
-    if (!seconds) return '—'
-    const d = Math.floor(seconds / 86400)
-    const h = Math.floor((seconds % 86400) / 3600)
-    if (d > 0) return `${d}d ${h}h`
-    const m = Math.floor((seconds % 3600) / 60)
-    return `${h}h ${m}m`
-}
-
-function formatMB(mb) {
-    if (!mb && mb !== 0) return '—'
-    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
-    return `${Math.round(mb)} MB`
-}
+import SignalBars from '../components/SignalBars'
+import { signalQuality, formatUptime, formatMB, formatDuration } from '../utils/format'
+import { generateCSV, downloadCSV } from '../utils/csv'
 
 function NetworkPage() {
     const [searchTerm, setSearchTerm] = useState('')
@@ -64,7 +14,7 @@ function NetworkPage() {
 
     const fetchNetwork = useCallback(() => fetchFleetNetwork(), [])
     const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
-    const { data, loading, lastUpdated } = useApiPolling(fetchNetwork, 60000)
+    const { data, loading, lastUpdated, refetch } = useApiPolling(fetchNetwork, 60000)
     const { data: jobSitesData } = useApiPolling(fetchJobSitesFn, 60000)
 
     const devices = data?.records || []
@@ -210,6 +160,9 @@ function NetworkPage() {
                     <h3 className="network-card-name">{device.name}</h3>
                     <span className={`network-status-badge network-status-${device.online ? 'online' : 'offline'}`}>
                         {device.online ? 'Online' : 'Offline'}
+                        {!device.online && device.offline_since && (
+                            <span className="offline-duration"> ({formatDuration(Date.now() - device.offline_since)})</span>
+                        )}
                     </span>
                 </div>
 
@@ -260,12 +213,39 @@ function NetworkPage() {
         )
     }
 
+    const handleExportNetwork = () => {
+        const headers = ['Device', 'Job Site', 'Status', 'Signal (bars)', 'RSRP (dBm)', 'Carrier', 'Technology', 'Uptime', 'Data Usage', 'Clients']
+        const rows = devices.map(d => {
+            const js = deviceToJobSite[d.name]
+            return [
+                d.name, js?.jobSiteName || 'Unassigned',
+                d.online ? 'Online' : 'Offline',
+                d.cellular?.signal_bar ?? '',
+                d.cellular?.signal?.rsrp ?? '',
+                d.cellular?.carrier || '',
+                d.cellular?.technology || '',
+                formatUptime(d.uptime),
+                formatMB(d.usage_mb),
+                d.client_count || 0,
+            ]
+        })
+        downloadCSV(generateCSV(headers, rows), 'network-devices.csv')
+    }
+
     return (
         <div className="network-page">
             <div className="page-header">
                 <div className="page-header-row">
                     <h1>Network</h1>
-                    <DataFreshness lastUpdated={lastUpdated} />
+                    <div className="page-header-actions">
+                        <button className="btn btn-sm btn-ghost" onClick={handleExportNetwork} title="Export CSV">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                            </svg>
+                            Export
+                        </button>
+                        <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
+                    </div>
                 </div>
                 <p className="page-subtitle">
                     Pepwave InControl2 &bull; {devices.length} devices across {groupedDevices.groups.length} sites

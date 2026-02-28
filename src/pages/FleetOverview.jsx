@@ -6,6 +6,7 @@ import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
 import QueryBar from '../components/QueryBar'
 import DataFreshness from '../components/DataFreshness'
+import { generateCSV, downloadCSV } from '../utils/csv'
 
 function FleetOverview() {
     const [viewMode, setViewMode] = useState('sites') // 'sites' or 'trailers'
@@ -15,7 +16,7 @@ function FleetOverview() {
 
     // Job sites data
     const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
-    const { data: jobSitesData, loading: jobSitesLoading, lastUpdated } = useApiPolling(fetchJobSitesFn, 30000)
+    const { data: jobSitesData, loading: jobSitesLoading, lastUpdated, refetch } = useApiPolling(fetchJobSitesFn, 30000)
     const jobSites = jobSitesData?.job_sites || []
 
     // Trailer-level data (for "All Trailers" view)
@@ -166,6 +167,34 @@ function FleetOverview() {
 
     const isLoading = viewMode === 'sites' ? (jobSitesLoading && !jobSitesData) : (sitesLoading && !sitesData)
 
+    const handleExport = () => {
+        if (viewMode === 'sites') {
+            const headers = ['Job Site', 'Status', 'Trailers', 'Online', 'Avg SOC (%)', 'Min SOC (%)', 'Total Solar (W)']
+            const rows = filteredJobSites.map(js => [
+                js.name, js.status, js.trailer_count, js.trailers_online,
+                js.avg_soc != null ? Number(js.avg_soc).toFixed(1) : '',
+                js.min_soc != null ? Number(js.min_soc).toFixed(1) : '',
+                js.total_solar != null ? Math.round(js.total_solar) : '',
+            ])
+            downloadCSV(generateCSV(headers, rows), 'fleet-sites.csv')
+        } else {
+            const headers = ['Trailer', 'Job Site', 'SOC (%)', 'Voltage (V)', 'Solar (W)', 'Yield Today (kWh)', 'Network']
+            const rows = filteredSites.map(s => {
+                const snap = snapshotMap[s.idSite]
+                const pw = pepwaveMap[s.name]
+                return [
+                    s.name, trailerJobSiteMap[s.idSite] || '',
+                    snap?.battery_soc != null ? Number(snap.battery_soc).toFixed(1) : '',
+                    snap?.battery_voltage != null ? Number(snap.battery_voltage).toFixed(1) : '',
+                    snap?.solar_watts != null ? Math.round(snap.solar_watts) : '',
+                    snap?.solar_yield_today != null ? Number(snap.solar_yield_today).toFixed(2) : '',
+                    pw?.online ? 'Online' : 'Offline',
+                ]
+            })
+            downloadCSV(generateCSV(headers, rows), 'fleet-trailers.csv')
+        }
+    }
+
     if (isLoading) {
         return (
             <div className="page-loading">
@@ -180,7 +209,15 @@ function FleetOverview() {
             <div className="page-header">
                 <div className="page-header-row">
                     <h1>Fleet Overview</h1>
-                    <DataFreshness lastUpdated={lastUpdated} />
+                    <div className="page-header-actions">
+                        <button className="btn btn-sm btn-ghost" onClick={handleExport} title="Export CSV">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                            </svg>
+                            Export
+                        </button>
+                        <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
+                    </div>
                 </div>
                 <p className="page-subtitle">
                     {kpis.jobSiteCount} job sites, {kpis.totalTrailers} trailers monitored

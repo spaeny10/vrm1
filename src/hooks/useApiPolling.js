@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-export function useApiPolling(fetchFn, intervalMs = 30000, deps = []) {
+// Module-level deduplication: cacheKey -> { promise, timestamp }
+const activeRequests = new Map();
+
+export function useApiPolling(fetchFn, intervalMs = 30000, deps = [], cacheKey = null) {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -9,7 +12,18 @@ export function useApiPolling(fetchFn, intervalMs = 30000, deps = []) {
 
     const doFetch = useCallback(async () => {
         try {
-            const result = await fetchFn();
+            let result;
+            if (cacheKey && activeRequests.has(cacheKey)) {
+                // Reuse in-flight request
+                result = await activeRequests.get(cacheKey).promise;
+            } else {
+                const promise = fetchFn();
+                if (cacheKey) {
+                    activeRequests.set(cacheKey, { promise, timestamp: Date.now() });
+                    promise.finally(() => activeRequests.delete(cacheKey));
+                }
+                result = await promise;
+            }
             if (mountedRef.current) {
                 setData(result);
                 setError(null);
@@ -22,7 +36,7 @@ export function useApiPolling(fetchFn, intervalMs = 30000, deps = []) {
                 setLoading(false);
             }
         }
-    }, [fetchFn]);
+    }, [fetchFn, cacheKey]);
 
     useEffect(() => {
         mountedRef.current = true;

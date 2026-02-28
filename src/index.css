@@ -3757,3 +3757,332 @@ body {
 }
 .alert-deficit-table .positive { color: #2ecc71; }
 .alert-deficit-table .negative { color: #e74c3c; }
+
+/* ===== Page Header Actions (export + freshness) ===== */
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+.page-header-actions .btn-ghost {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-secondary, #7f8c8d);
+  border: 1px solid rgba(255,255,255,0.1);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.page-header-actions .btn-ghost:hover {
+  background: rgba(255,255,255,0.12);
+  color: var(--text-primary, #ecf0f1);
+}
+
+/* ===== Refresh Button on DataFreshness ===== */
+.freshness-refresh-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary, #7f8c8d);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+.freshness-refresh-btn:hover {
+  color: #2ecc71;
+  background: rgba(46, 204, 113, 0.1);
+}
+.freshness-refresh-btn.spinning svg {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ===== Error Boundary ===== */
+.error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  padding: 2rem;
+}
+.error-boundary-content {
+  text-align: center;
+  max-width: 400px;
+}
+.error-boundary-content h2 {
+  margin: 1rem 0 0.5rem;
+  color: #e74c3c;
+}
+.error-boundary-content p {
+  color: var(--text-secondary, #7f8c8d);
+  margin-bottom: 1.5rem;
+}
+
+/* ===== 404 Not Found ===== */
+.not-found-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  padding: 2rem;
+}
+.not-found-content {
+  text-align: center;
+}
+.not-found-content h1 {
+  font-size: 4rem;
+  color: var(--text-secondary, #7f8c8d);
+  margin: 0;
+  opacity: 0.5;
+}
+.not-found-content p {
+  color: var(--text-secondary, #7f8c8d);
+  margin: 0.5rem 0 1.5rem;
+  font-size: 1.1rem;
+}
+
+/* ===== Battery Health Card ===== */
+.battery-health-card {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 1rem;
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.battery-health-indicator {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.battery-trend-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  width: fit-content;
+}
+.trend-stable {
+  background: rgba(52, 152, 219, 0.15);
+  color: #3498db;
+}
+.trend-improving {
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+}
+.trend-declining {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+}
+.battery-health-detail {
+  font-size: 13px;
+  color: var(--text-secondary, #7f8c8d);
+}
+.battery-critical-warning {
+  font-size: 12px;
+  color: #e74c3c;
+  font-weight: 500;
+}
+.battery-health-sparkline {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sparkline-svg {
+  width: 100%;
+  height: 40px;
+}
+.sparkline-label {
+  font-size: 11px;
+  color: var(--text-secondary, #7f8c8d);
+  text-align: center;
+}
+
+/* ===== Alert History Table ===== */
+.alert-resolved td {
+  opacity: 0.6;
+}
+.alert-active td {
+  font-weight: 500;
+}
+.alert-active-badge {
+  display: inline-block;
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ===== Offline Duration ===== */
+.offline-duration {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* ===== Section Header Row ===== */
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.section-header-row h2 {
+  margin: 0;
+}
+
+/* ===== Maintenance Badges ===== */
+.maintenance-type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: rgba(52, 152, 219, 0.15);
+  color: #3498db;
+  text-transform: capitalize;
+}
+.maintenance-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+.maintenance-status-badge.status-scheduled {
+  background: rgba(241, 196, 15, 0.15);
+  color: #f1c40f;
+}
+.maintenance-status-badge.status-in_progress {
+  background: rgba(52, 152, 219, 0.15);
+  color: #3498db;
+}
+.maintenance-status-badge.status-completed {
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+}
+.maintenance-status-badge.status-cancelled {
+  background: rgba(149, 165, 166, 0.15);
+  color: #95a5a6;
+}
+
+/* ===== Mobile Responsive (480px) ===== */
+@media (max-width: 480px) {
+  .app-layout {
+    flex-direction: column;
+  }
+  .sidebar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    z-index: 100;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    border-right: none;
+    padding: 0;
+  }
+  .sidebar-brand,
+  .sidebar-footer {
+    display: none;
+  }
+  .sidebar-nav {
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 4px 8px;
+    gap: 2px;
+    width: 100%;
+    justify-content: space-around;
+  }
+  .nav-item {
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 8px;
+    font-size: 10px;
+    min-width: 48px;
+    text-align: center;
+  }
+  .nav-item span:not(.nav-badge) {
+    font-size: 10px;
+  }
+  .nav-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    font-size: 9px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+  }
+  .main-content {
+    padding: 12px;
+    padding-bottom: 70px;
+    margin-left: 0;
+  }
+  .kpi-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .page-header-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .page-header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .fleet-controls {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .data-table {
+    min-width: 600px;
+  }
+  .rankings-table {
+    min-width: 700px;
+  }
+  .detail-section h2 {
+    font-size: 1rem;
+  }
+  .battery-health-card {
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .trailer-grid {
+    grid-template-columns: 1fr;
+  }
+  .network-card-grid {
+    grid-template-columns: 1fr;
+  }
+  .comparison-site-selector {
+    flex-wrap: wrap;
+  }
+  .breadcrumbs {
+    font-size: 13px;
+  }
+}

@@ -7,7 +7,7 @@ import {
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchJobSite } from '../api/vrm'
+import { fetchJobSite, fetchSiteMaintenance } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import Breadcrumbs from '../components/Breadcrumbs'
@@ -24,10 +24,13 @@ function JobSiteDetail() {
     const [nameInput, setNameInput] = useState('')
 
     const fetchFn = useCallback(() => fetchJobSite(id), [id])
+    const fetchMaintenanceFn = useCallback(() => fetchSiteMaintenance(id), [id])
     const { data, loading } = useApiPolling(fetchFn, 30000)
+    const { data: maintenanceData } = useApiPolling(fetchMaintenanceFn, 60000)
 
     const jobSite = data?.job_site
     const trailers = jobSite?.trailers || []
+    const maintenanceLogs = maintenanceData?.logs || []
 
     // Compute aggregated KPIs
     const kpis = useMemo(() => {
@@ -196,12 +199,44 @@ function JobSiteDetail() {
                 </div>
             </div>
 
-            {/* Maintenance placeholder */}
+            {/* Maintenance */}
             <div className="jobsite-section">
-                <h2>Maintenance</h2>
-                <div className="empty-section">
-                    <p>Maintenance tracking coming soon</p>
+                <div className="section-header-row">
+                    <h2>Maintenance</h2>
+                    <button className="btn btn-sm btn-primary" onClick={() => navigate('/maintenance')}>
+                        View All
+                    </button>
                 </div>
+                {maintenanceLogs.length > 0 ? (
+                    <div className="table-wrapper">
+                        <table className="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Type</th>
+                                    <th>Title</th>
+                                    <th>Status</th>
+                                    <th>Technician</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {maintenanceLogs.map(log => (
+                                    <tr key={log.id}>
+                                        <td>{log.scheduled_date ? new Date(log.scheduled_date).toLocaleDateString() : '—'}</td>
+                                        <td><span className="maintenance-type-badge">{log.visit_type}</span></td>
+                                        <td>{log.title}</td>
+                                        <td><span className={`maintenance-status-badge status-${log.status}`}>{log.status}</span></td>
+                                        <td>{log.technician || '—'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <div className="empty-section">
+                        <p>No maintenance logs for this site</p>
+                    </div>
+                )}
             </div>
         </div>
     )

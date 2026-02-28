@@ -208,6 +208,43 @@ export async function initDb() {
 
         console.log('  ✓ Analytics daily metrics table ready');
 
+        // Database indexes for name-based lookups
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_site_snapshots_site_name ON site_snapshots(site_name)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_pepwave_snapshots_device_name ON pepwave_snapshots(device_name)`);
+
+        // Daily energy summary (persists across server restarts)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS daily_energy_summary (
+        site_id INTEGER NOT NULL,
+        date DATE NOT NULL,
+        site_name TEXT,
+        yield_wh NUMERIC,
+        consumed_wh NUMERIC,
+        updated_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        PRIMARY KEY (site_id, date)
+      )
+    `);
+
+        // Alert history (persists across server restarts)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS alert_history (
+        id SERIAL PRIMARY KEY,
+        site_id INTEGER NOT NULL,
+        site_name TEXT,
+        severity TEXT NOT NULL,
+        streak_days INTEGER NOT NULL,
+        deficit_wh NUMERIC,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        resolved_at TIMESTAMPTZ
+      )
+    `);
+
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_alert_history_active ON alert_history(site_id) WHERE resolved_at IS NULL`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_alert_history_created ON alert_history(created_at DESC)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_daily_energy_date ON daily_energy_summary(date DESC)`);
+
+        console.log('  ✓ Energy summary, alert history tables ready');
+
         // Embeddings table for semantic search (1024 dimensions for Voyage AI)
         // Only create if pgvector is available
         try {
@@ -997,6 +1034,108 @@ export async function getAnalyticsDateRange() {
          FROM analytics_daily_metrics`
     );
     return result.rows[0] || {};
+}
+
+// ============================================================
+// Daily Energy Summary (persistent)
+// ============================================================
+
+export async function upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh) {
+    if (!pool) return;
+    await pool.query(
+        `INSERT INTO daily_energy_summary (site_id, date, site_name, yield_wh, consumed_wh, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (site_id, date) DO UPDATE SET
+           site_name = COALESCE($3, daily_energy_summary.site_name),
+           yield_wh = COALESCE($4, daily_energy_summary.yield_wh),
+           consumed_wh = COALESCE($5, daily_energy_summary.consumed_wh),
+           updated_at = $6`,
+        [siteId, date, siteName, yieldWh, consumedWh, Date.now()]
+    );
+}
+
+export async function getDailyEnergy(siteId, days = 14) {
+    if (!pool) return [];
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    const result = await pool.query(
+        `SELECT site_id, date, site_name, yield_wh, consumed_wh
+         FROM daily_energy_summary
+         WHERE site_id = $1 AND date >= $2::date
+         ORDER BY date ASC`,
+        [siteId, cutoff]
+    );
+    return result.rows;
+}
+
+export async function getAllDailyEnergy(days = 14) {
+    if (!pool) return [];
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    const result = await pool.query(
+        `SELECT site_id, date, site_name, yield_wh, consumed_wh
+         FROM daily_energy_summary
+         WHERE date >= $1::date
+         ORDER BY site_id, date ASC`,
+        [cutoff]
+    );
+    return result.rows;
+}
+
+// ============================================================
+// Alert History (persistent)
+// ============================================================
+
+export async function getActiveAlerts() {
+    if (!pool) return [];
+    const result = await pool.query(
+        `SELECT * FROM alert_history WHERE resolved_at IS NULL ORDER BY created_at DESC`
+    );
+    return result.rows;
+}
+
+export async function insertAlertHistory(siteId, siteName, severity, streakDays, deficitWh) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `INSERT INTO alert_history (site_id, site_name, severity, streak_days, deficit_wh)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [siteId, siteName, severity, streakDays, deficitWh]
+    );
+    return result.rows[0];
+}
+
+export async function resolveAlert(siteId) {
+    if (!pool) return;
+    await pool.query(
+        `UPDATE alert_history SET resolved_at = NOW() WHERE site_id = $1 AND resolved_at IS NULL`,
+        [siteId]
+    );
+}
+
+export async function getAlertHistory(days = 30) {
+    if (!pool) return [];
+    const result = await pool.query(
+        `SELECT * FROM alert_history
+         WHERE created_at >= NOW() - INTERVAL '1 day' * $1
+         ORDER BY created_at DESC`,
+        [days]
+    );
+    return result.rows;
+}
+
+// ============================================================
+// Battery Health (trend analysis)
+// ============================================================
+
+export async function getBatteryHistory(siteId, days = 30) {
+    if (!pool) return [];
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    const result = await pool.query(
+        `SELECT date, min_soc, avg_soc, max_soc, avg_voltage, solar_yield_kwh
+         FROM analytics_daily_metrics
+         WHERE site_id = $1 AND date >= $2::date
+         ORDER BY date ASC`,
+        [siteId, cutoff]
+    );
+    return result.rows;
 }
 
 export function getPool() {

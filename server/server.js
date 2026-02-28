@@ -17,7 +17,10 @@ import {
     getUpcomingMaintenance,
     getComponents, insertComponent, updateComponent,
     computeDailyMetrics, getFleetAnalyticsSummary, getJobSiteRankings,
-    getAnalyticsByJobSite, getAnalyticsByTrailer, getAnalyticsDateRange
+    getAnalyticsByJobSite, getAnalyticsByTrailer, getAnalyticsDateRange,
+    upsertDailyEnergy, getAllDailyEnergy,
+    insertAlertHistory, resolveAlert, getActiveAlerts, getAlertHistory,
+    getBatteryHistory
 } from './db.js';
 import {
     generateQueryEmbedding, embedSiteSnapshots, embedPepwaveDevices,
@@ -178,6 +181,11 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage) {
         updated: Date.now(),
     };
 
+    // Persist to DB (async, don't block)
+    if (dbAvailable) {
+        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh).catch(() => {});
+    }
+
     // Prune entries older than 14 days
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 14);
@@ -186,6 +194,38 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage) {
         if (d < cutoffStr) delete siteData[d];
     }
 }
+
+// Seed dailyEnergy from DB on startup so data survives restarts
+async function seedDailyEnergyFromDb() {
+    try {
+        const rows = await getAllDailyEnergy(14);
+        for (const row of rows) {
+            const siteId = row.site_id;
+            const dateStr = new Date(row.date).toISOString().slice(0, 10);
+            if (!dailyEnergy.has(siteId)) {
+                dailyEnergy.set(siteId, {});
+            }
+            const siteData = dailyEnergy.get(siteId);
+            // Only fill if not already populated by live polling
+            if (!siteData[dateStr]) {
+                siteData[dateStr] = {
+                    site_name: row.site_name || `Site ${siteId}`,
+                    yield_wh: row.yield_wh != null ? Number(row.yield_wh) : null,
+                    consumed_wh: row.consumed_wh != null ? Number(row.consumed_wh) : null,
+                    updated: Date.now(),
+                };
+            }
+        }
+        console.log(`  ✓ Seeded dailyEnergy from DB: ${rows.length} records for ${dailyEnergy.size} sites`);
+    } catch (err) {
+        console.warn('  ⚠ Failed to seed dailyEnergy from DB:', err.message);
+    }
+}
+
+// ============================================================
+// Offline device duration tracking
+// ============================================================
+const offlineTimestamps = new Map(); // deviceName -> firstOfflineTime
 
 // ============================================================
 // Alert logic: yield < consumed for 2+ consecutive days
@@ -232,6 +272,34 @@ function computeAlerts() {
 
     alerts.sort((a, b) => b.streak_days - a.streak_days);
     return alerts;
+}
+
+// ============================================================
+// Alert history persistence
+// ============================================================
+async function persistAlertHistory(currentAlerts) {
+    try {
+        const activeDbAlerts = await getActiveAlerts();
+        const activeSiteIds = new Set(currentAlerts.map(a => a.site_id));
+        const dbSiteIds = new Set(activeDbAlerts.map(a => a.site_id));
+
+        // Insert new alerts
+        for (const alert of currentAlerts) {
+            if (!dbSiteIds.has(alert.site_id)) {
+                const totalDeficit = alert.deficit_days?.reduce((s, d) => s + (d.deficit_wh || 0), 0) || 0;
+                await insertAlertHistory(alert.site_id, alert.site_name, alert.severity, alert.streak_days, totalDeficit);
+            }
+        }
+
+        // Resolve alerts that are no longer active
+        for (const dbAlert of activeDbAlerts) {
+            if (!activeSiteIds.has(dbAlert.site_id)) {
+                await resolveAlert(dbAlert.site_id);
+            }
+        }
+    } catch (err) {
+        console.error('  persistAlertHistory error:', err.message);
+    }
 }
 
 // ============================================================
@@ -407,11 +475,25 @@ app.get('/api/fleet/alerts', (req, res) => {
     res.json({ success: true, alerts });
 });
 
+// Alert history
+app.get('/api/alerts/history', async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const history = await getAlertHistory(days);
+        res.json({ success: true, alerts: history });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============================================================
 // Fleet network: Pepwave device data
 // ============================================================
 app.get('/api/fleet/network', (req, res) => {
-    const records = Array.from(pepwaveCache.values());
+    const records = Array.from(pepwaveCache.values()).map(r => ({
+        ...r,
+        offline_since: offlineTimestamps.get(r.name) || null,
+    }));
     records.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     res.json({
         success: true,
@@ -955,6 +1037,100 @@ app.post('/api/analytics/backfill', async (req, res) => {
     }
 });
 
+// ============================================================
+// Unified dashboard endpoint (single call for FleetOverview)
+// ============================================================
+app.get('/api/fleet/dashboard', (req, res) => {
+    const snapshots = Array.from(snapshotCache.values());
+    const devices = Array.from(pepwaveCache.values());
+
+    let totalSoc = 0, socCount = 0, totalSolar = 0;
+    let onlineTrailers = 0, offlineTrailers = 0;
+
+    for (const s of snapshots) {
+        if (s.battery_soc != null) {
+            totalSoc += s.battery_soc;
+            socCount++;
+        }
+        totalSolar += s.solar_watts || 0;
+        onlineTrailers++;
+    }
+
+    let netOnline = 0, netOffline = 0;
+    for (const d of devices) {
+        if (d.online) netOnline++;
+        else netOffline++;
+    }
+
+    const alerts = computeAlerts();
+
+    res.json({
+        success: true,
+        site_count: snapshots.length,
+        device_count: devices.length,
+        avg_soc: socCount > 0 ? totalSoc / socCount : null,
+        total_solar_watts: totalSolar,
+        trailers_online: onlineTrailers,
+        trailers_offline: offlineTrailers,
+        net_online: netOnline,
+        net_offline: netOffline,
+        alert_count: alerts.length,
+        top_alerts: alerts.slice(0, 5),
+        last_vrm_poll: sitesCacheTime,
+        last_ic2_poll: lastIc2Poll,
+    });
+});
+
+// ============================================================
+// Battery health prediction
+// ============================================================
+app.get('/api/analytics/trailer/:id/battery-health', async (req, res) => {
+    try {
+        const siteId = parseInt(req.params.id);
+        const days = parseInt(req.query.days) || 30;
+        const dataPoints = await getBatteryHistory(siteId, days);
+
+        if (dataPoints.length < 3) {
+            return res.json({ success: true, trend: 'insufficient_data', dataPoints });
+        }
+
+        // Linear regression on min_soc over time
+        const n = dataPoints.length;
+        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+        for (let i = 0; i < n; i++) {
+            const y = dataPoints[i].min_soc ?? dataPoints[i].avg_soc ?? 0;
+            sumX += i;
+            sumY += y;
+            sumXY += i * y;
+            sumXX += i * i;
+        }
+        const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+        const avgDailyChange = slope; // % per day
+
+        let trend = 'stable';
+        if (slope < -0.5) trend = 'declining';
+        else if (slope > 0.5) trend = 'improving';
+
+        let daysUntilCritical = null;
+        if (trend === 'declining') {
+            const currentSoc = dataPoints[n - 1].min_soc ?? dataPoints[n - 1].avg_soc ?? 50;
+            if (currentSoc > 20) {
+                daysUntilCritical = Math.round((currentSoc - 20) / Math.abs(slope));
+            }
+        }
+
+        res.json({
+            success: true,
+            trend,
+            avg_daily_change: Math.round(avgDailyChange * 100) / 100,
+            days_until_critical: daysUntilCritical,
+            data_points: dataPoints,
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // --- Helper: extract values from diagnostics records ---
 function extractDiagValue(records, code) {
     const match = records.find(r => r.code === code && r.Device !== 'Gateway');
@@ -1068,9 +1244,17 @@ async function pollAllSites() {
             try { await pruneOldData(); } catch (e) { /* ignore */ }
         }
 
-        const alertCount = computeAlerts().length;
+        const currentAlerts = computeAlerts();
+        const alertCount = currentAlerts.length;
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         console.log(`  VRM poll complete: ${successCount} ok, ${errorCount} errors in ${elapsed}s (cache: ${snapshotCache.size} sites, energy alerts: ${alertCount})`);
+
+        // Persist alert history to DB (async, don't block)
+        if (dbAvailable) {
+            persistAlertHistory(currentAlerts).catch(err =>
+                console.error('  Alert history persistence failed:', err.message)
+            );
+        }
 
         // Auto-generate embeddings for new data (async, don't block)
         if (dbAvailable && isEmbeddingsConfigured() && snapshotCache.size > 0) {
@@ -1144,6 +1328,13 @@ async function pollIc2Devices() {
             };
 
             pepwaveCache.set(dev.name, record);
+
+            // Track offline duration
+            if (record.online) {
+                offlineTimestamps.delete(dev.name);
+            } else if (!offlineTimestamps.has(dev.name)) {
+                offlineTimestamps.set(dev.name, Date.now());
+            }
 
             // Persist to PostgreSQL for historical tracking
             if (dbAvailable) {
@@ -1624,6 +1815,11 @@ async function start() {
         console.warn('PostgreSQL not available — using in-memory cache only');
         console.warn('Set DATABASE_URL to enable persistent history');
         console.error('Database connection error:', err.message);
+    }
+
+    // Seed daily energy from DB before polling starts
+    if (dbAvailable) {
+        await seedDailyEnergyFromDb();
     }
 
     app.listen(PORT, () => {

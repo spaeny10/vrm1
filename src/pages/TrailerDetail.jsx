@@ -9,13 +9,15 @@ import 'chartjs-adapter-date-fns'
 import zoomPlugin from 'chartjs-plugin-zoom'
 import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent } from '../api/vrm'
+import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent, fetchBatteryHealth } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import AlarmBadge from '../components/AlarmBadge'
 import ComponentForm from '../components/ComponentForm'
 import DataFreshness from '../components/DataFreshness'
 import Breadcrumbs from '../components/Breadcrumbs'
+import SignalBars from '../components/SignalBars'
+import { signalQuality, formatUptime, formatMB } from '../utils/format'
 
 ChartJS.register(
     CategoryScale, LinearScale, TimeScale, PointElement, LineElement,
@@ -43,59 +45,6 @@ function diagFormatted(records, code) {
     return match?.formattedValue || null;
 }
 
-function formatUptime(seconds) {
-    if (!seconds) return '—'
-    const d = Math.floor(seconds / 86400)
-    const h = Math.floor((seconds % 86400) / 3600)
-    if (d > 0) return `${d}d ${h}h`
-    const m = Math.floor((seconds % 3600) / 60)
-    return `${h}h ${m}m`
-}
-
-function formatMB(mb) {
-    if (!mb && mb !== 0) return '—'
-    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
-    return `${Math.round(mb)} MB`
-}
-
-function signalQuality(rsrp) {
-    if (rsrp === null || rsrp === undefined) return { label: 'Unknown', color: '#888' }
-    if (rsrp >= -80) return { label: 'Excellent', color: '#2ecc71' }
-    if (rsrp >= -90) return { label: 'Good', color: '#27ae60' }
-    if (rsrp >= -100) return { label: 'Fair', color: '#f1c40f' }
-    if (rsrp >= -110) return { label: 'Poor', color: '#e67e22' }
-    return { label: 'Weak', color: '#e74c3c' }
-}
-
-function SignalBars({ bars, size = 28 }) {
-    const maxBars = 5
-    const barWidth = Math.floor(size / 7)
-    const gap = 1
-    return (
-        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-            {Array.from({ length: maxBars }, (_, i) => {
-                const h = ((i + 1) / maxBars) * (size - 2) + 2
-                const x = i * (barWidth + gap)
-                const y = size - h
-                const active = i < (bars ?? 0)
-                return (
-                    <rect
-                        key={i}
-                        x={x}
-                        y={y}
-                        width={barWidth}
-                        height={h}
-                        rx={1}
-                        fill={active
-                            ? (bars >= 4 ? '#2ecc71' : bars >= 2 ? '#f1c40f' : '#e74c3c')
-                            : 'rgba(255,255,255,0.08)'}
-                    />
-                )
-            })}
-        </svg>
-    )
-}
-
 function TrailerDetail() {
     const { id } = useParams()
     const navigate = useNavigate()
@@ -117,12 +66,14 @@ function TrailerDetail() {
     const fetchNetworkFn = useCallback(() => fetchFleetNetwork(), [])
 
     const fetchComponentsFn = useCallback(() => fetchComponents(id), [id])
+    const fetchBatteryHealthFn = useCallback(() => fetchBatteryHealth(id), [id])
 
-    const { data: diagData, lastUpdated } = useApiPolling(fetchDiagFn, 30000)
+    const { data: diagData, lastUpdated, refetch } = useApiPolling(fetchDiagFn, 30000)
     const { data: alarmsData } = useApiPolling(fetchAlarmsFn, 60000)
     const { data: systemData } = useApiPolling(fetchSystemFn, 120000)
     const { data: networkData } = useApiPolling(fetchNetworkFn, 60000)
     const { data: componentsData, refetch: refetchComponents } = useApiPolling(fetchComponentsFn, 120000)
+    const { data: batteryHealthData } = useApiPolling(fetchBatteryHealthFn, 300000)
 
     const components = componentsData?.components || []
 
@@ -331,7 +282,7 @@ function TrailerDetail() {
                 <Breadcrumbs items={[{ label: 'Fleet', to: '/' }, { label: siteName || `Site #${id}` }]} />
                 <div className="page-header-row">
                     <h1>{siteName || `Site #${id}`}</h1>
-                    <DataFreshness lastUpdated={lastUpdated} />
+                    <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
                 </div>
             </div>
 
@@ -534,6 +485,42 @@ function TrailerDetail() {
                     </div>
                 </div>
             </div>
+
+            {/* Battery Health Prediction */}
+            {batteryHealthData && batteryHealthData.trend && batteryHealthData.trend !== 'insufficient_data' && (
+                <div className="detail-section">
+                    <h2>Battery Health Trend</h2>
+                    <div className="battery-health-card">
+                        <div className="battery-health-indicator">
+                            <span className={`battery-trend-badge trend-${batteryHealthData.trend}`}>
+                                {batteryHealthData.trend === 'improving' ? '↑' : batteryHealthData.trend === 'declining' ? '↓' : '→'}
+                                {' '}{batteryHealthData.trend.charAt(0).toUpperCase() + batteryHealthData.trend.slice(1)}
+                            </span>
+                            <span className="battery-health-detail">
+                                {batteryHealthData.avg_daily_change > 0 ? '+' : ''}{batteryHealthData.avg_daily_change}% / day
+                            </span>
+                            {batteryHealthData.days_until_critical && (
+                                <span className="battery-critical-warning">
+                                    ~{batteryHealthData.days_until_critical} days until critical (20%)
+                                </span>
+                            )}
+                        </div>
+                        {batteryHealthData.data_points?.length > 0 && (
+                            <div className="battery-health-sparkline">
+                                <svg viewBox={`0 0 ${batteryHealthData.data_points.length * 8} 40`} className="sparkline-svg">
+                                    <polyline
+                                        fill="none"
+                                        stroke={batteryHealthData.trend === 'declining' ? '#e74c3c' : batteryHealthData.trend === 'improving' ? '#2ecc71' : '#3498db'}
+                                        strokeWidth="2"
+                                        points={batteryHealthData.data_points.map((p, i) => `${i * 8},${40 - (p.min_soc ?? p.avg_soc ?? 0) * 0.4}`).join(' ')}
+                                    />
+                                </svg>
+                                <span className="sparkline-label">30-day min SOC trend</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Pepwave SIM + WAN section */}
             {pepwaveDevice && (

@@ -6,8 +6,9 @@ import {
 } from 'chart.js'
 import { Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchFleetEnergy, fetchFleetAlerts, fetchJobSites } from '../api/vrm'
+import { fetchFleetEnergy, fetchFleetAlerts, fetchJobSites, fetchAlertHistory } from '../api/vrm'
 import DataFreshness from '../components/DataFreshness'
+import { generateCSV, downloadCSV } from '../utils/csv'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
@@ -19,14 +20,17 @@ function EnergyPage() {
     const fetchEnergyFn = useCallback(() => fetchFleetEnergy(), [])
     const fetchAlertsFn = useCallback(() => fetchFleetAlerts(), [])
     const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
+    const fetchHistoryFn = useCallback(() => fetchAlertHistory(30), [])
 
-    const { data: energyData, loading: energyLoading, lastUpdated } = useApiPolling(fetchEnergyFn, 60000)
+    const { data: energyData, loading: energyLoading, lastUpdated, refetch } = useApiPolling(fetchEnergyFn, 60000)
     const { data: alertsData } = useApiPolling(fetchAlertsFn, 60000)
     const { data: jobSitesData } = useApiPolling(fetchJobSitesFn, 60000)
+    const { data: historyData } = useApiPolling(fetchHistoryFn, 120000)
 
     const sites = energyData?.records || []
     const alerts = alertsData?.alerts || []
     const jobSites = jobSitesData?.job_sites || []
+    const alertHistory = historyData?.alerts || []
 
     // Build trailer-to-job-site mapping
     const trailerToJobSite = useMemo(() => {
@@ -157,6 +161,22 @@ function EnergyPage() {
         return { groups: sorted, ungrouped }
     }, [sites, alerts, trailerToJobSite])
 
+    const handleExportEnergy = () => {
+        const headers = ['Site', 'Date', 'Yield (Wh)', 'Consumed (Wh)', 'Balance (Wh)']
+        const rows = []
+        for (const site of sites) {
+            for (const d of site.days || []) {
+                rows.push([
+                    site.site_name, d.date,
+                    d.yield_wh != null ? Math.round(d.yield_wh) : '',
+                    d.consumed_wh != null ? Math.round(d.consumed_wh) : '',
+                    d.yield_wh != null && d.consumed_wh != null ? Math.round(d.yield_wh - d.consumed_wh) : '',
+                ])
+            }
+        }
+        downloadCSV(generateCSV(headers, rows), 'energy-data.csv')
+    }
+
     const toggleExpand = (jobSiteId) => {
         setExpandedJobSites(prev => {
             const next = new Set(prev)
@@ -171,7 +191,15 @@ function EnergyPage() {
             <div className="page-header">
                 <div className="page-header-row">
                     <h1>Energy Analysis</h1>
-                    <DataFreshness lastUpdated={lastUpdated} />
+                    <div className="page-header-actions">
+                        <button className="btn btn-sm btn-ghost" onClick={handleExportEnergy} title="Export CSV">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                            </svg>
+                            Export
+                        </button>
+                        <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
+                    </div>
                 </div>
                 <p className="page-subtitle">Daily solar yield vs consumption across your fleet</p>
             </div>
@@ -390,6 +418,43 @@ function EnergyPage() {
                     </table>
                 </div>
             </div>
+
+            {/* Alert History */}
+            {alertHistory.length > 0 && (
+                <div className="energy-section">
+                    <h2>Alert History (Last 30 Days)</h2>
+                    <div className="table-wrapper">
+                        <table className="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Site</th>
+                                    <th>Severity</th>
+                                    <th>Streak</th>
+                                    <th>Deficit</th>
+                                    <th>Started</th>
+                                    <th>Resolved</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {alertHistory.map(a => (
+                                    <tr key={a.id} className={a.resolved_at ? 'alert-resolved' : 'alert-active'}>
+                                        <td>{a.site_name}</td>
+                                        <td>
+                                            <span className={`energy-status-badge ${a.severity}`}>
+                                                {a.severity}
+                                            </span>
+                                        </td>
+                                        <td>{a.streak_days}d</td>
+                                        <td>{a.deficit_wh != null ? `${(Number(a.deficit_wh) / 1000).toFixed(1)} kWh` : '—'}</td>
+                                        <td>{new Date(a.created_at).toLocaleDateString()}</td>
+                                        <td>{a.resolved_at ? new Date(a.resolved_at).toLocaleDateString() : <span className="alert-active-badge">Active</span>}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
