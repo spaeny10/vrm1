@@ -147,6 +147,7 @@ let dbAvailable = false;
 const pepwaveCache = new Map();
 let lastIc2Poll = 0;
 let dbPool = null;
+let bandwidthLoggedOnce = false;
 
 // GPS cache: siteId -> { latitude, longitude, updatedAt }
 const gpsCache = new Map();
@@ -1297,9 +1298,73 @@ async function pollIc2Devices() {
         let onlineCount = 0;
         let offlineCount = 0;
 
+        // Fetch bandwidth data from dedicated endpoint
+        let bandwidthMap = {};
+        try {
+            const today = new Date().toISOString().slice(0, 10); // yyyy-MM-dd
+            // Try group-scoped bandwidth endpoint first, fallback to org-scoped
+            let bwResult;
+            try {
+                bwResult = await ic2Fetch(
+                    `/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/bandwidth_per_device?type=daily&report_date=${today}`
+                );
+            } catch {
+                bwResult = await ic2Fetch(
+                    `/rest/o/${IC2_ORG_ID}/bandwidth_per_device?type=daily&report_date=${today}`
+                );
+            }
+            const bwData = bwResult.data || bwResult.response || bwResult;
+
+            // Debug: log raw structure on first successful fetch
+            if (!bandwidthLoggedOnce) {
+                bandwidthLoggedOnce = true;
+                if (Array.isArray(bwData) && bwData.length > 0) {
+                    console.log(`  IC2 bandwidth sample (array[0]):`, JSON.stringify(bwData[0]).slice(0, 500));
+                } else if (typeof bwData === 'object') {
+                    const keys = Object.keys(bwData).slice(0, 5);
+                    console.log(`  IC2 bandwidth keys:`, keys, 'sample:', JSON.stringify(bwData[keys[0]]).slice(0, 300));
+                }
+            }
+
+            // Build lookup: deviceId -> { upload, download, total }
+            if (Array.isArray(bwData)) {
+                for (const entry of bwData) {
+                    const devId = entry.id || entry.device_id || entry.sn;
+                    const devName = entry.name || entry.device_name;
+                    const upload = entry.upload || entry.tx || entry.upload_bytes || entry.ul || 0;
+                    const download = entry.download || entry.rx || entry.download_bytes || entry.dl || 0;
+                    const total = entry.total || entry.usage || upload + download || 0;
+                    const bwEntry = { upload_bytes: upload, download_bytes: download, total_bytes: total };
+                    if (devId) bandwidthMap[devId] = bwEntry;
+                    if (devName) bandwidthMap[devName] = bwEntry;
+                }
+            } else if (typeof bwData === 'object') {
+                for (const [key, val] of Object.entries(bwData)) {
+                    if (val && typeof val === 'object') {
+                        bandwidthMap[key] = {
+                            upload_bytes: val.upload || val.tx || val.ul || 0,
+                            download_bytes: val.download || val.rx || val.dl || 0,
+                            total_bytes: val.total || val.usage || 0,
+                        };
+                    }
+                }
+            }
+            if (Object.keys(bandwidthMap).length > 0) {
+                console.log(`  IC2 bandwidth: fetched usage for ${Object.keys(bandwidthMap).length} devices`);
+            }
+        } catch (bwErr) {
+            console.log(`  IC2 bandwidth fetch: ${bwErr.message}`);
+        }
+
         for (const dev of devices) {
             const cellular = extractCellularInfo(dev);
             const wanInterfaces = extractWanInterfaces(dev);
+
+            // Get bandwidth from dedicated endpoint, fallback to device-level fields
+            const bw = bandwidthMap[dev.id] || bandwidthMap[dev.name] || {};
+            const usageMb = bw.total_bytes ? bw.total_bytes / (1024 * 1024) : (dev.usage || 0);
+            const txMb = bw.upload_bytes ? bw.upload_bytes / (1024 * 1024) : (dev.tx || 0);
+            const rxMb = bw.download_bytes ? bw.download_bytes / (1024 * 1024) : (dev.rx || 0);
 
             const record = {
                 id: dev.id,
@@ -1311,9 +1376,9 @@ async function pollIc2Devices() {
                 firmware: dev.fw_ver || 'Unknown',
                 client_count: dev.client_count || 0,
                 uptime: dev.uptime || 0,
-                usage_mb: dev.usage || 0,
-                tx_mb: dev.tx || 0,
-                rx_mb: dev.rx || 0,
+                usage_mb: usageMb,
+                tx_mb: txMb,
+                rx_mb: rxMb,
                 wan_ip: dev.wtp_ip || cellular?.ip || null,
                 last_online: dev.last_online || null,
                 tags: dev.tags || [],
