@@ -153,6 +153,10 @@ let bandwidthLoggedOnce = false;
 const gpsCache = new Map();
 let initialClusteringDone = false;
 
+// SOC-at-start-of-day cache: siteId -> { date, soc }
+// Used to estimate daily consumption when CE diagnostic is unavailable
+const socStartOfDay = new Map();
+
 // ============================================================
 // Trailer Hardware Specifications
 // ============================================================
@@ -272,6 +276,13 @@ async function computeTrailerIntelligence(siteId) {
             avgDailyConsumptionWh = Math.round(consumptionValues.reduce((s, v) => s + v, 0) / consumptionValues.length);
         }
     }
+    // Fallback: use today's estimated consumption if no historical data yet
+    if (avgDailyConsumptionWh === null) {
+        const todayData = siteEnergy[today];
+        if (todayData?.consumed_wh !== null && todayData?.consumed_wh > 0) {
+            avgDailyConsumptionWh = Math.round(todayData.consumed_wh);
+        }
+    }
 
     let avgDailyYieldWh = null;
     if (pastDays.length > 0) {
@@ -364,7 +375,7 @@ function todayStr() {
     return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage) {
+function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, batterySoc) {
     const date = todayStr();
     if (!dailyEnergy.has(siteId)) {
         dailyEnergy.set(siteId, {});
@@ -372,9 +383,32 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage) {
     const siteData = dailyEnergy.get(siteId);
 
     const yieldWh = yieldToday !== null ? yieldToday * 1000 : null;
-    const consumedWh = (consumedAh !== null && voltage !== null)
+
+    // Primary: use CE diagnostic (consumed Ah × voltage)
+    let consumedWh = (consumedAh !== null && voltage !== null)
         ? Math.abs(consumedAh) * voltage
         : null;
+
+    // Fallback: estimate from yield + SOC change × battery capacity
+    // consumed = yield + (soc_start - soc_now) × battery_wh / 100
+    if (consumedWh === null && yieldWh !== null && batterySoc !== null) {
+        const socEntry = socStartOfDay.get(siteId);
+        if (socEntry && socEntry.date === date && socEntry.soc !== null) {
+            const socDeltaWh = (socEntry.soc - batterySoc) * TRAILER_SPECS.battery.total_wh / 100;
+            const estimated = yieldWh + socDeltaWh;
+            if (estimated > 0) {
+                consumedWh = Math.round(estimated);
+            }
+        }
+    }
+
+    // Track start-of-day SOC (first reading each day)
+    const socEntry = socStartOfDay.get(siteId);
+    if (!socEntry || socEntry.date !== date) {
+        if (batterySoc !== null) {
+            socStartOfDay.set(siteId, { date, soc: batterySoc });
+        }
+    }
 
     siteData[date] = {
         site_name: siteName,
@@ -1632,7 +1666,7 @@ async function pollAllSites() {
                     };
 
                     snapshotCache.set(site.idSite, snapshot);
-                    updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage);
+                    updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage, snapshot.battery_soc);
 
                     if (yieldYesterday !== null) {
                         const yesterday = new Date();
