@@ -201,6 +201,10 @@ let initialClusteringDone = false;
 // Used to estimate daily consumption when CE diagnostic is unavailable
 const socStartOfDay = new Map();
 
+// Consumption accumulator: siteId -> { date, wh, lastTimestamp }
+// Integrates AC consumption power over time when CE diagnostic unavailable
+const consumptionAccumulator = new Map();
+
 // ============================================================
 // Trailer Hardware Specifications
 // ============================================================
@@ -419,22 +423,51 @@ function todayStr() {
     return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, batterySoc) {
+function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, batterySoc, acConsumptionW = null, loadCurrent = null) {
     const date = todayStr();
+    const now = Date.now();
     if (!dailyEnergy.has(siteId)) {
         dailyEnergy.set(siteId, {});
     }
     const siteData = dailyEnergy.get(siteId);
 
     const yieldWh = yieldToday !== null ? yieldToday * 1000 : null;
+    let consumedWh = null;
+    let consumptionSource = null;
 
-    // Primary: use CE diagnostic (consumed Ah × voltage)
-    let consumedWh = (consumedAh !== null && voltage !== null)
-        ? Math.abs(consumedAh) * voltage
-        : null;
+    // Tier 1: CE diagnostic (consumed Ah × voltage) — most accurate
+    if (consumedAh !== null && voltage !== null) {
+        consumedWh = Math.abs(consumedAh) * voltage;
+        consumptionSource = 'CE diagnostic';
+    }
 
-    // Fallback: estimate from yield + SOC change × battery capacity
-    // consumed = yield + (soc_start - soc_now) × battery_wh / 100
+    // Tier 2: Accumulate AC consumption power over time (Riemann sum)
+    if (consumedWh === null) {
+        // Determine instantaneous consumption watts from available sources
+        let consumptionW = acConsumptionW;
+        if (consumptionW === null && loadCurrent !== null && voltage !== null) {
+            consumptionW = Math.abs(loadCurrent) * voltage;
+        }
+
+        const acc = consumptionAccumulator.get(siteId);
+        if (acc && acc.date === date && consumptionW !== null) {
+            const elapsedHours = (now - acc.lastTimestamp) / 3600000;
+            // Guard against unreasonable gaps (>10 min means server was probably down)
+            if (elapsedHours > 0 && elapsedHours < 0.17) {
+                acc.wh += consumptionW * elapsedHours;
+            }
+            acc.lastTimestamp = now;
+            if (acc.wh > 0) {
+                consumedWh = Math.round(acc.wh);
+                consumptionSource = 'AC power accumulation';
+            }
+        } else {
+            // Start new accumulator for this day
+            consumptionAccumulator.set(siteId, { date, wh: 0, lastTimestamp: now });
+        }
+    }
+
+    // Tier 3: SOC delta estimation (yield + SOC change × battery capacity)
     if (consumedWh === null && yieldWh !== null && batterySoc !== null) {
         const socEntry = socStartOfDay.get(siteId);
         if (socEntry && socEntry.date === date && socEntry.soc !== null) {
@@ -442,6 +475,7 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
             const estimated = yieldWh + socDeltaWh;
             if (estimated > 0) {
                 consumedWh = Math.round(estimated);
+                consumptionSource = 'SOC delta estimate';
             }
         }
     }
@@ -458,12 +492,15 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
         site_name: siteName,
         yield_wh: yieldWh,
         consumed_wh: consumedWh,
-        updated: Date.now(),
+        consumption_source: consumptionSource,
+        updated: now,
     };
 
-    // Persist to DB (async, don't block)
+    // Persist to DB with SOC start-of-day (async, don't block)
     if (dbAvailable) {
-        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh).catch(() => {});
+        const socVal = socStartOfDay.get(siteId);
+        const socForDb = (socVal && socVal.date === date) ? socVal.soc : null;
+        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socForDb).catch(() => {});
     }
 
     // Prune entries older than 14 days
@@ -475,10 +512,11 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
     }
 }
 
-// Seed dailyEnergy from DB on startup so data survives restarts
+// Seed dailyEnergy and socStartOfDay from DB on startup so data survives restarts
 async function seedDailyEnergyFromDb() {
     try {
         const rows = await getAllDailyEnergy(14);
+        let socSeeded = 0;
         for (const row of rows) {
             const siteId = row.site_id;
             const dateStr = new Date(row.date).toISOString().slice(0, 10);
@@ -495,8 +533,18 @@ async function seedDailyEnergyFromDb() {
                     updated: Date.now(),
                 };
             }
+
+            // Seed socStartOfDay with the most recent day's SOC for each site
+            if (row.soc_start_of_day != null) {
+                const existing = socStartOfDay.get(siteId);
+                if (!existing || existing.date <= dateStr) {
+                    socStartOfDay.set(siteId, { date: dateStr, soc: Number(row.soc_start_of_day) });
+                    socSeeded++;
+                }
+            }
         }
         console.log(`  ✓ Seeded dailyEnergy from DB: ${rows.length} records for ${dailyEnergy.size} sites`);
+        console.log(`  ✓ Seeded SOC start-of-day from DB: ${socSeeded} sites`);
     } catch (err) {
         console.warn('  ⚠ Failed to seed dailyEnergy from DB:', err.message);
     }
@@ -1832,6 +1880,13 @@ app.post('/api/analyze/trailer/:id', async (req, res) => {
             } catch {}
         }
 
+        // Helper to format nullable values for AI context
+        const fmt = (val, unit = '') => val != null ? `${val}${unit}` : 'N/A';
+
+        // Determine consumption data source for this trailer
+        const todayEnergy = energyHistory[todayStr()] || {};
+        const consumptionSource = todayEnergy.consumption_source || 'unavailable';
+
         // Build context for Claude
         const ctx = [
             `TRAILER: ${snapshot.site_name} (ID: ${siteId})`,
@@ -1846,29 +1901,41 @@ app.post('/api/analyze/trailer/:id', async (req, res) => {
             `GPS: ${intel.location.latitude ?? 'unknown'}, ${intel.location.longitude ?? 'unknown'}`,
             `Peak Sun Hours: ${intel.location.peak_sun_hours}h (source: ${intel.location.data_source})`,
             `Cloud Cover: ${intel.location.cloud_cover_pct !== null ? intel.location.cloud_cover_pct + '%' : 'unknown'}`,
-            `Expected Daily Yield: ${intel.location.expected_daily_yield_wh}Wh`,
+            `Expected Daily Yield: ${fmt(intel.location.expected_daily_yield_wh, 'Wh')}`,
             '',
             '=== LIVE READINGS ===',
-            `Battery SOC: ${snapshot.battery_soc}%`,
-            `Battery Voltage: ${snapshot.battery_voltage}V`,
-            `Battery Current: ${snapshot.battery_current}A`,
-            `Battery Temp: ${snapshot.battery_temp}°C`,
-            `Battery Power: ${snapshot.battery_power}W`,
-            `Solar Power (now): ${snapshot.solar_watts}W`,
-            `Solar Yield Today: ${snapshot.solar_yield_today} kWh`,
-            `Solar Yield Yesterday: ${snapshot.solar_yield_yesterday} kWh`,
-            `Charge State: ${snapshot.charge_state}`,
+            `Battery SOC: ${fmt(snapshot.battery_soc, '%')}`,
+            `Battery Voltage: ${fmt(snapshot.battery_voltage, 'V')}`,
+            `Battery Current: ${fmt(snapshot.battery_current, 'A')}`,
+            `Battery Temp: ${fmt(snapshot.battery_temp, '°C')}`,
+            `Battery Power: ${fmt(snapshot.battery_power, 'W')}`,
+            `Solar Power (now): ${fmt(snapshot.solar_watts, 'W')}`,
+            `Solar Yield Today: ${fmt(snapshot.solar_yield_today, ' kWh')}`,
+            `Solar Yield Yesterday: ${fmt(snapshot.solar_yield_yesterday, ' kWh')}`,
+            `Charge State: ${fmt(snapshot.charge_state)}`,
+            '',
+            '=== DEVICE STATUS ===',
+            `AC Consumption (now): ${fmt(snapshot.ac_consumption_watts, 'W')}`,
+            `Load Current: ${fmt(snapshot.load_current, 'A')}`,
+            `Load Output: ${fmt(snapshot.load_state)}`,
+            `Inverter Mode: ${fmt(snapshot.inverter_mode)}`,
+            `Alarm Reason: ${snapshot.alarm_reason != null ? snapshot.alarm_reason : 'None'}`,
+            `Error Code: ${snapshot.error_code != null ? snapshot.error_code : 'None'}`,
+            `MPPT State: ${fmt(snapshot.mppt_state)}`,
+            `Lifetime Yield: ${fmt(snapshot.lifetime_yield_kwh, ' kWh')}`,
+            `Firmware: ${fmt(snapshot.firmware_version)}`,
             '',
             '=== COMPUTED INTELLIGENCE ===',
-            `Solar Score: ${intel.solar.score}% (${intel.solar.score_label}) — location+weather adjusted`,
-            `Panel Performance (now): ${intel.solar.panel_performance_pct}% of ${TRAILER_SPECS.solar.total_watts}W rated`,
-            `7-Day Avg Score: ${intel.solar.avg_7d_score}%`,
-            `Days of Autonomy: ${intel.battery.days_of_autonomy}`,
+            `Solar Score: ${fmt(intel.solar.score, '%')} (${intel.solar.score_label ?? 'N/A'}) — location+weather adjusted`,
+            `Panel Performance (now): ${fmt(intel.solar.panel_performance_pct, '%')} of ${TRAILER_SPECS.solar.total_watts}W rated`,
+            `7-Day Avg Score: ${fmt(intel.solar.avg_7d_score, '%')}`,
+            `Days of Autonomy: ${fmt(intel.battery.days_of_autonomy)}`,
             `Est. Charge Time to Full: ${intel.battery.charge_time_hours ? intel.battery.charge_time_hours + 'h' : 'N/A'}`,
-            `Battery Temp Status: ${intel.battery.temp_status}`,
-            `Stored Energy: ${intel.battery.stored_wh}Wh of ${TRAILER_SPECS.battery.total_wh}Wh`,
-            `Avg Daily Consumption: ${intel.energy.avg_daily_consumption_wh}Wh`,
-            `Today Balance: ${intel.energy.today_balance_wh}Wh`,
+            `Battery Temp Status: ${fmt(intel.battery.temp_status)}`,
+            `Stored Energy: ${fmt(intel.battery.stored_wh, 'Wh')} of ${TRAILER_SPECS.battery.total_wh}Wh`,
+            `Avg Daily Consumption: ${fmt(intel.energy.avg_daily_consumption_wh, 'Wh')}`,
+            `Consumption Data Source: ${consumptionSource}`,
+            `Today Balance: ${fmt(intel.energy.today_balance_wh, 'Wh')}`,
         ];
 
         if (batteryTrend) {
@@ -1886,7 +1953,7 @@ app.post('/api/analyze/trailer/:id', async (req, res) => {
         if (energyDays.length > 0) {
             ctx.push('', '=== DAILY ENERGY HISTORY (recent) ===');
             for (const [date, info] of energyDays) {
-                ctx.push(`${date}: yield=${info.yield_wh !== null ? Math.round(info.yield_wh) : '?'}Wh, consumed=${info.consumed_wh !== null ? Math.round(info.consumed_wh) : '?'}Wh`);
+                ctx.push(`${date}: yield=${info.yield_wh !== null ? Math.round(info.yield_wh) : '?'}Wh, consumed=${info.consumed_wh !== null ? Math.round(info.consumed_wh) : '?'}Wh${info.consumption_source ? ' (' + info.consumption_source + ')' : ''}`);
             }
         }
 
@@ -1912,6 +1979,11 @@ Consider:
 - Are there signs of panel degradation or underperformance?
 - How many days can this trailer run without sunlight?
 - Any temperature or voltage concerns?
+- Are there active alarms or error codes that need attention?
+- What is the inverter mode and is the load output functioning?
+- How reliable is the consumption data? (Check the "Consumption Data Source" — CE diagnostic is most accurate, AC power accumulation and SOC delta are estimates)
+- If consumption data shows N/A, note that autonomy calculations are unavailable and recommend investigating load metering
+- How does lifetime yield compare to expected cumulative production for the trailer's age?
 
 Be specific with numbers. Reference the hardware specs. Keep under 400 words.
 Respond in plain text with the section headers above.`;
@@ -1981,6 +2053,17 @@ async function pollAllSites() {
                     const consumedAh = extractDiagValue(records, 'CE');
                     const batteryVoltage = extractDiagValue(records, 'V') ?? extractDiagValue(records, 'bv');
 
+                    // Extended diagnostics for richer AI analysis
+                    const acConsumptionW = extractDiagValue(records, 'Pc');
+                    const loadCurrent = extractDiagValue(records, 'IL');
+                    const loadState = extractDiagValue(records, 'LOAD');
+                    const lifetimeYieldKwh = extractDiagValue(records, 'H19');
+                    const alarmReason = extractDiagValue(records, 'AR');
+                    const errorCode = extractDiagValue(records, 'ERR');
+                    const inverterMode = extractDiagValue(records, 'MODE');
+                    const mpptState = extractDiagValue(records, 'MPPT');
+                    const firmwareVersion = extractDiagValue(records, 'FW');
+
                     // GPS: only use IC2 Peplink as authoritative source.
                     // VRM coordinates are often stale/default. Only seed gpsCache
                     // from VRM if IC2 hasn't provided coordinates yet.
@@ -2006,10 +2089,20 @@ async function pollAllSites() {
                         solar_yield_yesterday: yieldYesterday,
                         charge_state: extractDiagValue(records, 'ScS'),
                         consumed_ah: consumedAh,
+                        // Extended diagnostics
+                        ac_consumption_watts: acConsumptionW,
+                        load_current: loadCurrent,
+                        load_state: loadState,
+                        lifetime_yield_kwh: lifetimeYieldKwh,
+                        alarm_reason: alarmReason,
+                        error_code: errorCode,
+                        inverter_mode: inverterMode,
+                        mppt_state: mpptState,
+                        firmware_version: firmwareVersion,
                     };
 
                     snapshotCache.set(site.idSite, snapshot);
-                    updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage, snapshot.battery_soc);
+                    updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage, snapshot.battery_soc, acConsumptionW, loadCurrent);
 
                     if (yieldYesterday !== null) {
                         const yesterday = new Date();
@@ -2029,7 +2122,22 @@ async function pollAllSites() {
 
                     if (dbAvailable) {
                         try {
-                            await insertSnapshot({ ...snapshot, raw_battery: null, raw_solar: null });
+                            await insertSnapshot({
+                                ...snapshot,
+                                raw_battery: {
+                                    alarm_reason: alarmReason,
+                                    error_code: errorCode,
+                                    load_current: loadCurrent,
+                                    load_state: loadState,
+                                    ac_consumption_watts: acConsumptionW,
+                                    inverter_mode: inverterMode,
+                                },
+                                raw_solar: {
+                                    mppt_state: mpptState,
+                                    lifetime_yield_kwh: lifetimeYieldKwh,
+                                    firmware_version: firmwareVersion,
+                                },
+                            });
                         } catch (dbErr) { /* in memory */ }
                         // Persist trailer assignment (GPS comes from IC2, pass null to preserve existing)
                         try {
