@@ -780,6 +780,21 @@ app.post('/api/auth/change-password', async (req, res) => {
     }
 });
 
+// Update own profile (display name)
+app.put('/api/auth/profile', async (req, res) => {
+    try {
+        const { display_name } = req.body;
+        if (!display_name || !display_name.trim()) {
+            return res.status(400).json({ error: 'Display name is required' });
+        }
+        await updateUser(req.user.id, { display_name: display_name.trim() });
+        const updated = await getUserById(req.user.id);
+        res.json({ success: true, user: updated });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Google SSO authentication
 app.post('/api/auth/google', async (req, res) => {
     try {
@@ -1166,7 +1181,7 @@ app.get('/api/settings', async (req, res) => {
     }
 });
 
-app.put('/api/settings', async (req, res) => {
+app.put('/api/settings', requireRole('admin'), async (req, res) => {
     try {
         if (!dbAvailable) {
             return res.json({ success: false, error: 'Database not connected' });
@@ -1181,7 +1196,7 @@ app.put('/api/settings', async (req, res) => {
     }
 });
 
-app.post('/api/settings/purge', async (req, res) => {
+app.post('/api/settings/purge', requireRole('admin'), async (req, res) => {
     try {
         if (!dbAvailable) {
             return res.json({ success: false, error: 'Database not connected' });
@@ -1369,7 +1384,7 @@ app.get('/api/job-sites/:id', async (req, res) => {
 });
 
 // PUT update job site (rename, address, status, notes)
-app.put('/api/job-sites/:id', async (req, res) => {
+app.put('/api/job-sites/:id', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const updated = await updateJobSite(parseInt(req.params.id), req.body);
         if (!updated) return res.status(404).json({ success: false, error: 'Job site not found' });
@@ -1380,7 +1395,7 @@ app.put('/api/job-sites/:id', async (req, res) => {
 });
 
 // POST manually assign a trailer to a job site
-app.post('/api/job-sites/:id/assign', async (req, res) => {
+app.post('/api/job-sites/:id/assign', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const { site_id } = req.body;
         if (!site_id) return res.status(400).json({ success: false, error: 'site_id required' });
@@ -1394,7 +1409,7 @@ app.post('/api/job-sites/:id/assign', async (req, res) => {
 });
 
 // POST force reclustering
-app.post('/api/job-sites/recluster', async (req, res) => {
+app.post('/api/job-sites/recluster', requireRole('admin'), async (req, res) => {
     try {
         if (!dbAvailable) {
             return res.json({ success: false, error: 'Database not connected' });
@@ -1501,7 +1516,7 @@ app.get('/api/gps/trailers', async (req, res) => {
 });
 
 // Force refresh GPS from IC2 for all devices
-app.post('/api/gps/refresh', async (req, res) => {
+app.post('/api/gps/refresh', requireRole('admin', 'technician'), async (req, res) => {
     try {
         if (!IC2_CLIENT_ID || !IC2_CLIENT_SECRET) {
             return res.status(400).json({ success: false, error: 'IC2 not configured' });
@@ -1564,7 +1579,7 @@ app.get('/api/gps/unlinked-devices', async (req, res) => {
 });
 
 // Manually link an IC2 device to a trailer assignment
-app.post('/api/gps/link-device', async (req, res) => {
+app.post('/api/gps/link-device', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const { site_id, ic2_device_id } = req.body;
         if (!site_id || !ic2_device_id) {
@@ -1645,7 +1660,7 @@ app.get('/api/maintenance/:id', async (req, res) => {
     }
 });
 
-app.post('/api/maintenance', async (req, res) => {
+app.post('/api/maintenance', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const { visit_type, title } = req.body;
         if (!visit_type || !title) {
@@ -1658,7 +1673,7 @@ app.post('/api/maintenance', async (req, res) => {
     }
 });
 
-app.put('/api/maintenance/:id', async (req, res) => {
+app.put('/api/maintenance/:id', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const log = await updateMaintenanceLog(parseInt(req.params.id), req.body);
         if (!log) return res.status(404).json({ success: false, error: 'Not found' });
@@ -1668,7 +1683,7 @@ app.put('/api/maintenance/:id', async (req, res) => {
     }
 });
 
-app.delete('/api/maintenance/:id', async (req, res) => {
+app.delete('/api/maintenance/:id', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const log = await deleteMaintenanceLog(parseInt(req.params.id));
         if (!log) return res.status(404).json({ success: false, error: 'Not found' });
@@ -1691,7 +1706,7 @@ app.get('/api/components/:siteId', async (req, res) => {
     }
 });
 
-app.post('/api/components', async (req, res) => {
+app.post('/api/components', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const { site_id, component_type } = req.body;
         if (!site_id || !component_type) {
@@ -1704,7 +1719,7 @@ app.post('/api/components', async (req, res) => {
     }
 });
 
-app.put('/api/components/:id', async (req, res) => {
+app.put('/api/components/:id', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const component = await updateComponent(parseInt(req.params.id), req.body);
         if (!component) return res.status(404).json({ success: false, error: 'Not found' });
@@ -1777,7 +1792,7 @@ app.get('/api/analytics/trailer/:id', async (req, res) => {
 });
 
 // Backfill: compute metrics for past N days
-app.post('/api/analytics/backfill', async (req, res) => {
+app.post('/api/analytics/backfill', requireRole('admin'), async (req, res) => {
     try {
         const days = parseInt(req.body?.days) || 7;
         let totalRows = 0;
@@ -2869,7 +2884,7 @@ app.get('/api/embeddings/stats', async (req, res) => {
 });
 
 // Generate embeddings for all current data
-app.post('/api/embeddings/generate', async (req, res) => {
+app.post('/api/embeddings/generate', requireRole('admin'), async (req, res) => {
     if (!isEmbeddingsConfigured()) {
         return res.status(501).json({ error: 'Voyage API key not configured' });
     }
@@ -3118,7 +3133,7 @@ app.get('/api/action-queue', async (req, res) => {
     }
 });
 
-app.post('/api/action-queue/:key/acknowledge', async (req, res) => {
+app.post('/api/action-queue/:key/acknowledge', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const ack = await dbAcknowledgeAction(decodeURIComponent(req.params.key), req.user.id, req.body.notes);
         res.json({ success: true, ack });
@@ -3127,7 +3142,7 @@ app.post('/api/action-queue/:key/acknowledge', async (req, res) => {
     }
 });
 
-app.delete('/api/action-queue/:key/acknowledge', async (req, res) => {
+app.delete('/api/action-queue/:key/acknowledge', requireRole('admin', 'technician'), async (req, res) => {
     try {
         await dbUnacknowledgeAction(decodeURIComponent(req.params.key));
         res.json({ success: true });
@@ -3189,7 +3204,7 @@ app.get('/api/maintenance/:id/checklists', async (req, res) => {
     }
 });
 
-app.post('/api/maintenance/:id/checklists', async (req, res) => {
+app.post('/api/maintenance/:id/checklists', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const checklist = await insertCompletedChecklist({
             maintenance_log_id: parseInt(req.params.id),

@@ -3,7 +3,7 @@
    ======================================== */
 
 :root {
-  /* Dark theme palette */
+  /* Dark theme palette (default) */
   --bg-primary: #1a1d23;
   --bg-secondary: #22262e;
   --bg-card: #2a2e38;
@@ -36,6 +36,19 @@
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   --transition: 0.2s ease;
   --border: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="light"] {
+  --bg-primary: #f0f2f5;
+  --bg-secondary: #e4e7eb;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f8f9fa;
+  --sidebar-bg: #1e2128;
+  --text-primary: #1a1d23;
+  --text-secondary: #5a6068;
+  --text-muted: #7f8690;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --border: rgba(0, 0, 0, 0.08);
 }
 
 * {
@@ -180,6 +193,35 @@ body {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Skeleton loading */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+[data-theme="light"] .skeleton {
+  background: linear-gradient(90deg, rgba(0,0,0,0.04) 25%, rgba(0,0,0,0.08) 50%, rgba(0,0,0,0.04) 75%);
+  background-size: 800px 100%;
+}
+
+.skeleton-card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 20px;
+  border: 1px solid var(--border);
+}
+
+.skeleton-text {
+  display: block;
 }
 
 .no-results {
@@ -1136,6 +1178,30 @@ body {
 }
 
 /* Job Sites Management in Settings */
+.profile-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.profile-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.profile-field label {
+  font-size: 13px;
+  color: var(--text-muted);
+  min-width: 100px;
+  font-weight: 500;
+}
+
+.profile-field span {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
 .settings-card-wide {
   grid-column: 1 / -1;
 }
@@ -4657,6 +4723,15 @@ tr:hover .btn-hq-toggle {
   text-align: center;
 }
 
+.login-expired {
+  background: rgba(243, 156, 18, 0.15);
+  color: #f39c12;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  text-align: center;
+}
+
 .login-btn {
   width: 100%;
   padding: 12px;
@@ -4742,6 +4817,21 @@ tr:hover .btn-hq-toggle {
 .role-badge-viewer {
   background: rgba(127, 140, 141, 0.2);
   color: #95a5a6;
+}
+
+.sso-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(66, 133, 244, 0.2);
+  color: #4285f4;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 6px;
+  vertical-align: middle;
 }
 
 .sidebar-logout {
@@ -5747,4 +5837,57 @@ tr:hover .btn-hq-toggle {
   color: var(--success);
   flex-shrink: 0;
   opacity: 0.6;
+}
+
+/* ========== Light Theme Overrides ========== */
+[data-theme="light"] input,
+[data-theme="light"] select,
+[data-theme="light"] textarea {
+  background: #f0f2f5;
+  border-color: rgba(0, 0, 0, 0.15);
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .settings-card,
+[data-theme="light"] .kpi-card,
+[data-theme="light"] .trailer-card,
+[data-theme="light"] .jobsite-card {
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .maint-table th {
+  background: #e8eaed;
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .maint-table td {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .btn-ghost {
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .login-page {
+  background: #e8eaed;
+}
+
+[data-theme="light"] .theme-toggle {
+  color: var(--text-muted);
+}
+
+.theme-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+}
+.theme-toggle:hover {
+  color: var(--text-primary);
 }

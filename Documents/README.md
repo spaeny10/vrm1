@@ -139,6 +139,13 @@ IC2 Peplink Router (on trailer)
 
    # Server Port (optional, defaults to 3001)
    PORT=3001
+
+   # JWT Secret (change in production)
+   JWT_SECRET=your-secure-secret-here
+
+   # Google SSO (optional — enables "Sign in with Google")
+   GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+   VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
    ```
 
 4. **Initialize the database**
@@ -279,14 +286,44 @@ With ~110 trailers across ~53 sites and current polling intervals:
 - **Query response**: <100ms (cached data)
 - **Historical queries**: 200-500ms (depends on date range)
 
-## Security
+## Authentication & Security
 
+### Google SSO
+Users with `@jetstreamsys.com` Google accounts can sign in via Google Identity Services. New Google users are auto-provisioned with the `viewer` role. To enable, set these environment variables:
+```bash
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com   # same value, for the frontend
+```
+Password-based login remains available as a fallback.
+
+### Role-Based Access Control (RBAC)
+
+Three roles with enforced permissions on both backend (middleware) and frontend (UI hiding):
+
+| Action | Admin | Technician | Viewer |
+|--------|:-----:|:----------:|:------:|
+| View dashboards, data, reports, analytics | Yes | Yes | Yes |
+| AI analysis, SQL queries, CSV export | Yes | Yes | Yes |
+| Edit job sites (status, dates, name, assignments) | Yes | Yes | No |
+| Maintenance CRUD (create, edit, delete logs) | Yes | Yes | No |
+| Component inventory (add, edit) | Yes | Yes | No |
+| GPS refresh & device linking | Yes | Yes | No |
+| Acknowledge action queue items | Yes | Yes | No |
+| Submit checklists | Yes | Yes | No |
+| User management (create, edit, delete, reset PW) | Yes | No | No |
+| Data retention & purge | Yes | No | No |
+| Re-cluster GPS, analytics backfill | Yes | No | No |
+| Checklist & issue template management | Yes | No | No |
+
+### General Security
 - All API keys stored in `.env` (never committed to git)
-- JWT-based authentication with role-based access control
+- JWT-based authentication (24h expiry)
 - SQL queries validated for read-only operations (SELECT/WITH only)
 - PostgreSQL connections use SSL for remote databases
 - CORS enabled for frontend access
 - IC2 OAuth token refresh handles automatic re-authentication
+- Google ID tokens verified server-side via `google-auth-library`
+- Domain restriction: only `@jetstreamsys.com` Google accounts allowed
 
 ## License
 

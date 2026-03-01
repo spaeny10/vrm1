@@ -36,7 +36,9 @@ function DroppableJobSiteRow({ jobSiteId, isOver, children }) {
 }
 
 function Settings() {
-    const { user } = useAuth()
+    const { user, updateDisplayName } = useAuth()
+    const canEdit = user?.role === 'admin' || user?.role === 'technician'
+    const isAdmin = user?.role === 'admin'
     const fetchSettingsFn = useCallback(() => fetchSettings(), [])
     const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
     const { data, loading, refetch } = useApiPolling(fetchSettingsFn, 60000)
@@ -97,6 +99,24 @@ function Settings() {
         } catch (err) {
             toast.error('Error linking device: ' + err.message)
         }
+    }
+
+    // My Profile state
+    const [editingProfile, setEditingProfile] = useState(false)
+    const [profileName, setProfileName] = useState(user?.display_name || '')
+    const [savingProfile, setSavingProfile] = useState(false)
+
+    const handleSaveProfile = async () => {
+        if (!profileName.trim()) return
+        setSavingProfile(true)
+        try {
+            await updateDisplayName(profileName.trim())
+            toast.success('Display name updated')
+            setEditingProfile(false)
+        } catch (err) {
+            toast.error('Error updating profile: ' + err.message)
+        }
+        setSavingProfile(false)
     }
 
     // User Management state (admin only)
@@ -327,9 +347,20 @@ function Settings() {
 
     if (loading && !data) {
         return (
-            <div className="page-loading">
-                <div className="spinner"></div>
-                <p>Loading settings...</p>
+            <div className="settings-page">
+                <div className="page-header">
+                    <div className="skeleton skeleton-text" style={{ width: 160, height: 28 }}></div>
+                    <div className="skeleton skeleton-text" style={{ width: 320, height: 16, marginTop: 8 }}></div>
+                </div>
+                <div className="settings-grid">
+                    {[1,2,3].map(i => (
+                        <div key={i} className="settings-card skeleton-card">
+                            <div className="skeleton skeleton-text" style={{ width: '50%', height: 18 }}></div>
+                            <div className="skeleton skeleton-text" style={{ width: '80%', height: 14, marginTop: 12 }}></div>
+                            <div className="skeleton skeleton-text" style={{ width: '100%', height: 40, marginTop: 16 }}></div>
+                        </div>
+                    ))}
+                </div>
             </div>
         )
     }
@@ -342,6 +373,50 @@ function Settings() {
             </div>
 
             <div className="settings-grid">
+                {/* My Profile */}
+                <div className="settings-card">
+                    <h2>My Profile</h2>
+                    <p className="settings-desc">Update your display name. Role and account type are managed by admins.</p>
+                    <div className="profile-section">
+                        <div className="profile-field">
+                            <label>Username</label>
+                            <span>{user?.username}</span>
+                        </div>
+                        <div className="profile-field">
+                            <label>Role</label>
+                            <span className={`role-badge role-badge-${user?.role}`}>{user?.role}</span>
+                        </div>
+                        <div className="profile-field">
+                            <label>Display Name</label>
+                            {editingProfile ? (
+                                <div className="inline-edit-compact">
+                                    <input
+                                        type="text"
+                                        value={profileName}
+                                        onChange={e => setProfileName(e.target.value)}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter') handleSaveProfile()
+                                            if (e.key === 'Escape') setEditingProfile(false)
+                                        }}
+                                        autoFocus
+                                    />
+                                    <button className="btn btn-sm btn-primary" onClick={handleSaveProfile} disabled={savingProfile}>
+                                        {savingProfile ? 'Saving...' : 'Save'}
+                                    </button>
+                                    <button className="btn btn-sm btn-ghost" onClick={() => setEditingProfile(false)}>Cancel</button>
+                                </div>
+                            ) : (
+                                <span
+                                    className="clickable-name"
+                                    onClick={() => { setProfileName(user?.display_name || ''); setEditingProfile(true) }}
+                                >
+                                    {user?.display_name || '—'}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
                 {/* User Management (admin only) */}
                 {user?.role === 'admin' && (
                     <div className="settings-card settings-card-wide">
@@ -433,6 +508,7 @@ function Settings() {
                                         <tr>
                                             <th>Username</th>
                                             <th>Display Name</th>
+                                            <th>Email</th>
                                             <th>Role</th>
                                             <th>Active</th>
                                             <th>Actions</th>
@@ -442,8 +518,12 @@ function Settings() {
                                         {users.map(u => (
                                             <Fragment key={u.id}>
                                                 <tr className="maint-row">
-                                                    <td className="maint-title">{u.username}</td>
+                                                    <td className="maint-title">
+                                                        {u.username}
+                                                        {u.google_id && <span className="sso-badge" title="Google SSO account">G</span>}
+                                                    </td>
                                                     <td>{u.display_name || '—'}</td>
+                                                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.85em' }}>{u.email || '—'}</td>
                                                     <td>
                                                         <select
                                                             className={`status-select status-select-${u.role === 'admin' ? 'active' : u.role === 'technician' ? 'standby' : 'completed'}`}
@@ -467,12 +547,14 @@ function Settings() {
                                                         </button>
                                                     </td>
                                                     <td className="maint-actions" style={{ display: 'flex', gap: 6 }}>
-                                                        <button
-                                                            className="btn btn-sm btn-secondary"
-                                                            onClick={() => { setResetPwUserId(resetPwUserId === u.id ? null : u.id); setResetPwValue('') }}
-                                                        >
-                                                            Reset PW
-                                                        </button>
+                                                        {!u.google_id && (
+                                                            <button
+                                                                className="btn btn-sm btn-secondary"
+                                                                onClick={() => { setResetPwUserId(resetPwUserId === u.id ? null : u.id); setResetPwValue('') }}
+                                                            >
+                                                                Reset PW
+                                                            </button>
+                                                        )}
                                                         <button
                                                             className="btn btn-sm btn-danger"
                                                             onClick={() => handleDeleteUser(u)}
@@ -485,7 +567,7 @@ function Settings() {
                                                 </tr>
                                                 {resetPwUserId === u.id && (
                                                     <tr className="maint-row">
-                                                        <td colSpan={5}>
+                                                        <td colSpan={6}>
                                                             <div className="inline-edit-compact">
                                                                 <input
                                                                     type="password"
@@ -517,13 +599,15 @@ function Settings() {
                 <div className="settings-card settings-card-wide">
                     <div className="settings-card-header">
                         <h2>Job Sites</h2>
-                        <button
-                            className="btn btn-secondary"
-                            onClick={handleRecluster}
-                            disabled={reclustering}
-                        >
-                            {reclustering ? 'Clustering...' : 'Re-cluster GPS'}
-                        </button>
+                        {isAdmin && (
+                            <button
+                                className="btn btn-secondary"
+                                onClick={handleRecluster}
+                                disabled={reclustering}
+                            >
+                                {reclustering ? 'Clustering...' : 'Re-cluster GPS'}
+                            </button>
+                        )}
                     </div>
                     <p className="settings-desc">
                         Manage construction sites. Trailers are automatically grouped by GPS proximity (300m threshold).
@@ -576,9 +660,9 @@ function Settings() {
                                                                 </div>
                                                             ) : (
                                                                 <span
-                                                                    className="clickable-name"
-                                                                    onClick={() => { setEditingSiteId(js.id); setEditName(js.name) }}
-                                                                    title="Click to rename"
+                                                                    className={canEdit ? 'clickable-name' : ''}
+                                                                    onClick={canEdit ? () => { setEditingSiteId(js.id); setEditName(js.name) } : undefined}
+                                                                    title={canEdit ? 'Click to rename' : undefined}
                                                                 >
                                                                     {js.name}
                                                                 </span>
@@ -617,6 +701,7 @@ function Settings() {
                                                                 className={`status-select status-select-${js.status}`}
                                                                 value={js.status}
                                                                 onChange={e => handleStatusChange(js.id, e.target.value)}
+                                                                disabled={!canEdit}
                                                             >
                                                                 <option value="active">Active</option>
                                                                 <option value="standby">Standby</option>
@@ -626,7 +711,7 @@ function Settings() {
                                                         <td className="jobsite-mgmt-date">
                                                             <input
                                                                 type="date"
-                                                                className="date-input"
+                                                                className="date-input" disabled={!canEdit}
                                                                 value={js.delivery_date ? js.delivery_date.split('T')[0] : ''}
                                                                 onChange={e => handleDateChange(js.id, 'delivery_date', e.target.value)}
                                                             />
@@ -634,7 +719,7 @@ function Settings() {
                                                         <td className="jobsite-mgmt-date">
                                                             <input
                                                                 type="date"
-                                                                className="date-input"
+                                                                className="date-input" disabled={!canEdit}
                                                                 value={js.active_date ? js.active_date.split('T')[0] : ''}
                                                                 onChange={e => handleDateChange(js.id, 'active_date', e.target.value)}
                                                             />
@@ -642,7 +727,7 @@ function Settings() {
                                                         <td className="jobsite-mgmt-date">
                                                             <input
                                                                 type="date"
-                                                                className="date-input"
+                                                                className="date-input" disabled={!canEdit}
                                                                 value={js.calloff_date ? js.calloff_date.split('T')[0] : ''}
                                                                 onChange={e => handleDateChange(js.id, 'calloff_date', e.target.value)}
                                                             />
@@ -650,7 +735,7 @@ function Settings() {
                                                         <td className="jobsite-mgmt-date">
                                                             <input
                                                                 type="date"
-                                                                className="date-input"
+                                                                className="date-input" disabled={!canEdit}
                                                                 value={js.pickup_date ? js.pickup_date.split('T')[0] : ''}
                                                                 onChange={e => handleDateChange(js.id, 'pickup_date', e.target.value)}
                                                             />
@@ -668,6 +753,7 @@ function Settings() {
                                                                     value={js.id}
                                                                     onChange={e => handleReassignTrailer(t.site_id, parseInt(e.target.value))}
                                                                     onClick={e => e.stopPropagation()}
+                                                                    disabled={!canEdit}
                                                                 >
                                                                     {sortedJobSites.map(target => (
                                                                         <option key={target.id} value={target.id}>
@@ -707,9 +793,11 @@ function Settings() {
                             <button className="btn btn-secondary" onClick={loadGpsData} disabled={gpsLoading}>
                                 {gpsLoading ? 'Loading...' : 'Check GPS'}
                             </button>
-                            <button className="btn btn-primary" onClick={handleGpsRefresh} disabled={gpsRefreshing}>
-                                {gpsRefreshing ? 'Refreshing...' : 'Refresh from IC2'}
-                            </button>
+                            {canEdit && (
+                                <button className="btn btn-primary" onClick={handleGpsRefresh} disabled={gpsRefreshing}>
+                                    {gpsRefreshing ? 'Refreshing...' : 'Refresh from IC2'}
+                                </button>
+                            )}
                         </div>
                     </div>
                     <p className="settings-desc">
@@ -761,9 +849,9 @@ function Settings() {
                                                             ))}
                                                         </select>
                                                     ) : (
-                                                        <button className="btn btn-sm btn-ghost" onClick={() => setLinkingTrailerId(t.site_id)}>
+                                                        canEdit ? <button className="btn btn-sm btn-ghost" onClick={() => setLinkingTrailerId(t.site_id)}>
                                                             Link
-                                                        </button>
+                                                        </button> : <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>—</span>
                                                     )}
                                                 </td>
                                                 <td>{hasDb ? t.db_latitude.toFixed(5) : '—'}</td>
@@ -810,50 +898,54 @@ function Settings() {
                     </div>
                 </div>
 
-                {/* Retention Settings */}
-                <div className="settings-card">
-                    <h2>Data Retention</h2>
-                    <p className="settings-desc">
-                        Set how long historical data is kept. Older records are automatically pruned.
-                    </p>
-                    <div className="retention-options">
-                        {[7, 30, 90, 180, 365].map(days => (
+                {/* Retention Settings — admin only */}
+                {isAdmin && (
+                    <div className="settings-card">
+                        <h2>Data Retention</h2>
+                        <p className="settings-desc">
+                            Set how long historical data is kept. Older records are automatically pruned.
+                        </p>
+                        <div className="retention-options">
+                            {[7, 30, 90, 180, 365].map(days => (
+                                <button
+                                    key={days}
+                                    className={`retention-btn ${displayRetention === days ? 'active' : ''}`}
+                                    onClick={() => setRetentionDays(days)}
+                                >
+                                    {days} days
+                                </button>
+                            ))}
+                        </div>
+                        <div className="settings-actions">
                             <button
-                                key={days}
-                                className={`retention-btn ${displayRetention === days ? 'active' : ''}`}
-                                onClick={() => setRetentionDays(days)}
+                                className="btn btn-primary"
+                                onClick={handleSave}
+                                disabled={saving}
                             >
-                                {days} days
+                                {saving ? 'Saving...' : 'Save Settings'}
                             </button>
-                        ))}
+                        </div>
                     </div>
-                    <div className="settings-actions">
-                        <button
-                            className="btn btn-primary"
-                            onClick={handleSave}
-                            disabled={saving}
-                        >
-                            {saving ? 'Saving...' : 'Save Settings'}
-                        </button>
-                    </div>
-                </div>
+                )}
 
-                {/* Danger Zone */}
-                <div className="settings-card settings-card-danger">
-                    <h2>Storage Management</h2>
-                    <p className="settings-desc">
-                        Manually purge data older than the current retention period.
-                    </p>
-                    <div className="settings-actions">
-                        <button
-                            className="btn btn-danger"
-                            onClick={handlePurge}
-                            disabled={purging}
-                        >
-                            {purging ? 'Purging...' : 'Purge Old Data'}
-                        </button>
+                {/* Danger Zone — admin only */}
+                {isAdmin && (
+                    <div className="settings-card settings-card-danger">
+                        <h2>Storage Management</h2>
+                        <p className="settings-desc">
+                            Manually purge data older than the current retention period.
+                        </p>
+                        <div className="settings-actions">
+                            <button
+                                className="btn btn-danger"
+                                onClick={handlePurge}
+                                disabled={purging}
+                            >
+                                {purging ? 'Purging...' : 'Purge Old Data'}
+                            </button>
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
 
         </div>

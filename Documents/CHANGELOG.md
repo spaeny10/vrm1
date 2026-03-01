@@ -4,6 +4,27 @@ All notable changes to BIGView OMNI.
 
 ---
 
+## [1.3.0] — 2026-03-01
+
+### Added
+- **Google SSO** — "Sign in with Google" on the login page using Google Identity Services. Restricted to `@jetstreamsys.com` domain. New Google users are auto-provisioned with `viewer` role. Existing password login remains as fallback.
+- **Role-Based Access Control (RBAC)** — Backend `requireRole` middleware now enforces permissions on all mutation endpoints. Three roles: `admin` (full access), `technician` (field operations), `viewer` (read-only).
+- **Fleet Deployment Management** — Full deployment lifecycle tracking (Deliver → Active → Call-off → Pickup) with 4 date columns per job site, HQ exclusion from KPIs, deployment KPI row on dashboard, and deployment status filters on the map.
+- **Clickable Deployment KPIs** — Dashboard deployment status cards (Actively Billing, Standby, Available at HQ, Awaiting Pickup) filter the site list when clicked.
+
+### Changed
+- **Viewer role restricted** — Viewers can no longer modify job sites, maintenance logs, components, GPS settings, action queue acknowledgments, or system settings. Edit controls are hidden in the UI and blocked by backend middleware.
+- **Admin-only operations** — Data retention, purge, GPS re-clustering, analytics backfill, and embedding generation now require `admin` role.
+- **Action Queue collapsed by default** — Action Queue section on the dashboard starts folded.
+
+### Security
+- 15 backend endpoints now enforce `requireRole` (was 9 before). All mutation endpoints are protected.
+- Frontend edit controls (buttons, dropdowns, date pickers, forms) are hidden or disabled for viewers across Settings, Dashboard, Maintenance, TrailerDetail, and JobSiteDetail pages.
+- Google ID tokens verified server-side via `google-auth-library` with domain restriction.
+- Users table extended with `google_id` and `email` columns for SSO account linking.
+
+---
+
 ## [1.2.0] — 2026-02-28
 
 ### Added

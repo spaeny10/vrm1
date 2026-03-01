@@ -9,7 +9,15 @@ export default function LoginPage() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [sessionExpired, setSessionExpired] = useState(false);
     const googleBtnRef = useRef(null);
+
+    useEffect(() => {
+        if (localStorage.getItem('vrm_session_expired')) {
+            setSessionExpired(true);
+            localStorage.removeItem('vrm_session_expired');
+        }
+    }, []);
 
     const handleGoogleResponse = useCallback(async (response) => {
         setError('');
@@ -65,6 +73,9 @@ export default function LoginPage() {
                     <p className="login-subtitle">Fleet Management — Sign in to continue</p>
                 </div>
 
+                {sessionExpired && !error && (
+                    <div className="login-expired">Your session has expired. Please sign in again.</div>
+                )}
                 {error && <div className="login-error">{error}</div>}
 
                 {GOOGLE_CLIENT_ID && (

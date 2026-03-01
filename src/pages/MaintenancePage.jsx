@@ -69,6 +69,7 @@ function dateToDayKey(ts) {
 
 function MaintenancePage() {
     const { user } = useAuth()
+    const canEdit = user?.role === 'admin' || user?.role === 'technician'
     const toast = useToast()
     const showMyTasks = user && user.role !== 'viewer'
     const [statusFilter, setStatusFilter] = useState(showMyTasks ? 'my_tasks' : 'all')
@@ -473,9 +474,11 @@ function MaintenancePage() {
                 <button className="btn btn-secondary" onClick={handleExportCSV} disabled={filteredLogs.length === 0}>
                     Export CSV
                 </button>
-                <button className="btn btn-primary" onClick={() => { setEditingLog(null); setShowForm(true) }}>
-                    + New Log
-                </button>
+                {canEdit && (
+                    <button className="btn btn-primary" onClick={() => { setEditingLog(null); setShowForm(true) }}>
+                        + New Log
+                    </button>
+                )}
             </div>
 
             {/* My Tasks View */}
@@ -720,15 +723,17 @@ function MaintenancePage() {
                                                     <td className="maint-tech">{log.technician || '—'}</td>
                                                     <td className="maint-cost">{formatCost(log.labor_cost_cents + log.parts_cost_cents)}</td>
                                                     <td>{statusBadge(log.status)}</td>
-                                                    <td className="maint-actions">
-                                                        <button
-                                                            className="maint-delete-btn"
-                                                            onClick={(e) => { e.stopPropagation(); handleDelete(log.id) }}
-                                                            title="Cancel log"
-                                                        >
-                                                            ✕
-                                                        </button>
-                                                    </td>
+                                                    {canEdit && (
+                                                        <td className="maint-actions">
+                                                            <button
+                                                                className="maint-delete-btn"
+                                                                onClick={(e) => { e.stopPropagation(); handleDelete(log.id) }}
+                                                                title="Cancel log"
+                                                            >
+                                                                ✕
+                                                            </button>
+                                                        </td>
+                                                    )}
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -763,15 +768,17 @@ function MaintenancePage() {
                                                     <td className="maint-tech">{log.technician || '—'}</td>
                                                     <td className="maint-cost">{formatCost(log.labor_cost_cents + log.parts_cost_cents)}</td>
                                                     <td>{statusBadge(log.status)}</td>
-                                                    <td className="maint-actions">
-                                                        <button
-                                                            className="maint-delete-btn"
-                                                            onClick={(e) => { e.stopPropagation(); handleDelete(log.id) }}
-                                                            title="Cancel log"
-                                                        >
-                                                            ✕
-                                                        </button>
-                                                    </td>
+                                                    {canEdit && (
+                                                        <td className="maint-actions">
+                                                            <button
+                                                                className="maint-delete-btn"
+                                                                onClick={(e) => { e.stopPropagation(); handleDelete(log.id) }}
+                                                                title="Cancel log"
+                                                            >
+                                                                ✕
+                                                            </button>
+                                                        </td>
+                                                    )}
                                                 </tr>
                                             ))}
                                         </tbody>

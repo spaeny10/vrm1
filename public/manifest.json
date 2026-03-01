@@ -1,0 +1,21 @@
+{
+  "name": "BIGView OMNI — Fleet Management",
+  "short_name": "BIGView OMNI",
+  "description": "Real-time fleet management for Victron solar systems and Pepwave routers",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1d23",
+  "theme_color": "#1a1d23",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/logo.webp",
+      "sizes": "512x512",
+      "type": "image/webp"
+    }
+  ]
+}

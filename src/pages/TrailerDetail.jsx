@@ -19,6 +19,7 @@ import Breadcrumbs from '../components/Breadcrumbs'
 import SignalBars from '../components/SignalBars'
 import ReportPanel from '../components/ReportPanel'
 import { signalQuality, formatUptime, formatMB } from '../utils/format'
+import { useAuth } from '../components/AuthProvider'
 
 ChartJS.register(
     CategoryScale, LinearScale, TimeScale, PointElement, LineElement,
@@ -47,6 +48,8 @@ function diagFormatted(records, code) {
 }
 
 function TrailerDetail() {
+    const { user } = useAuth()
+    const canEdit = user?.role === 'admin' || user?.role === 'technician'
     const { id } = useParams()
     const navigate = useNavigate()
     const [range, setRange] = useState('24h')
@@ -832,9 +835,11 @@ function TrailerDetail() {
             <div className="detail-section">
                 <div className="detail-section-header">
                     <h2>Component Inventory</h2>
-                    <button className="btn btn-primary btn-sm" onClick={() => { setEditingComponent(null); setShowComponentForm(true) }}>
-                        + Add Component
-                    </button>
+                    {canEdit && (
+                        <button className="btn btn-primary btn-sm" onClick={() => { setEditingComponent(null); setShowComponentForm(true) }}>
+                            + Add Component
+                        </button>
+                    )}
                 </div>
                 {components.length === 0 ? (
                     <div className="empty-section">
@@ -870,7 +875,7 @@ function TrailerDetail() {
                                             <td className={warrantyExpired ? 'warranty-expired' : ''}>{fmtDate(comp.warranty_expiry)}</td>
                                             <td><span className={`comp-status comp-status-${comp.status}`}>{comp.status}</span></td>
                                             <td>
-                                                <button className="btn btn-ghost btn-sm" onClick={() => { setEditingComponent(comp); setShowComponentForm(true) }}>Edit</button>
+                                                {canEdit && <button className="btn btn-ghost btn-sm" onClick={() => { setEditingComponent(comp); setShowComponentForm(true) }}>Edit</button>}
                                             </td>
                                         </tr>
                                     )

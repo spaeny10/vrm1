@@ -12,6 +12,7 @@ import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import Breadcrumbs from '../components/Breadcrumbs'
 import ReportPanel from '../components/ReportPanel'
+import { useAuth } from '../components/AuthProvider'
 
 ChartJS.register(
     CategoryScale, LinearScale, PointElement, LineElement,
@@ -19,6 +20,8 @@ ChartJS.register(
 )
 
 function JobSiteDetail() {
+    const { user } = useAuth()
+    const canEdit = user?.role === 'admin' || user?.role === 'technician'
     const { id } = useParams()
     const navigate = useNavigate()
     const [editingName, setEditingName] = useState(false)
@@ -123,9 +126,9 @@ function JobSiteDetail() {
                         </div>
                     ) : (
                         <h1
-                            className="detail-site-name clickable"
-                            onClick={() => { setNameInput(jobSite.name); setEditingName(true) }}
-                            title="Click to rename"
+                            className={`detail-site-name${canEdit ? ' clickable' : ''}`}
+                            onClick={canEdit ? () => { setNameInput(jobSite.name); setEditingName(true) } : undefined}
+                            title={canEdit ? 'Click to rename' : undefined}
                         >
                             {jobSite.name}
                         </h1>

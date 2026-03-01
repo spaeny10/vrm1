@@ -1388,7 +1388,7 @@ export async function createGoogleUser(googleId, email, displayName, role = 'vie
 export async function getUsers() {
     if (!pool) return [];
     const result = await pool.query(
-        `SELECT id, username, display_name, role, active, created_at, updated_at FROM users ORDER BY created_at ASC`
+        `SELECT id, username, display_name, role, active, created_at, updated_at, email, google_id FROM users ORDER BY created_at ASC`
     );
     return result.rows;
 }

@@ -7,8 +7,11 @@ import JobSiteCard from '../components/JobSiteCard'
 import QueryBar from '../components/QueryBar'
 import DataFreshness from '../components/DataFreshness'
 import { generateCSV, downloadCSV } from '../utils/csv'
+import { useAuth } from '../components/AuthProvider'
 
 function FleetOverview() {
+    const { user } = useAuth()
+    const canEdit = user?.role === 'admin' || user?.role === 'technician'
     const [viewMode, setViewMode] = useState('sites') // 'sites' or 'trailers'
     const [sortBy, setSortBy] = useState('name')
     const [filterAlarm, setFilterAlarm] = useState('all')
@@ -274,9 +277,26 @@ function FleetOverview() {
 
     if (isLoading) {
         return (
-            <div className="page-loading">
-                <div className="spinner"></div>
-                <p>Loading fleet data...</p>
+            <div className="fleet-overview">
+                <div className="page-header">
+                    <div className="skeleton skeleton-text" style={{ width: 200, height: 28 }}></div>
+                    <div className="skeleton skeleton-text" style={{ width: 300, height: 16, marginTop: 8 }}></div>
+                </div>
+                <div className="kpi-row">
+                    {[1,2,3,4,5].map(i => (
+                        <div key={i} className="kpi-card skeleton-card">
+                            <div className="skeleton skeleton-text" style={{ width: '60%', height: 14 }}></div>
+                            <div className="skeleton skeleton-text" style={{ width: '40%', height: 28, marginTop: 8 }}></div>
+                        </div>
+                    ))}
+                </div>
+                <div className="site-grid">
+                    {[1,2,3,4,5,6].map(i => (
+                        <div key={i} className="skeleton-card" style={{ height: 160, borderRadius: 'var(--radius)' }}>
+                            <div className="skeleton" style={{ width: '100%', height: '100%', borderRadius: 'var(--radius)' }}></div>
+                        </div>
+                    ))}
+                </div>
             </div>
         )
     }
@@ -398,15 +418,17 @@ function FleetOverview() {
                                         <span className="action-queue-title">{action.title}</span>
                                         {action.subtitle && <span className="action-queue-subtitle">{action.subtitle}</span>}
                                     </div>
-                                    <button
-                                        className="action-ack-btn"
-                                        onClick={(e) => { e.stopPropagation(); handleAcknowledge(action.key) }}
-                                        title="Acknowledge"
-                                    >
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                            <polyline points="20 6 9 17 4 12" />
-                                        </svg>
-                                    </button>
+                                    {canEdit && (
+                                        <button
+                                            className="action-ack-btn"
+                                            onClick={(e) => { e.stopPropagation(); handleAcknowledge(action.key) }}
+                                            title="Acknowledge"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                                <polyline points="20 6 9 17 4 12" />
+                                            </svg>
+                                        </button>
+                                    )}
                                 </div>
                             ))}
                             {sortedActions.acked.length > 0 && sortedActions.acked.map(action => (
