@@ -4664,6 +4664,30 @@ tr:hover .btn-hq-toggle {
   margin-top: 4px;
 }
 
+.google-signin-wrapper {
+  display: flex;
+  justify-content: center;
+  margin: 4px 0 0 0;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 8px 0;
+  color: #6b7280;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #374151;
+}
+
 /* ============================================================
    Sidebar User Badge
    ============================================================ */

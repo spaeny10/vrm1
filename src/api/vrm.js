@@ -40,6 +40,19 @@ export async function fetchCurrentUser() {
     return apiFetch(`${API_BASE}/auth/me`);
 }
 
+export async function loginWithGoogle(credential) {
+    const res = await fetch(`${API_BASE}/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential }),
+    });
+    if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `API error: ${res.status}`);
+    }
+    return res.json();
+}
+
 export async function changePassword(currentPassword, newPassword) {
     return apiFetch(`${API_BASE}/auth/change-password`, {
         method: 'POST',

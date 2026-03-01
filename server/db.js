@@ -310,6 +310,11 @@ export async function initDb() {
       )
     `);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`);
+        // Google SSO columns
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT`);
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`);
+        await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL`);
         console.log('  ✓ Users table ready');
 
         // Action queue acknowledgements
@@ -1351,6 +1356,35 @@ export async function getUserById(id) {
     return result.rows[0] || null;
 }
 
+export async function getUserByGoogleId(googleId) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `SELECT * FROM users WHERE google_id = $1 AND active = TRUE`,
+        [googleId]
+    );
+    return result.rows[0] || null;
+}
+
+export async function getUserByEmail(email) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `SELECT * FROM users WHERE email = $1 AND active = TRUE`,
+        [email]
+    );
+    return result.rows[0] || null;
+}
+
+export async function createGoogleUser(googleId, email, displayName, role = 'viewer') {
+    if (!pool) return null;
+    const username = email.split('@')[0];
+    const result = await pool.query(
+        `INSERT INTO users (username, password_hash, display_name, role, google_id, email)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username, display_name, role, active, created_at, email`,
+        [username, 'google-sso-no-password', displayName, role, googleId, email]
+    );
+    return result.rows[0];
+}
+
 export async function getUsers() {
     if (!pool) return [];
     const result = await pool.query(
@@ -1365,7 +1399,7 @@ export async function updateUser(id, updates) {
     const values = [];
     let idx = 1;
     for (const [key, val] of Object.entries(updates)) {
-        if (['display_name', 'role', 'active', 'password_hash'].includes(key)) {
+        if (['display_name', 'role', 'active', 'password_hash', 'google_id', 'email'].includes(key)) {
             fields.push(`${key} = $${idx++}`);
             values.push(val);
         }

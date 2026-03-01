@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { login as apiLogin, fetchCurrentUser } from '../api/vrm';
+import { login as apiLogin, loginWithGoogle as apiLoginWithGoogle, fetchCurrentUser } from '../api/vrm';
 
 const AuthContext = createContext(null);
 
@@ -30,13 +30,20 @@ export function AuthProvider({ children }) {
         return data.user;
     }, []);
 
+    const googleLogin = useCallback(async (credential) => {
+        const data = await apiLoginWithGoogle(credential);
+        localStorage.setItem('vrm_token', data.token);
+        setUser(data.user);
+        return data.user;
+    }, []);
+
     const logout = useCallback(() => {
         localStorage.removeItem('vrm_token');
         setUser(null);
     }, []);
 
     return (
-        <AuthContext.Provider value={{ user, login, logout, loading }}>
+        <AuthContext.Provider value={{ user, login, googleLogin, logout, loading }}>
             {children}
         </AuthContext.Provider>
     );

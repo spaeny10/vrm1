@@ -24,6 +24,7 @@ import {
     insertAlertHistory, resolveAlert, getActiveAlerts, getAlertHistory,
     getBatteryHistory,
     createUser, getUserByUsername, getUserById, getUsers, updateUser, deleteUser,
+    getUserByGoogleId, getUserByEmail, createGoogleUser,
     getAcknowledgedActions, acknowledgeAction as dbAcknowledgeAction, unacknowledgeAction as dbUnacknowledgeAction,
     getChecklistTemplates, insertChecklistTemplate, updateChecklistTemplate,
     getCompletedChecklists, insertCompletedChecklist,
@@ -58,6 +59,8 @@ const anthropic = process.env.ANTHROPIC_API_KEY
 // JWT Authentication
 const JWT_SECRET = process.env.JWT_SECRET || 'vrm-fleet-dev-secret-change-in-production';
 const JWT_EXPIRES_IN = '24h';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const ALLOWED_GOOGLE_DOMAIN = 'jetstreamsys.com';
 
 function authMiddleware(req, res, next) {
     const authHeader = req.headers.authorization;
@@ -92,7 +95,7 @@ app.use(express.static(distPath));
 
 // Apply auth to all /api routes except login
 app.use('/api', (req, res, next) => {
-    if (req.path === '/auth/login') return next();
+    if (req.path === '/auth/login' || req.path === '/auth/google') return next();
     authMiddleware(req, res, next);
 });
 
@@ -774,6 +777,70 @@ app.post('/api/auth/change-password', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// Google SSO authentication
+app.post('/api/auth/google', async (req, res) => {
+    try {
+        const { credential } = req.body;
+        if (!credential) {
+            return res.status(400).json({ error: 'Google credential required' });
+        }
+        if (!GOOGLE_CLIENT_ID) {
+            return res.status(500).json({ error: 'Google SSO not configured on server' });
+        }
+
+        // Verify the Google ID token
+        const { OAuth2Client } = await import('google-auth-library');
+        const client = new OAuth2Client(GOOGLE_CLIENT_ID);
+        const ticket = await client.verifyIdToken({
+            idToken: credential,
+            audience: GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+
+        const { sub: googleId, email, name, hd } = payload;
+
+        // Restrict to allowed domain
+        if (hd !== ALLOWED_GOOGLE_DOMAIN) {
+            return res.status(403).json({ error: `Only @${ALLOWED_GOOGLE_DOMAIN} accounts are allowed` });
+        }
+
+        // Check if user already exists by Google ID
+        let user = await getUserByGoogleId(googleId);
+
+        if (!user) {
+            // Check if there's an existing user with same email (link accounts)
+            user = await getUserByEmail(email);
+            if (user) {
+                // Link Google ID to existing account
+                await updateUser(user.id, { google_id: googleId, email });
+                user = await getUserById(user.id);
+            } else {
+                // Auto-create new user with viewer role
+                user = await createGoogleUser(googleId, email, name || email.split('@')[0], 'viewer');
+            }
+        }
+
+        if (!user.active) {
+            return res.status(403).json({ error: 'Account is deactivated' });
+        }
+
+        const token = jwt.sign(
+            { id: user.id, username: user.username, role: user.role },
+            JWT_SECRET,
+            { expiresIn: JWT_EXPIRES_IN }
+        );
+
+        res.json({
+            success: true,
+            token,
+            user: { id: user.id, username: user.username, display_name: user.display_name, role: user.role },
+        });
+    } catch (err) {
+        console.error('Google auth error:', err.message);
+        res.status(401).json({ error: 'Google authentication failed' });
     }
 });
 

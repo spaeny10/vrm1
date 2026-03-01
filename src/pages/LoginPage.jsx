@@ -1,12 +1,45 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../components/AuthProvider';
 
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
 export default function LoginPage() {
-    const { login } = useAuth();
+    const { login, googleLogin } = useAuth();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const googleBtnRef = useRef(null);
+
+    const handleGoogleResponse = useCallback(async (response) => {
+        setError('');
+        setLoading(true);
+        try {
+            await googleLogin(response.credential);
+        } catch (err) {
+            setError(err.message || 'Google sign-in failed');
+        } finally {
+            setLoading(false);
+        }
+    }, [googleLogin]);
+
+    useEffect(() => {
+        if (!GOOGLE_CLIENT_ID || !window.google?.accounts?.id) return;
+        window.google.accounts.id.initialize({
+            client_id: GOOGLE_CLIENT_ID,
+            callback: handleGoogleResponse,
+            auto_select: false,
+        });
+        if (googleBtnRef.current) {
+            window.google.accounts.id.renderButton(googleBtnRef.current, {
+                theme: 'filled_black',
+                size: 'large',
+                width: 320,
+                text: 'signin_with',
+                shape: 'rectangular',
+            });
+        }
+    }, [handleGoogleResponse]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -34,13 +67,22 @@ export default function LoginPage() {
 
                 {error && <div className="login-error">{error}</div>}
 
+                {GOOGLE_CLIENT_ID && (
+                    <>
+                        <div className="google-signin-wrapper" ref={googleBtnRef}></div>
+                        <div className="login-divider">
+                            <span>or sign in with username</span>
+                        </div>
+                    </>
+                )}
+
                 <div className="form-group">
                     <label>Username</label>
                     <input
                         type="text"
                         value={username}
                         onChange={e => setUsername(e.target.value)}
-                        autoFocus
+                        autoFocus={!GOOGLE_CLIENT_ID}
                         autoComplete="username"
                         required
                     />
