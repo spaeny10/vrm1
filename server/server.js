@@ -2356,7 +2356,7 @@ async function generateEmbeddingsAsync() {
 // ============================================================
 const FLEET_SCHEMA = `
 You are a fleet data assistant for a solar-powered trailer monitoring system.
-The system tracks ~63 trailers across ~15 construction job sites (1-6 trailers per site).
+The system tracks ~110 trailers across ~53 construction job sites. HQ is in Kansas.
 "Site" = construction job site. "Trailer" = individual VRM solar installation.
 
 Database tables:
@@ -2410,6 +2410,8 @@ IMPORTANT:
 - For "latest" queries, use DISTINCT ON or subqueries with MAX(timestamp).
 - For daily aggregations, group by DATE(to_timestamp(timestamp/1000)).
 - PostgreSQL REAL columns: cast to numeric for round(): round(column::numeric, 2)
+- For geographic queries (e.g. "trailers in Colorado"), use job_sites.address which contains city/state info. Match on state name: WHERE js.address ILIKE '%Colorado%'. Do NOT match on job site name alone — names like "Big View HQ" don't indicate state.
+- job_sites.name may include city and state (e.g. "Aurora, Colorado") OR be a custom name (e.g. "Big View HQ"). Always use the address field for state/location filtering.
 
 Trailer hardware specs: ${TRAILER_SPECS.solar.panels}x ${TRAILER_SPECS.solar.panel_watts}W solar panels (${TRAILER_SPECS.solar.total_watts}W total), ${TRAILER_SPECS.battery.count}x ${TRAILER_SPECS.battery.ah_per_battery}Ah ${TRAILER_SPECS.battery.voltage}V batteries (${TRAILER_SPECS.battery.total_wh}Wh / ${(TRAILER_SPECS.battery.total_wh / 1000).toFixed(1)} kWh total storage).
 
