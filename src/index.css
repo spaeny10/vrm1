@@ -2884,6 +2884,56 @@ body {
   color: var(--text-primary);
 }
 
+.map-site-indent {
+  padding-left: 38px !important;
+}
+
+/* State group header rows */
+.map-state-row {
+  cursor: pointer;
+  transition: background 0.15s;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.map-state-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.map-state-row td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.map-state-name {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-state-chevron {
+  transition: transform 0.2s;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.map-state-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.map-state-site-count {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: 4px;
+}
+
+.map-state-total {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 /* ========== Maintenance Page ========== */
 
 .maint-tabs {

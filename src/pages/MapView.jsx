@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet'
 import { useApiPolling } from '../hooks/useApiPolling'
@@ -28,10 +28,51 @@ function FitBounds({ markers }) {
     return null
 }
 
+// Extract state from site name or address (e.g., "Aurora, Colorado" → "Colorado")
+function extractState(site) {
+    // Try address first — look for state abbreviation or name before zip
+    if (site.address) {
+        const parts = site.address.split(',').map(s => s.trim())
+        // Typical format: "123 Main St, City, State ZIP" or "City, State"
+        for (let i = parts.length - 1; i >= 0; i--) {
+            const cleaned = parts[i].replace(/\d{5}(-\d{4})?/, '').trim()
+            if (cleaned && cleaned.length >= 2 && !/^\d+/.test(cleaned)) {
+                // Map common 2-letter state abbreviations
+                const abbr = cleaned.toUpperCase()
+                if (US_STATE_ABBRS[abbr]) return US_STATE_ABBRS[abbr]
+                // If it's a full state name, use it
+                if (cleaned.length > 2) return cleaned
+            }
+        }
+    }
+    // Fallback: parse from site name (e.g., "Aurora, Colorado")
+    const parts = site.name.split(',')
+    if (parts.length >= 2) {
+        const candidate = parts[parts.length - 1].trim().replace(/#\d+$/, '').trim()
+        if (candidate) return candidate
+    }
+    return 'Other'
+}
+
+const US_STATE_ABBRS = {
+    AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',
+    CO:'Colorado',CT:'Connecticut',DE:'Delaware',FL:'Florida',GA:'Georgia',
+    HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',
+    KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',
+    MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',
+    MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',
+    NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',
+    OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',
+    SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',
+    VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',
+    DC:'District of Columbia',
+}
+
 function MapView() {
     const navigate = useNavigate()
     const [statusFilter, setStatusFilter] = useState('all')
     const [searchTerm, setSearchTerm] = useState('')
+    const [expandedStates, setExpandedStates] = useState({})
 
     const fetchFn = useCallback(() => fetchMapSites(), [])
     const { data, loading } = useApiPolling(fetchFn, 30000)
@@ -49,6 +90,34 @@ function MapView() {
         }
         return result
     }, [markers, statusFilter, searchTerm])
+
+    // Group sites by state
+    const stateGroups = useMemo(() => {
+        const groups = {}
+        for (const site of filtered) {
+            const state = extractState(site)
+            if (!groups[state]) groups[state] = []
+            groups[state].push(site)
+        }
+        // Sort states alphabetically, compute totals
+        return Object.keys(groups).sort().map(state => {
+            const sites = groups[state]
+            const totalTrailers = sites.reduce((s, m) => s + m.trailer_count, 0)
+            const totalOnline = sites.reduce((s, m) => s + m.trailers_online, 0)
+            const socValues = sites.filter(m => m.avg_soc != null).map(m => m.avg_soc)
+            const avgSoc = socValues.length > 0
+                ? +(socValues.reduce((s, v) => s + v, 0) / socValues.length).toFixed(1)
+                : null
+            const worstStatus = sites.some(s => s.worst_status === 'critical') ? 'critical'
+                : sites.some(s => s.worst_status === 'warning') ? 'warning'
+                : sites.some(s => s.worst_status === 'healthy') ? 'healthy' : 'unknown'
+            return { state, sites, totalTrailers, totalOnline, avgSoc, worstStatus }
+        })
+    }, [filtered])
+
+    const toggleState = (state) => {
+        setExpandedStates(prev => ({ ...prev, [state]: !prev[state] }))
+    }
 
     // Default center (US) — will be overridden by FitBounds
     const defaultCenter = [33.45, -112.07]
@@ -165,7 +234,7 @@ function MapView() {
                 </MapContainer>
             </div>
 
-            {/* Site List Below Map */}
+            {/* Site List Below Map — Grouped by State */}
             <div className="map-site-list">
                 <h2>All Sites</h2>
                 <div className="map-site-table">
@@ -179,22 +248,52 @@ function MapView() {
                             </tr>
                         </thead>
                         <tbody>
-                            {filtered.map(site => (
-                                <tr
-                                    key={site.id}
-                                    className="map-site-row"
-                                    onClick={() => navigate(`/site/${site.id}`)}
-                                >
-                                    <td className="map-site-name">{site.name}</td>
-                                    <td>{site.trailers_online}/{site.trailer_count}</td>
-                                    <td>{site.avg_soc != null ? `${site.avg_soc}%` : '--'}</td>
-                                    <td>
-                                        <span className={`jobsite-status-badge jobsite-status-${site.worst_status}`}>
-                                            {site.worst_status}
-                                        </span>
-                                    </td>
-                                </tr>
-                            ))}
+                            {stateGroups.map(group => {
+                                const isExpanded = !!expandedStates[group.state]
+                                return (
+                                    <React.Fragment key={group.state}>
+                                        <tr
+                                            className="map-state-row"
+                                            onClick={() => toggleState(group.state)}
+                                        >
+                                            <td className="map-state-name">
+                                                <svg
+                                                    className={`map-state-chevron ${isExpanded ? 'expanded' : ''}`}
+                                                    width="14" height="14" viewBox="0 0 24 24"
+                                                    fill="none" stroke="currentColor" strokeWidth="2"
+                                                >
+                                                    <polyline points="9 18 15 12 9 6" />
+                                                </svg>
+                                                {group.state}
+                                                <span className="map-state-site-count">{group.sites.length} site{group.sites.length !== 1 ? 's' : ''}</span>
+                                            </td>
+                                            <td className="map-state-total">{group.totalOnline}/{group.totalTrailers}</td>
+                                            <td className="map-state-total">{group.avgSoc != null ? `${group.avgSoc}%` : '--'}</td>
+                                            <td>
+                                                <span className={`jobsite-status-badge jobsite-status-${group.worstStatus}`}>
+                                                    {group.worstStatus}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                        {isExpanded && group.sites.map(site => (
+                                            <tr
+                                                key={site.id}
+                                                className="map-site-row"
+                                                onClick={() => navigate(`/site/${site.id}`)}
+                                            >
+                                                <td className="map-site-name map-site-indent">{site.name}</td>
+                                                <td>{site.trailers_online}/{site.trailer_count}</td>
+                                                <td>{site.avg_soc != null ? `${site.avg_soc}%` : '--'}</td>
+                                                <td>
+                                                    <span className={`jobsite-status-badge jobsite-status-${site.worst_status}`}>
+                                                        {site.worst_status}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </React.Fragment>
+                                )
+                            })}
                         </tbody>
                     </table>
                 </div>

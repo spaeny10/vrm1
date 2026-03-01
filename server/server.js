@@ -1322,6 +1322,7 @@ app.get('/api/map/sites', async (req, res) => {
                 return {
                     id: js.id,
                     name: js.name,
+                    address: js.address || null,
                     latitude: js.latitude,
                     longitude: js.longitude,
                     status: js.status,
