@@ -25,8 +25,10 @@ export default function LoginPage() {
         <div className="login-page">
             <form className="login-card" onSubmit={handleSubmit}>
                 <div className="login-brand">
-                    <img src="/logo.webp" alt="BIGView" className="login-logo-img" />
-                    <h1 className="login-title">BIGView OMNI</h1>
+                    <div className="login-logo-row">
+                        <img src="/logo.webp" alt="BIGView" className="login-logo-img" />
+                        <span className="login-omni">OMNI</span>
+                    </div>
                     <p className="login-subtitle">Fleet Management — Sign in to continue</p>
                 </div>
 

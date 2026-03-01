@@ -19,7 +19,10 @@ function App() {
         return (
             <div className="login-page">
                 <div className="login-card" style={{ textAlign: 'center', padding: '40px' }}>
-                    <img src="/logo.webp" alt="BIGView" className="login-logo-img" />
+                    <div className="login-logo-row">
+                        <img src="/logo.webp" alt="BIGView" className="login-logo-img" />
+                        <span className="login-omni">OMNI</span>
+                    </div>
                     <p style={{ color: 'var(--text-secondary)', marginTop: '16px' }}>Loading...</p>
                 </div>
             </div>

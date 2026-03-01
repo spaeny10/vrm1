@@ -14,6 +14,7 @@ function Sidebar() {
         <aside className="sidebar">
             <div className="sidebar-brand">
                 <img src="/logo.webp" alt="BIGView" className="brand-logo" />
+                <span className="brand-omni">OMNI</span>
             </div>
 
             <nav className="sidebar-nav">

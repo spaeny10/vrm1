@@ -82,6 +82,7 @@ body {
 .sidebar-brand {
   display: flex;
   align-items: center;
+  gap: 10px;
   padding: 16px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
@@ -90,6 +91,13 @@ body {
   height: 36px;
   width: auto;
   object-fit: contain;
+}
+
+.brand-omni {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.08em;
 }
 
 .sidebar-nav {
@@ -1436,6 +1444,7 @@ body {
     height: 24px;
   }
 
+  .brand-omni,
   .nav-item span,
   .sidebar-footer span {
     display: none;
@@ -4587,12 +4596,25 @@ tr:hover .btn-hq-toggle {
   justify-content: center;
 }
 
+.login-logo-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
 .login-logo-img {
   height: 48px;
   width: auto;
   object-fit: contain;
-  margin: 0 auto 4px;
-  display: block;
+}
+
+.login-omni {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.08em;
 }
 
 .login-title {
