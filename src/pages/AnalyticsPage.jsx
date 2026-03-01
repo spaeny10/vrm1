@@ -370,19 +370,19 @@ function AnalyticsPage({ embedded }) {
                     {/* Intelligence KPIs */}
                     {fleetIntel && (
                         <div className="kpi-row" style={{ marginBottom: '20px' }}>
-                            <div className="kpi-card kpi-yellow">
+                            <div className="kpi-card kpi-yellow" title="Fleet-wide average of actual yield vs expected yield">
                                 <div className="kpi-label">Avg Solar Score</div>
                                 <div className="kpi-value">{fleetIntel.avg_solar_score !== null ? `${fleetIntel.avg_solar_score}%` : '--'}</div>
                             </div>
-                            <div className={`kpi-card ${fleetIntel.avg_days_autonomy > 2 ? 'kpi-green' : 'kpi-red'}`}>
+                            <div className={`kpi-card ${fleetIntel.avg_days_autonomy > 2 ? 'kpi-green' : 'kpi-red'}`} title="Average days trailers can run on battery without solar input">
                                 <div className="kpi-label">Avg Autonomy</div>
                                 <div className="kpi-value">{fleetIntel.avg_days_autonomy !== null ? `${fleetIntel.avg_days_autonomy} days` : '--'}</div>
                             </div>
-                            <div className={`kpi-card ${fleetIntel.underperforming_count > 0 ? 'kpi-red' : 'kpi-teal'}`}>
+                            <div className={`kpi-card ${fleetIntel.underperforming_count > 0 ? 'kpi-red' : 'kpi-teal'}`} title="Trailers with solar score below 50% — panels may need cleaning or inspection">
                                 <div className="kpi-label">Underperforming</div>
                                 <div className="kpi-value">{fleetIntel.underperforming_count}</div>
                             </div>
-                            <div className={`kpi-card ${fleetIntel.low_autonomy_count > 0 ? 'kpi-red' : 'kpi-teal'}`}>
+                            <div className={`kpi-card ${fleetIntel.low_autonomy_count > 0 ? 'kpi-red' : 'kpi-teal'}`} title="Trailers with less than 1 day of battery autonomy remaining">
                                 <div className="kpi-label">Low Autonomy</div>
                                 <div className="kpi-value">{fleetIntel.low_autonomy_count}</div>
                             </div>
@@ -399,22 +399,23 @@ function AnalyticsPage({ embedded }) {
                             <thead>
                                 <tr>
                                     {[
-                                        { key: 'name', label: 'Trailer' },
-                                        { key: 'score', label: 'Solar Score' },
-                                        { key: 'avg7d', label: '7d Avg' },
-                                        { key: 'performance', label: 'Panel Output' },
-                                        { key: 'autonomy', label: 'Autonomy' },
-                                        { key: 'yield', label: 'Yield Today' },
-                                        { key: 'expected', label: 'Expected' },
-                                        { key: 'stored', label: 'Stored' },
-                                        { key: 'charge', label: 'Charge Time' },
-                                        { key: 'psh', label: 'PSH' },
-                                        { key: null, label: 'Source' },
+                                        { key: 'name', label: 'Trailer', tip: 'Trailer name or identifier' },
+                                        { key: 'score', label: 'Solar Score', tip: 'Actual yield as a percentage of expected yield — measures how well panels are performing' },
+                                        { key: 'avg7d', label: '7d Avg', tip: 'Average solar score over the last 7 days' },
+                                        { key: 'performance', label: 'Panel Output', tip: 'Current panel wattage as a percentage of rated capacity' },
+                                        { key: 'autonomy', label: 'Autonomy', tip: 'Estimated days the battery can last without solar input based on current consumption' },
+                                        { key: 'yield', label: 'Yield Today', tip: 'Total solar energy harvested today in watt-hours' },
+                                        { key: 'expected', label: 'Expected', tip: 'Expected daily yield based on panel size, location, and weather conditions' },
+                                        { key: 'stored', label: 'Stored', tip: 'Total energy currently stored in the battery bank' },
+                                        { key: 'charge', label: 'Charge Time', tip: 'Estimated time to fully charge the battery at current solar input' },
+                                        { key: 'psh', label: 'PSH', tip: 'Peak Sun Hours — hours of usable sunlight available today at this location' },
+                                        { key: null, label: 'Source', tip: 'Where the expected yield data comes from (weather API or system default)' },
                                     ].map(col => (
                                         <th
                                             key={col.label}
                                             className={col.key ? 'intel-th-sortable' : ''}
                                             onClick={col.key ? () => handleIntelSort(col.key) : undefined}
+                                            title={col.tip}
                                         >
                                             {col.label}
                                             {col.key && intelSort === col.key && (

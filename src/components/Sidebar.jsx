@@ -14,12 +14,14 @@ function Sidebar() {
         <aside className="sidebar">
             <div className="sidebar-brand">
                 <div className="brand-icon">
-                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                    <svg width="32" height="24" viewBox="0 0 48 36" fill="none">
+                        <polygon points="24,0 48,36 0,36" fill="#1a1a2e" />
+                        <polygon points="16,8 36,36 0,36" fill="#e74c3c" opacity="0.9" />
+                        <polygon points="32,12 48,36 16,36" fill="#f39c12" opacity="0.9" />
                     </svg>
                 </div>
                 <div className="brand-text">
-                    <span className="brand-name">VRM Fleet</span>
+                    <span className="brand-name">BVIM</span>
                     <span className="brand-sub">Dashboard</span>
                 </div>
             </div>

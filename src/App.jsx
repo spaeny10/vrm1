@@ -19,7 +19,7 @@ function App() {
         return (
             <div className="login-page">
                 <div className="login-card" style={{ textAlign: 'center', padding: '40px' }}>
-                    <div className="login-logo">VRM</div>
+                    <div className="login-logo">BVIM</div>
                     <p style={{ color: 'var(--text-secondary)', marginTop: '16px' }}>Loading...</p>
                 </div>
             </div>

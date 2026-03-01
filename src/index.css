@@ -1,5 +1,5 @@
 /* ========================================
-   VRM Fleet Dashboard — Flat Design System
+   BVIM Dashboard — Flat Design System
    ======================================== */
 
 :root {
@@ -4445,6 +4445,9 @@ body {
   font-weight: 800;
   color: var(--accent);
   letter-spacing: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .login-title {

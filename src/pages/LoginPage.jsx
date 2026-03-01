@@ -25,8 +25,14 @@ export default function LoginPage() {
         <div className="login-page">
             <form className="login-card" onSubmit={handleSubmit}>
                 <div className="login-brand">
-                    <div className="login-logo">VRM</div>
-                    <h1 className="login-title">Fleet Dashboard</h1>
+                    <div className="login-logo">
+                        <svg width="48" height="36" viewBox="0 0 48 36" fill="none">
+                            <polygon points="24,0 48,36 0,36" fill="#1a1a2e" />
+                            <polygon points="16,8 36,36 0,36" fill="#e74c3c" opacity="0.9" />
+                            <polygon points="32,12 48,36 16,36" fill="#f39c12" opacity="0.9" />
+                        </svg>
+                    </div>
+                    <h1 className="login-title">BVIM Dashboard</h1>
                     <p className="login-subtitle">Sign in to continue</p>
                 </div>
 
