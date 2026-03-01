@@ -6,13 +6,13 @@ import NetworkPage from './NetworkPage'
 import AnalyticsPage from './AnalyticsPage'
 
 const TABS = [
+    { key: 'intelligence', label: 'Intelligence', icon: 'M18 20V10M12 20V4M6 20v-6' },
     { key: 'energy', label: 'Energy', icon: 'M13 2L3 14h9l-1 8 10-12h-9l1-8z' },
     { key: 'network', label: 'Network', icon: 'M2 20h20M5 17a9 9 0 0 1 14 0M8 14a5.5 5.5 0 0 1 8 0' },
-    { key: 'intelligence', label: 'Intelligence', icon: 'M18 20V10M12 20V4M6 20v-6' },
 ]
 
 export default function FleetDetailsPage() {
-    const [activeTab, setActiveTab] = useState('energy')
+    const [activeTab, setActiveTab] = useState('intelligence')
 
     // Alert count for the Energy tab badge
     const fetchAlertsFn = useCallback(() => fetchFleetAlerts(), [])
