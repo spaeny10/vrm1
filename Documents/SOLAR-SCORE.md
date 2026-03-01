@@ -200,11 +200,12 @@ The intelligence system also computes these values using the same spec and locat
 
 | Data | Source | Update Frequency |
 |------|--------|------------------|
-| GPS coordinates | VRM diagnostic codes (`lt`/`lg`) | Every polling cycle (~60s) |
+| GPS coordinates | IC2 Peplink routers (sole authority) | Every IC2 poll (~60s) |
 | Solar radiation / PSH | Open-Meteo API | Cached 1 hour per location |
-| Actual yield, SOC, solar watts | Victron VRM API | Every polling cycle (~60s) |
+| Actual yield, SOC, solar watts | Victron VRM API | Every VRM poll (~30s) |
 | Daily energy history | Internal `dailyEnergy` Map | Accumulated throughout the day |
 | Astronomical PSH | Calculated from latitude + date | Computed on demand (fallback only) |
+| IC2 device binding | `trailer_assignments.ic2_device_id` | Persistent (auto-linked or manual) |
 
 ---
 

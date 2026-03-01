@@ -1,59 +1,100 @@
-# VRM Fleet Dashboard
+# BVIM Dashboard
 
-A real-time fleet monitoring dashboard for Victron Energy solar systems and Pepwave cellular routers. Features AI-powered natural language queries using Claude.
+A real-time fleet monitoring dashboard for Victron Energy solar systems and Pepwave cellular routers. Features AI-powered natural language queries, GPS tracking via IC2 Peplink, and fleet intelligence analytics.
 
 ## Features
 
-### 📊 Real-Time Monitoring
-- **Victron VRM Integration**: Monitor battery SOC, voltage, solar power, charge state, and temperature
-- **Pepwave InControl2 Integration**: Track device status, signal strength, data usage, and connectivity
-- **Live Status Cards**: Visual overview of fleet health, battery levels, and energy production
-- **Interactive Site Details**: Click any trailer for detailed metrics and historical charts
+### Dashboard (Fleet Overview)
+- **KPI Cards**: Total sites, online count, low battery count, average SOC, total yield
+- **Action Queue**: Energy deficit alerts with severity badges (caution/warning/critical) and acknowledgment tracking
+- **Site Cards**: Visual overview of each job site with trailer count, battery levels, and status
+- **Search, Sort & Filter**: Find trailers by name, sort by SOC/name/status, filter by state
 
-### 🤖 AI-Powered Natural Language Queries
+### Map View
+- **Interactive Map**: Leaflet-based map showing all trailer locations via GPS
+- **GPS Data Source**: Coordinates pulled from IC2 Peplink routers (sole authoritative source)
+- **Reverse Geocoding**: Job site addresses from OpenStreetMap Nominatim API
+- **Clickable Markers**: Click any trailer for quick status overlay
+
+### Fleet Details (Tabbed View)
+Three sub-tabs for detailed analysis:
+
+- **Intelligence** (default tab): Fleet-wide analytics table with Solar Score, 7-day average, panel performance, days of autonomy, energy balance, and charge time. Column headers include explanatory tooltips. KPI cards show fleet averages and underperforming trailer counts.
+- **Energy**: Daily solar yield vs consumption comparison with grouped bar charts, site selector, and fleet-wide energy summary
+- **Network**: Signal strength monitoring (RSRP, RSRQ, signal bars), carrier/technology tracking, data usage analytics, online/offline status
+
+### Maintenance
+- Drag-and-drop task management for fleet maintenance tracking
+- Task cards with priority, status, and assignment
+
+### Settings
+- **Database Status**: Connection info, snapshot count, retention period configuration
+- **GPS Verification**: Table showing all trailers with GPS coordinates, job site assignments, and IC2 device linkage status. Includes "Refresh from IC2" button and manual IC2 device linking.
+- **Data Purge**: Manual purge controls for old snapshots
+
+### AI-Powered Natural Language Queries
 Ask questions about your fleet in plain English:
-- "How much data have we used?"
+- "How many trailers are in Colorado?"
 - "Which trailers are offline?"
 - "Show me average signal strength by carrier"
 - "What's the battery SOC distribution?"
 
-Claude converts your questions to SQL, executes them against live data, and presents formatted results with explanations.
+Claude converts questions to SQL, executes against live data, and returns formatted results. Geographic queries use `job_sites.address` for accurate state/location filtering.
 
-### 📡 Network Analytics
-- Signal strength monitoring (RSRP, RSRQ, signal bars)
-- Carrier and technology tracking (4G/5G)
-- Data usage analytics per device
-- Online/offline status with last-seen timestamps
-
-### 📈 Historical Tracking
-- Battery SOC trends over time
-- Solar production history
-- Energy deficit alerts (consecutive days of net energy loss)
-- Pepwave signal strength and data usage history
-- Daily usage aggregation
-
-### ⚡ Energy Alerts
+### Energy Alerts
 Automatic detection of energy deficit streaks:
-- Warning: 2+ consecutive days of deficit
-- Danger: 5+ consecutive days of deficit
-- Critical: 10+ consecutive days of deficit
+- Caution: 2 consecutive days of deficit
+- Warning: 3-4 consecutive days of deficit
+- Critical: 5+ consecutive days of deficit
 
 ## Tech Stack
 
 **Frontend:**
-- React + Vite
-- Chart.js for historical visualizations
-- Responsive design with dark theme
+- React 18 + Vite 6
+- React Router for navigation
+- Chart.js for data visualization
+- Leaflet for interactive maps
+- Dark theme with Inter font
 
 **Backend:**
 - Node.js + Express
 - PostgreSQL for data storage and historical tracking
-- Background polling (5-minute intervals)
+- Background polling (VRM every 30s, IC2 every 60s)
+- JWT authentication with role-based access
 
 **APIs:**
 - Victron VRM API for solar system data
-- Pepwave InControl2 OAuth API for network data
+- Pepwave InControl2 OAuth API for network data and GPS
 - Anthropic Claude API for natural language queries
+- Open-Meteo API for solar radiation data (Solar Score calculation)
+- OpenStreetMap Nominatim for reverse geocoding
+
+## GPS Architecture
+
+### IC2 Peplink as GPS Authority
+
+GPS coordinates come exclusively from IC2 Peplink routers installed on each trailer. VRM does **not** write GPS data — it only seeds the cache if IC2 hasn't provided coordinates yet.
+
+### IC2 Device ID Binding
+
+Each IC2 Peplink router has a persistent `dev.id`. The system uses this ID as the primary identifier for linking IC2 devices to VRM trailer installations:
+
+1. **Stored linkage** (`ic2_device_id` column in `trailer_assignments`): Checked first
+2. **Name match fallback**: If no stored linkage, matches `dev.name` to VRM site name
+3. **Auto-persist**: On successful name match, the `ic2_device_id` is saved for future polls
+4. **Manual linking**: Settings > GPS Verification allows manual linking of unlinked IC2 devices
+
+This replaces fragile exact-name matching with a persistent identifier that survives device renames.
+
+### GPS Data Flow
+```
+IC2 Peplink Router (on trailer)
+    → IC2 API poll (every 60s)
+    → resolveIc2DeviceToSiteId() matches device to VRM site
+    → GPS coordinates stored in gpsCache + database
+    → Nominatim reverse geocodes to street address
+    → Frontend displays on map + GPS Verification table
+```
 
 ## Setup
 
@@ -61,7 +102,7 @@ Automatic detection of energy deficit streaks:
 - Node.js 18+ and npm
 - PostgreSQL database
 - API credentials:
-  - Victron VRM API token
+  - Victron VRM API token and user ID
   - Pepwave InControl2 client ID and secret
   - Anthropic API key (for natural language queries)
 
@@ -100,34 +141,18 @@ Automatic detection of energy deficit streaks:
    PORT=3001
    ```
 
-4. **Get API credentials**
+4. **Initialize the database**
 
-   **Victron VRM:**
-   - Log in to https://vrm.victronenergy.com
-   - Go to Settings → API Access
-   - Generate an API token
-   - Your User ID is in the URL: `vrm.victronenergy.com/users/{USER_ID}`
+   The database schema is created automatically on first run. Key tables:
+   - `site_snapshots` — Historical VRM data
+   - `pepwave_snapshots` — Historical Pepwave data
+   - `pepwave_daily_usage` — Daily data usage aggregation
+   - `energy_alerts` — Energy deficit tracking
+   - `trailer_assignments` — GPS coordinates, job site links, and IC2 device bindings
+   - `job_sites` — Job site locations with addresses
+   - `users` — Authentication (JWT-based)
 
-   **Pepwave InControl2:**
-   - Log in to https://incontrol2.peplink.com
-   - Go to Organization → API Management
-   - Create a new API client
-   - Save your Client ID and Client Secret
-
-   **Anthropic Claude:**
-   - Sign up at https://console.anthropic.com
-   - Go to API Keys section
-   - Create a new API key
-
-5. **Initialize the database**
-
-   The database schema is created automatically on first run. Tables include:
-   - `site_snapshots` - Historical VRM data
-   - `pepwave_snapshots` - Historical Pepwave data
-   - `pepwave_daily_usage` - Daily data usage aggregation
-   - `energy_alerts` - Energy deficit tracking
-
-6. **Start the development server**
+5. **Start the development server**
    ```bash
    npm run dev
    ```
@@ -136,176 +161,81 @@ Automatic detection of energy deficit streaks:
    - Frontend: http://localhost:5173
    - Backend API: http://localhost:3001
 
-## Usage
+## Navigation
 
-### Dashboard Overview
+The sidebar provides access to five main pages:
 
-The main dashboard displays:
-- **Total Sites**: Number of monitored trailers
-- **Online**: Count of sites currently reporting data
-- **Low Battery**: Sites below 50% SOC
-- **Average SOC**: Fleet-wide battery state of charge
-- **Total Yield**: Combined solar energy production (kWh)
+| Page | Route | Description |
+|------|-------|-------------|
+| Dashboard | `/` | Fleet overview with KPI cards, action queue, and site cards |
+| Map | `/map` | Interactive map with GPS-based trailer locations |
+| Fleet Details | `/fleet` | Intelligence, Energy, and Network sub-tabs |
+| Maintenance | `/maintenance` | Drag-and-drop maintenance task management |
+| Settings | `/settings` | Database config, GPS verification, data purge |
 
-### Natural Language Queries
+Clicking a site card navigates to the Job Site Detail view. Clicking a trailer within a job site navigates to the Trailer Detail view with battery/solar gauges, historical charts, and system intelligence.
 
-Use the search bar at the top to ask questions about your fleet:
-
-**Battery & Solar Queries:**
-- "Which sites have low battery?"
-- "Show me solar production for the last week"
-- "What's the average battery voltage?"
-- "Which trailers are in bulk charging mode?"
-
-**Network Queries:**
-- "Show me all offline devices"
-- "Which carriers have the best signal strength?"
-- "How much data has trailer 5001 used?"
-- "List devices with weak signal (under 2 bars)"
-
-**Historical Queries:**
-- "Show me battery trends for the last 30 days"
-- "What's the total data usage this month?"
-- "Which sites have energy deficit alerts?"
-
-### Site Details
-
-Click any site card to view:
-- Current battery, solar, and load metrics
-- Charge state and controller status
-- Historical battery SOC chart
-- Network connectivity status (if Pepwave-equipped)
-- Signal strength, carrier, and data usage
-- Recent diagnostics and alarms
-
-## API Endpoints
-
-### VRM Data
-- `GET /api/sites` - All sites with latest snapshot
-- `GET /api/sites/:id` - Site details with diagnostics
-- `GET /api/sites/:id/history?days=7` - Historical battery data
-
-### Pepwave Data
-- `GET /api/pepwave/devices` - All devices with latest snapshot
-- `GET /api/pepwave/devices/:name/history?days=7` - Historical signal/usage data
-- `GET /api/pepwave/devices/:name/daily-usage?days=30` - Daily usage aggregation
-
-### Natural Language Query
-- `POST /api/query` - Claude-powered natural language to SQL
-  ```json
-  {
-    "query": "How much data have we used?"
-  }
-  ```
-
-  Returns:
-  ```json
-  {
-    "success": true,
-    "answer": "Your fleet has used 145.3 GB total...",
-    "sql": "SELECT SUM(usage_mb) / 1024 AS total_gb FROM pepwave_snapshots",
-    "data": [{ "total_gb": 145.3 }]
-  }
-  ```
-
-### Alerts
-- `GET /api/energy-alerts` - Current energy deficit alerts
-
-## Architecture
-
-### Data Flow
-
-1. **Background Polling** (every 5 minutes):
-   - Fetch latest data from VRM and InControl2 APIs
-   - Store snapshots in PostgreSQL
-   - Calculate daily usage aggregations
-   - Detect energy deficit streaks
-   - Update in-memory cache
-
-2. **Frontend Requests**:
-   - Initial load fetches cached data (instant response)
-   - Site details fetch historical data on demand
-   - Natural language queries execute real-time SQL
-
-3. **Natural Language Queries**:
-   - User enters plain English question
-   - Sent to Claude API with database schema context
-   - Claude generates SQL query
-   - Backend validates and executes query (read-only)
-   - Results formatted and returned with AI explanation
-
-### Database Schema
-
-**site_snapshots** - VRM historical data
-```sql
-CREATE TABLE site_snapshots (
-  id SERIAL PRIMARY KEY,
-  site_id INTEGER NOT NULL,
-  site_name TEXT,
-  battery_soc REAL,
-  battery_voltage REAL,
-  solar_watts REAL,
-  load_watts REAL,
-  charge_state TEXT,
-  battery_temp REAL,
-  timestamp BIGINT NOT NULL
-);
+## Project Structure
 ```
-
-**pepwave_snapshots** - Pepwave historical data
-```sql
-CREATE TABLE pepwave_snapshots (
-  id SERIAL PRIMARY KEY,
-  device_name TEXT NOT NULL,
-  online BOOLEAN,
-  signal_bar INTEGER,
-  rsrp REAL,
-  rsrq REAL,
-  sinr REAL,
-  carrier TEXT,
-  technology TEXT,
-  usage_mb REAL,
-  timestamp BIGINT NOT NULL
-);
-```
-
-**energy_alerts** - Energy deficit tracking
-```sql
-CREATE TABLE energy_alerts (
-  id SERIAL PRIMARY KEY,
-  site_id INTEGER NOT NULL,
-  site_name TEXT,
-  severity TEXT, -- 'warning', 'danger', 'critical'
-  streak_days INTEGER,
-  deficit_days JSONB,
-  updated_at BIGINT NOT NULL
-);
+VRM1/
+├── server/
+│   ├── server.js         # Main backend server (polling, API routes, GPS resolver)
+│   └── db.js             # Database connection, schema, upsert functions
+├── src/
+│   ├── components/
+│   │   ├── Sidebar.jsx       # Navigation sidebar with BVIM branding
+│   │   ├── AuthProvider.jsx  # JWT auth context
+│   │   ├── ErrorBoundary.jsx # React error boundary
+│   │   └── QueryBar.jsx      # AI-powered natural language search
+│   ├── pages/
+│   │   ├── FleetOverview.jsx    # Dashboard with KPI cards + site grid
+│   │   ├── FleetDetailsPage.jsx # Tabbed view (Intelligence/Energy/Network)
+│   │   ├── AnalyticsPage.jsx    # Intelligence table + tooltips
+│   │   ├── EnergyPage.jsx       # Energy analysis charts
+│   │   ├── NetworkPage.jsx      # Network analytics
+│   │   ├── MapView.jsx          # Leaflet map
+│   │   ├── JobSiteDetail.jsx    # Per-site detail view
+│   │   ├── TrailerDetail.jsx    # Per-trailer detail view
+│   │   ├── MaintenancePage.jsx  # Maintenance task board
+│   │   ├── Settings.jsx         # Settings + GPS verification
+│   │   ├── LoginPage.jsx        # Login with BVIM branding
+│   │   └── NotFound.jsx         # 404 page
+│   ├── hooks/
+│   │   └── useApiPolling.js  # Polling hook for real-time data
+│   ├── api/
+│   │   └── vrm.js            # API client functions
+│   ├── App.jsx               # Route definitions
+│   ├── main.jsx              # React entry point
+│   └── index.css             # Global styles (dark theme)
+├── Documents/
+│   ├── README.md             # This file
+│   ├── API.md                # API endpoint reference
+│   ├── DEPLOYMENT.md         # Railway deployment guide
+│   ├── CHANGELOG.md          # Version history
+│   └── SOLAR-SCORE.md        # Solar Score calculation detail
+├── .env                      # Environment variables (not committed)
+├── index.html                # HTML entry point
+└── package.json              # Dependencies and scripts
 ```
 
 ## Configuration
 
-### Polling Interval
-
-Edit `server/server.js` to change update frequency:
-```javascript
-// Change from 5 minutes to custom interval
-const POLL_INTERVAL = 5 * 60 * 1000; // milliseconds
-```
+### Polling Intervals
+- **VRM**: Every 30 seconds (`VRM_POLL_INTERVAL`)
+- **IC2**: Every 60 seconds (`IC2_POLL_INTERVAL`)
 
 ### Alert Thresholds
-
 Edit alert severity thresholds in `server/server.js`:
 ```javascript
 function getSeverity(streakDays) {
-    if (streakDays >= 10) return 'critical';
-    if (streakDays >= 5) return 'danger';
-    if (streakDays >= 2) return 'warning';
+    if (streakDays >= 5) return 'critical';
+    if (streakDays >= 3) return 'warning';
+    if (streakDays >= 2) return 'caution';
     return null;
 }
 ```
 
 ### Claude Model
-
 The natural language query feature uses `claude-sonnet-4-5-20250929`. To change models, edit `server/server.js`:
 ```javascript
 const MODEL_NAME = 'claude-sonnet-4-5-20250929';
@@ -313,10 +243,21 @@ const MODEL_NAME = 'claude-sonnet-4-5-20250929';
 
 ## Troubleshooting
 
+### GPS coordinates not updating
+- Verify IC2 credentials (`IC2_CLIENT_ID`, `IC2_CLIENT_SECRET`) are valid
+- Check Settings > GPS Verification for IC2 device linkage status
+- Use "Refresh from IC2" to force a GPS update
+- For unlinked devices, manually link via the dropdown in the IC2 Device column
+
 ### "API error" when using natural language queries
 - Check your `ANTHROPIC_API_KEY` is valid
 - Verify you have API credits available
 - Check server logs for detailed error messages
+
+### Geographic queries returning wrong results
+- Verify job site addresses are correct (derived from GPS coordinates via reverse geocoding)
+- Bad GPS = wrong addresses = wrong query results
+- Use Settings > GPS Verification to check and fix GPS data
 
 ### Pepwave devices not appearing
 - Verify `IC2_CLIENT_ID` and `IC2_CLIENT_SECRET` are correct
@@ -328,74 +269,29 @@ const MODEL_NAME = 'claude-sonnet-4-5-20250929';
 - Check VRM API token hasn't expired
 - Verify sites are accessible in your VRM account
 
-### Database connection errors
-- Ensure PostgreSQL is running
-- Verify `DATABASE_URL` connection string is correct
-- Check database user has CREATE TABLE permissions
-
 ## Performance
 
-With 110 devices and 5-minute polling:
+With ~110 trailers across ~53 sites and current polling intervals:
 - **Backend memory**: ~150MB
-- **Database size**: ~50MB/month (with 5-min snapshots)
-- **Poll duration**: 30-35 seconds (VRM + IC2 combined)
+- **Database size**: ~50MB/month (with snapshots)
+- **VRM poll**: ~15-20 seconds per cycle
+- **IC2 poll**: ~10-15 seconds per cycle
 - **Query response**: <100ms (cached data)
 - **Historical queries**: 200-500ms (depends on date range)
 
 ## Security
 
 - All API keys stored in `.env` (never committed to git)
+- JWT-based authentication with role-based access control
 - SQL queries validated for read-only operations (SELECT/WITH only)
 - PostgreSQL connections use SSL for remote databases
 - CORS enabled for frontend access
-- Token refresh handles automatic re-authentication
-
-## Development
-
-### Project Structure
-```
-VRM1/
-├── server/
-│   ├── server.js         # Main backend server
-│   ├── db.js             # Database connection
-│   └── embeddings.js     # Embedding utilities (unused)
-├── src/
-│   ├── components/       # React components
-│   │   ├── Dashboard.jsx
-│   │   ├── SiteCard.jsx
-│   │   ├── SiteDetail.jsx
-│   │   └── QueryBar.jsx
-│   ├── api/
-│   │   └── vrm.js        # API client functions
-│   └── App.jsx
-├── .env                  # Environment variables (not committed)
-└── package.json
-```
-
-### Adding New Features
-
-To add a new data field:
-1. Add to relevant snapshot table schema
-2. Update polling function to capture the field
-3. Update frontend components to display it
-4. Add to Claude's schema context (FLEET_SCHEMA in server.js)
-
-## Contributing
-
-This is an internal fleet management tool. For bugs or feature requests, contact the development team.
+- IC2 OAuth token refresh handles automatic re-authentication
 
 ## License
 
 Proprietary - Antigravity Inc.
 
-## Support
-
-For issues or questions:
-- Check server logs: `npm run dev` output
-- Verify API credentials in `.env`
-- Test with simple queries first
-- Review this documentation
-
 ---
 
-**Built with ❤️ using Claude Code**
+**Built with Claude Code**
