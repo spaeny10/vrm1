@@ -5519,12 +5519,14 @@ body {
 
 /* Summary badges (pill-shaped in the header) */
 .action-queue-summary .priority-badge {
+  width: auto;
   border-radius: 12px;
   min-width: unset;
   height: 22px;
   padding: 0 10px;
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .action-ack-done {
