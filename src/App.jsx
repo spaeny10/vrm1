@@ -7,12 +7,9 @@ import FleetOverview from './pages/FleetOverview'
 import JobSiteDetail from './pages/JobSiteDetail'
 import TrailerDetail from './pages/TrailerDetail'
 import MapView from './pages/MapView'
-import EnergyPage from './pages/EnergyPage'
-import NetworkPage from './pages/NetworkPage'
+import FleetDetailsPage from './pages/FleetDetailsPage'
 import MaintenancePage from './pages/MaintenancePage'
-import AnalyticsPage from './pages/AnalyticsPage'
 import Settings from './pages/Settings'
-import MyWorkPage from './pages/MyWorkPage'
 import NotFound from './pages/NotFound'
 
 function App() {
@@ -43,12 +40,9 @@ function App() {
                         <Route path="/site/:id" element={<JobSiteDetail />} />
                         <Route path="/trailer/:id" element={<TrailerDetail />} />
                         <Route path="/map" element={<MapView />} />
-                        <Route path="/energy" element={<EnergyPage />} />
-                        <Route path="/network" element={<NetworkPage />} />
+                        <Route path="/fleet" element={<FleetDetailsPage />} />
                         <Route path="/maintenance" element={<MaintenancePage />} />
-                        <Route path="/analytics" element={<AnalyticsPage />} />
                         <Route path="/settings" element={<Settings />} />
-                        <Route path="/my-work" element={<MyWorkPage />} />
                         <Route path="*" element={<NotFound />} />
                     </Routes>
                 </ErrorBoundary>

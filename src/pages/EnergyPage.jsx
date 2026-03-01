@@ -12,7 +12,7 @@ import { generateCSV, downloadCSV } from '../utils/csv'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
-function EnergyPage() {
+function EnergyPage({ embedded }) {
     const [selectedSite, setSelectedSite] = useState(null)
     const [expandedJobSites, setExpandedJobSites] = useState(new Set())
     const [expandedAlerts, setExpandedAlerts] = useState(new Set())
@@ -188,21 +188,34 @@ function EnergyPage() {
 
     return (
         <div className="energy-page">
-            <div className="page-header">
-                <div className="page-header-row">
-                    <h1>Energy Analysis</h1>
-                    <div className="page-header-actions">
-                        <button className="btn btn-sm btn-ghost" onClick={handleExportEnergy} title="Export CSV">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
-                            </svg>
-                            Export
-                        </button>
-                        <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
+            {!embedded && (
+                <div className="page-header">
+                    <div className="page-header-row">
+                        <h1>Energy Analysis</h1>
+                        <div className="page-header-actions">
+                            <button className="btn btn-sm btn-ghost" onClick={handleExportEnergy} title="Export CSV">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                                </svg>
+                                Export
+                            </button>
+                            <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
+                        </div>
                     </div>
+                    <p className="page-subtitle">Daily solar yield vs consumption across your fleet</p>
                 </div>
-                <p className="page-subtitle">Daily solar yield vs consumption across your fleet</p>
-            </div>
+            )}
+            {embedded && (
+                <div className="embedded-actions">
+                    <button className="btn btn-sm btn-ghost" onClick={handleExportEnergy} title="Export CSV">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                        </svg>
+                        Export
+                    </button>
+                    <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
+                </div>
+            )}
 
             {/* Alert Banner */}
             {alerts.length > 0 && (

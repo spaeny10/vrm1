@@ -5415,6 +5415,103 @@ body {
   white-space: nowrap;
 }
 
+/* ============================================================
+   Fleet Details Page — Tab Navigation
+   ============================================================ */
+
+.fleet-details-page {
+  padding: 0;
+}
+
+.fleet-details-page .page-header {
+  padding: 24px 24px 0 24px;
+}
+
+.fleet-details-tabs {
+  display: flex;
+  gap: 0;
+  padding: 16px 24px 0 24px;
+  border-bottom: 2px solid var(--border);
+}
+
+.fleet-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.fleet-tab:hover {
+  color: var(--text-primary);
+}
+
+.fleet-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.fleet-tab svg {
+  opacity: 0.7;
+}
+
+.fleet-tab.active svg {
+  opacity: 1;
+}
+
+.fleet-tab-badge {
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.fleet-details-content {
+  padding: 0;
+}
+
+.fleet-details-content .energy-page,
+.fleet-details-content .network-page,
+.fleet-details-content .analytics-page {
+  padding: 0 24px 24px 24px;
+}
+
+.embedded-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0;
+}
+
+/* Maintenance — My Tasks tab badge */
+.maint-tab-badge {
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  margin-left: 6px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.my-tasks-section {
+  margin-top: 16px;
+}
+
 /* Summary badges (pill-shaped in the header) */
 .action-queue-summary .priority-badge {
   border-radius: 12px;

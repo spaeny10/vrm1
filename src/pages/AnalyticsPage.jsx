@@ -23,7 +23,7 @@ const RANGE_OPTIONS = [
     { value: 90, label: '90d' },
 ]
 
-function AnalyticsPage() {
+function AnalyticsPage({ embedded }) {
     const [days, setDays] = useState(30)
     const [backfilling, setBackfilling] = useState(false)
     const [backfillMsg, setBackfillMsg] = useState('')
@@ -297,13 +297,15 @@ function AnalyticsPage() {
 
     return (
         <div className="analytics-page">
-            <div className="page-header">
-                <h1>Analytics</h1>
-                <p className="page-subtitle">
-                    Fleet performance trends and site rankings
-                    {dateRange.days_count ? ` — ${dateRange.days_count} days of data` : ''}
-                </p>
-            </div>
+            {!embedded && (
+                <div className="page-header">
+                    <h1>Analytics</h1>
+                    <p className="page-subtitle">
+                        Fleet performance trends and site rankings
+                        {dateRange.days_count ? ` — ${dateRange.days_count} days of data` : ''}
+                    </p>
+                </div>
+            )}
 
             {/* Controls */}
             <div className="analytics-controls">

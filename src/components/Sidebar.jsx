@@ -32,18 +32,8 @@ function Sidebar() {
                         <rect x="3" y="14" width="7" height="7" rx="1" />
                         <rect x="14" y="14" width="7" height="7" rx="1" />
                     </svg>
-                    <span>Fleet Overview</span>
+                    <span>Dashboard</span>
                 </NavLink>
-
-                {user && user.role !== 'viewer' && (
-                    <NavLink to="/my-work" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M9 11l3 3L22 4" />
-                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                        </svg>
-                        <span>My Work</span>
-                    </NavLink>
-                )}
 
                 <NavLink to="/map" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -53,22 +43,12 @@ function Sidebar() {
                     <span>Map</span>
                 </NavLink>
 
-                <NavLink to="/energy" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <NavLink to="/fleet" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                        <path d="M18 20V10M12 20V4M6 20v-6" />
                     </svg>
-                    <span>Energy</span>
+                    <span>Fleet Details</span>
                     {alertCount > 0 && <span className="nav-badge">{alertCount}</span>}
-                </NavLink>
-
-                <NavLink to="/network" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M2 20h20" />
-                        <path d="M5 17a9 9 0 0 1 14 0" />
-                        <path d="M8 14a5.5 5.5 0 0 1 8 0" />
-                        <circle cx="12" cy="20" r="1" fill="currentColor" />
-                    </svg>
-                    <span>Network</span>
                 </NavLink>
 
                 <NavLink to="/maintenance" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
@@ -76,13 +56,6 @@ function Sidebar() {
                         <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
                     </svg>
                     <span>Maintenance</span>
-                </NavLink>
-
-                <NavLink to="/analytics" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M18 20V10M12 20V4M6 20v-6" />
-                    </svg>
-                    <span>Analytics</span>
                 </NavLink>
 
                 <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>

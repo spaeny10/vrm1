@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchFleetIntelligence, fetchActionQueue, acknowledgeAction, fetchHealthGrades } from '../api/vrm'
+import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
@@ -76,10 +76,6 @@ function FleetOverview() {
     const { data: sitesData, loading: sitesLoading } = useApiPolling(fetchSitesFn, 60000)
     const { data: latestData } = useApiPolling(fetchLatestFn, 30000)
     const { data: combinedData } = useApiPolling(fetchCombinedFn, 60000)
-
-    const fetchIntelFn = useCallback(() => fetchFleetIntelligence(), [])
-    const { data: intelData } = useApiPolling(fetchIntelFn, 60000)
-    const fleetIntel = intelData?.fleet || null
 
     const sites = sitesData?.records || []
     const snapshots = latestData?.records || []
@@ -284,15 +280,6 @@ function FleetOverview() {
                 <KpiCard title="Fleet Avg SOC" value={kpis.avgSoc} unit="%" color="teal" />
                 <KpiCard title="Total Yield" value={kpis.totalYield} unit="kWh" color="yellow" />
             </div>
-
-            {fleetIntel && (
-                <div className="kpi-row">
-                    <KpiCard title="Avg Solar Score" value={fleetIntel.avg_solar_score !== null ? fleetIntel.avg_solar_score : '--'} unit="%" color="yellow" />
-                    <KpiCard title="Avg Autonomy" value={fleetIntel.avg_days_autonomy !== null ? fleetIntel.avg_days_autonomy : '--'} unit="days" color={fleetIntel.avg_days_autonomy > 2 ? 'green' : 'red'} />
-                    <KpiCard title="Underperforming" value={fleetIntel.underperforming_count} color={fleetIntel.underperforming_count > 0 ? 'red' : 'teal'} />
-                    <KpiCard title="Low Autonomy" value={fleetIntel.low_autonomy_count} color={fleetIntel.low_autonomy_count > 0 ? 'red' : 'teal'} />
-                </div>
-            )}
 
             {/* Action Queue Section */}
             {actionItems.length > 0 && (
