@@ -1,7 +1,37 @@
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import GaugeChart from './GaugeChart'
 
-function JobSiteCard({ jobSite }) {
+const GRADE_ORDER = ['F', 'D', 'C', 'B', 'A']
+
+function getWorstGrade(trailers, healthGrades) {
+    if (!healthGrades || !trailers || trailers.length === 0) return null
+    let worst = null
+    for (const t of trailers) {
+        const hg = healthGrades[t.site_id]
+        if (!hg) continue
+        if (!worst || GRADE_ORDER.indexOf(hg.grade) < GRADE_ORDER.indexOf(worst.grade)) {
+            worst = hg
+        }
+    }
+    return worst
+}
+
+function HealthGradeBadge({ healthGrade }) {
+    if (!healthGrade) return null
+    const { grade, score, color } = healthGrade
+    return (
+        <span
+            className="health-grade-badge"
+            style={{ backgroundColor: color }}
+            title={`Health: ${grade} (${score}/100)`}
+        >
+            {grade}
+        </span>
+    )
+}
+
+function JobSiteCard({ jobSite, healthGrades }) {
     const navigate = useNavigate()
 
     const {
@@ -9,6 +39,11 @@ function JobSiteCard({ jobSite }) {
         avg_soc, min_soc, total_solar_watts,
         worst_status, net_online, net_total,
     } = jobSite
+
+    const worstGrade = useMemo(
+        () => getWorstGrade(jobSite.trailers || [], healthGrades),
+        [jobSite.trailers, healthGrades]
+    )
 
     const statusClass = worst_status === 'critical' ? 'alarm'
         : worst_status === 'warning' ? 'warning'
@@ -28,6 +63,7 @@ function JobSiteCard({ jobSite }) {
                     </span>
                 </div>
                 <div className="site-card-badges">
+                    <HealthGradeBadge healthGrade={worstGrade} />
                     <span className={`jobsite-status-badge jobsite-status-${worst_status}`}>
                         {worst_status}
                     </span>

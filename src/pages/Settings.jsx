@@ -1,8 +1,9 @@
-import { Fragment, useState, useCallback, useMemo } from 'react'
+import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword } from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
+import { useAuth } from '../components/AuthProvider'
 
 function DraggableTrailerRow({ trailer, jobSite, children }) {
     const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -35,6 +36,7 @@ function DroppableJobSiteRow({ jobSiteId, isOver, children }) {
 }
 
 function Settings() {
+    const { user } = useAuth()
     const fetchSettingsFn = useCallback(() => fetchSettings(), [])
     const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
     const { data, loading, refetch } = useApiPolling(fetchSettingsFn, 60000)
@@ -50,6 +52,94 @@ function Settings() {
     const [expandedSite, setExpandedSite] = useState(null)
     const [activeDrag, setActiveDrag] = useState(null)
     const [overJobSiteId, setOverJobSiteId] = useState(null)
+
+    // User Management state (admin only)
+    const [users, setUsers] = useState([])
+    const [usersLoading, setUsersLoading] = useState(false)
+    const [showCreateUser, setShowCreateUser] = useState(false)
+    const [newUser, setNewUser] = useState({ username: '', password: '', display_name: '', role: 'viewer' })
+    const [creatingUser, setCreatingUser] = useState(false)
+    const [resetPwUserId, setResetPwUserId] = useState(null)
+    const [resetPwValue, setResetPwValue] = useState('')
+
+    const loadUsers = useCallback(async () => {
+        setUsersLoading(true)
+        try {
+            const data = await fetchUsers()
+            setUsers(data.users || [])
+        } catch (err) {
+            toast.error('Error loading users: ' + err.message)
+        }
+        setUsersLoading(false)
+    }, [toast])
+
+    useEffect(() => {
+        if (user?.role === 'admin') loadUsers()
+    }, [user, loadUsers])
+
+    const handleCreateUser = async (e) => {
+        e.preventDefault()
+        if (!newUser.username.trim() || !newUser.password.trim()) return
+        setCreatingUser(true)
+        try {
+            await createUserAccount({
+                username: newUser.username.trim(),
+                password: newUser.password,
+                display_name: newUser.display_name.trim() || null,
+                role: newUser.role,
+            })
+            toast.success(`User "${newUser.username}" created successfully`)
+            setNewUser({ username: '', password: '', display_name: '', role: 'viewer' })
+            setShowCreateUser(false)
+            loadUsers()
+        } catch (err) {
+            toast.error('Error creating user: ' + err.message)
+        }
+        setCreatingUser(false)
+    }
+
+    const handleRoleChange = async (userId, newRole) => {
+        try {
+            await updateUserAccount(userId, { role: newRole })
+            toast.success('Role updated')
+            loadUsers()
+        } catch (err) {
+            toast.error('Error updating role: ' + err.message)
+        }
+    }
+
+    const handleToggleActive = async (u) => {
+        try {
+            await updateUserAccount(u.id, { is_active: !u.is_active })
+            toast.success(u.is_active ? 'User deactivated' : 'User activated')
+            loadUsers()
+        } catch (err) {
+            toast.error('Error updating user: ' + err.message)
+        }
+    }
+
+    const handleResetPassword = async (userId) => {
+        if (!resetPwValue.trim()) return
+        try {
+            await resetUserPassword(userId, resetPwValue)
+            toast.success('Password reset successfully')
+            setResetPwUserId(null)
+            setResetPwValue('')
+        } catch (err) {
+            toast.error('Error resetting password: ' + err.message)
+        }
+    }
+
+    const handleDeleteUser = async (u) => {
+        if (!confirm(`Delete user "${u.username}"? This cannot be undone.`)) return
+        try {
+            await deleteUserAccount(u.id)
+            toast.success(`User "${u.username}" deleted`)
+            loadUsers()
+        } catch (err) {
+            toast.error('Error deleting user: ' + err.message)
+        }
+    }
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -188,6 +278,177 @@ function Settings() {
             </div>
 
             <div className="settings-grid">
+                {/* User Management (admin only) */}
+                {user?.role === 'admin' && (
+                    <div className="settings-card settings-card-wide">
+                        <div className="settings-card-header">
+                            <h2>User Management</h2>
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => setShowCreateUser(true)}
+                            >
+                                + Create User
+                            </button>
+                        </div>
+                        <p className="settings-desc">
+                            Manage user accounts, roles, and access. Roles: Admin (full access), Technician (maintenance + fleet), Viewer (read-only).
+                        </p>
+
+                        {/* Create User Modal */}
+                        {showCreateUser && (
+                            <div className="maint-form-overlay" onClick={() => setShowCreateUser(false)}>
+                                <div className="maint-form-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+                                    <div className="maint-form-header">
+                                        <h2>Create User</h2>
+                                        <button className="detail-close" onClick={() => setShowCreateUser(false)}>✕</button>
+                                    </div>
+                                    <form onSubmit={handleCreateUser} className="maint-form">
+                                        <div className="maint-form-grid">
+                                            <div className="form-group">
+                                                <label>Username *</label>
+                                                <input
+                                                    type="text"
+                                                    value={newUser.username}
+                                                    onChange={e => setNewUser(p => ({ ...p, username: e.target.value }))}
+                                                    placeholder="username"
+                                                    required
+                                                    autoFocus
+                                                />
+                                            </div>
+                                            <div className="form-group">
+                                                <label>Password *</label>
+                                                <input
+                                                    type="password"
+                                                    value={newUser.password}
+                                                    onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))}
+                                                    placeholder="password"
+                                                    required
+                                                />
+                                            </div>
+                                            <div className="form-group">
+                                                <label>Display Name</label>
+                                                <input
+                                                    type="text"
+                                                    value={newUser.display_name}
+                                                    onChange={e => setNewUser(p => ({ ...p, display_name: e.target.value }))}
+                                                    placeholder="Full Name"
+                                                />
+                                            </div>
+                                            <div className="form-group">
+                                                <label>Role</label>
+                                                <select
+                                                    value={newUser.role}
+                                                    onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}
+                                                >
+                                                    <option value="admin">Admin</option>
+                                                    <option value="technician">Technician</option>
+                                                    <option value="viewer">Viewer</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div className="maint-form-actions">
+                                            <button type="button" className="btn btn-ghost" onClick={() => setShowCreateUser(false)}>Cancel</button>
+                                            <button type="submit" className="btn btn-primary" disabled={creatingUser}>
+                                                {creatingUser ? 'Creating...' : 'Create User'}
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Users Table */}
+                        {usersLoading && users.length === 0 ? (
+                            <div className="empty-section"><p>Loading users...</p></div>
+                        ) : users.length === 0 ? (
+                            <div className="empty-section"><p>No users found.</p></div>
+                        ) : (
+                            <div className="jobsite-mgmt-table-wrapper">
+                                <table className="maint-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Username</th>
+                                            <th>Display Name</th>
+                                            <th>Role</th>
+                                            <th>Active</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {users.map(u => (
+                                            <Fragment key={u.id}>
+                                                <tr className="maint-row">
+                                                    <td className="maint-title">{u.username}</td>
+                                                    <td>{u.display_name || '—'}</td>
+                                                    <td>
+                                                        <select
+                                                            className={`status-select status-select-${u.role === 'admin' ? 'active' : u.role === 'technician' ? 'standby' : 'completed'}`}
+                                                            value={u.role}
+                                                            onChange={e => handleRoleChange(u.id, e.target.value)}
+                                                            disabled={u.id === user.id}
+                                                        >
+                                                            <option value="admin">Admin</option>
+                                                            <option value="technician">Technician</option>
+                                                            <option value="viewer">Viewer</option>
+                                                        </select>
+                                                    </td>
+                                                    <td>
+                                                        <button
+                                                            className={`btn btn-sm ${u.is_active ? 'btn-primary' : 'btn-ghost'}`}
+                                                            onClick={() => handleToggleActive(u)}
+                                                            disabled={u.id === user.id}
+                                                            title={u.is_active ? 'Click to deactivate' : 'Click to activate'}
+                                                        >
+                                                            {u.is_active ? 'Active' : 'Inactive'}
+                                                        </button>
+                                                    </td>
+                                                    <td className="maint-actions" style={{ display: 'flex', gap: 6 }}>
+                                                        <button
+                                                            className="btn btn-sm btn-secondary"
+                                                            onClick={() => { setResetPwUserId(resetPwUserId === u.id ? null : u.id); setResetPwValue('') }}
+                                                        >
+                                                            Reset PW
+                                                        </button>
+                                                        <button
+                                                            className="btn btn-sm btn-danger"
+                                                            onClick={() => handleDeleteUser(u)}
+                                                            disabled={u.id === user.id}
+                                                            title="Delete user"
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                                {resetPwUserId === u.id && (
+                                                    <tr className="maint-row">
+                                                        <td colSpan={5}>
+                                                            <div className="inline-edit-compact">
+                                                                <input
+                                                                    type="password"
+                                                                    value={resetPwValue}
+                                                                    onChange={e => setResetPwValue(e.target.value)}
+                                                                    placeholder="New password"
+                                                                    autoFocus
+                                                                    onKeyDown={e => {
+                                                                        if (e.key === 'Enter') handleResetPassword(u.id)
+                                                                        if (e.key === 'Escape') { setResetPwUserId(null); setResetPwValue('') }
+                                                                    }}
+                                                                />
+                                                                <button className="btn btn-sm btn-primary" onClick={() => handleResetPassword(u.id)}>Save</button>
+                                                                <button className="btn btn-sm btn-ghost" onClick={() => { setResetPwUserId(null); setResetPwValue('') }}>Cancel</button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </Fragment>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* Job Sites Management */}
                 <div className="settings-card settings-card-wide">
                     <div className="settings-card-header">

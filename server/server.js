@@ -4,6 +4,8 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import Anthropic from '@anthropic-ai/sdk';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import {
     initDb, insertSnapshot, getHistory, getLatestSnapshots,
     getRetentionDays, setRetentionDays, pruneOldData, getDbStats,
@@ -20,7 +22,13 @@ import {
     getAnalyticsByJobSite, getAnalyticsByTrailer, getAnalyticsDateRange,
     upsertDailyEnergy, getAllDailyEnergy,
     insertAlertHistory, resolveAlert, getActiveAlerts, getAlertHistory,
-    getBatteryHistory
+    getBatteryHistory,
+    createUser, getUserByUsername, getUserById, getUsers, updateUser, deleteUser,
+    getAcknowledgedActions, acknowledgeAction as dbAcknowledgeAction, unacknowledgeAction as dbUnacknowledgeAction,
+    getChecklistTemplates, insertChecklistTemplate, updateChecklistTemplate,
+    getCompletedChecklists, insertCompletedChecklist,
+    getIssueTemplates, insertIssueTemplate, updateIssueTemplate,
+    getMaintenanceCalendar,
 } from './db.js';
 import {
     generateQueryEmbedding, embedSiteSnapshots, embedPepwaveDevices,
@@ -47,12 +55,46 @@ const anthropic = process.env.ANTHROPIC_API_KEY
     ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     : null;
 
+// JWT Authentication
+const JWT_SECRET = process.env.JWT_SECRET || 'vrm-fleet-dev-secret-change-in-production';
+const JWT_EXPIRES_IN = '24h';
+
+function authMiddleware(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Authentication required' });
+    }
+    try {
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+        next();
+    } catch {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+}
+
+function requireRole(...roles) {
+    return (req, res, next) => {
+        if (!req.user || !roles.includes(req.user.role)) {
+            return res.status(403).json({ error: 'Insufficient permissions' });
+        }
+        next();
+    };
+}
+
 app.use(cors());
 app.use(express.json());
 
 // --- In production, serve the built React frontend ---
 const distPath = path.join(__dirname, '..', 'dist');
 app.use(express.static(distPath));
+
+// Apply auth to all /api routes except login
+app.use('/api', (req, res, next) => {
+    if (req.path === '/auth/login') return next();
+    authMiddleware(req, res, next);
+});
 
 // --- VRM API helper ---
 const vrmHeaders = { 'x-authorization': `Token ${VRM_TOKEN}` };
@@ -580,6 +622,143 @@ function extractWanInterfaces(device) {
         message: i.message || '',
     }));
 }
+
+// ============================================================
+// Auth & User Management Routes
+// ============================================================
+
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username and password required' });
+        }
+        const user = await getUserByUsername(username);
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        const valid = await bcrypt.compare(password, user.password_hash);
+        if (!valid) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        const token = jwt.sign(
+            { id: user.id, username: user.username, role: user.role },
+            JWT_SECRET,
+            { expiresIn: JWT_EXPIRES_IN }
+        );
+        res.json({
+            success: true,
+            token,
+            user: { id: user.id, username: user.username, display_name: user.display_name, role: user.role },
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/auth/me', async (req, res) => {
+    try {
+        const user = await getUserById(req.user.id);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        res.json({ success: true, user });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/auth/change-password', async (req, res) => {
+    try {
+        const { current_password, new_password } = req.body;
+        if (!current_password || !new_password) {
+            return res.status(400).json({ error: 'Current and new password required' });
+        }
+        if (new_password.length < 4) {
+            return res.status(400).json({ error: 'Password must be at least 4 characters' });
+        }
+        const user = await getUserByUsername(req.user.username);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        const valid = await bcrypt.compare(current_password, user.password_hash);
+        if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+        const hash = await bcrypt.hash(new_password, 10);
+        await updateUser(req.user.id, { password_hash: hash });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// User management (admin only)
+
+app.get('/api/users', requireRole('admin'), async (req, res) => {
+    try {
+        const users = await getUsers();
+        res.json({ success: true, users });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/users', requireRole('admin'), async (req, res) => {
+    try {
+        const { username, password, display_name, role } = req.body;
+        if (!username || !password || !display_name) {
+            return res.status(400).json({ error: 'Username, password, and display name required' });
+        }
+        if (!['admin', 'technician', 'viewer'].includes(role || 'viewer')) {
+            return res.status(400).json({ error: 'Invalid role' });
+        }
+        const hash = await bcrypt.hash(password, 10);
+        const user = await createUser(username, hash, display_name, role || 'viewer');
+        res.json({ success: true, user });
+    } catch (err) {
+        if (err.message?.includes('unique') || err.code === '23505') {
+            return res.status(409).json({ error: 'Username already exists' });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/users/:id', requireRole('admin'), async (req, res) => {
+    try {
+        const { display_name, role, active } = req.body;
+        const updates = {};
+        if (display_name !== undefined) updates.display_name = display_name;
+        if (role !== undefined) updates.role = role;
+        if (active !== undefined) updates.active = active;
+        const user = await updateUser(parseInt(req.params.id), updates);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        res.json({ success: true, user });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/users/:id', requireRole('admin'), async (req, res) => {
+    try {
+        if (parseInt(req.params.id) === req.user.id) {
+            return res.status(400).json({ error: 'Cannot deactivate your own account' });
+        }
+        await deleteUser(parseInt(req.params.id));
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/users/:id/reset-password', requireRole('admin'), async (req, res) => {
+    try {
+        const { new_password } = req.body;
+        if (!new_password || new_password.length < 4) {
+            return res.status(400).json({ error: 'Password must be at least 4 characters' });
+        }
+        const hash = await bcrypt.hash(new_password, 10);
+        const user = await updateUser(parseInt(req.params.id), { password_hash: hash });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // --- API routes ---
 
@@ -2350,6 +2529,456 @@ app.post('/api/embeddings/generate', async (req, res) => {
     }
 });
 
+// ============================================================
+// Action Queue (Priority-ranked unified alerts)
+// ============================================================
+
+function computeHealthGrade(siteId) {
+    const snapshot = snapshotCache.get(siteId);
+    if (!snapshot) return null;
+
+    let totalScore = 0;
+    let weights = 0;
+
+    // Solar score 7d avg (25%)
+    const siteEnergy = dailyEnergy.get(siteId) || {};
+    const today = todayStr();
+    const pastDays = Object.entries(siteEnergy)
+        .filter(([d]) => d < today)
+        .sort(([a], [b]) => b.localeCompare(a))
+        .slice(0, 7);
+    if (pastDays.length > 0) {
+        const yieldValues = pastDays.map(([, i]) => i.yield_wh).filter(v => v !== null && v > 0);
+        if (yieldValues.length > 0) {
+            const avgYield = yieldValues.reduce((s, v) => s + v, 0) / yieldValues.length;
+            const psh = 5; // default for grade calc
+            const expected = TRAILER_SPECS.solar.total_watts * psh * TRAILER_SPECS.solar.system_efficiency;
+            const solarPct = Math.min(100, (avgYield / expected) * 100);
+            totalScore += solarPct * 0.25;
+            weights += 0.25;
+        }
+    }
+
+    // Battery SOC as health proxy (20%)
+    if (snapshot.battery_soc !== null) {
+        totalScore += Math.min(100, snapshot.battery_soc) * 0.20;
+        weights += 0.20;
+    }
+
+    // Autonomy proxy (20%) — use SOC as approximation
+    if (snapshot.battery_soc !== null) {
+        const autonomyScore = snapshot.battery_soc >= 60 ? 100 : snapshot.battery_soc >= 30 ? 60 : snapshot.battery_soc >= 15 ? 30 : 10;
+        totalScore += autonomyScore * 0.20;
+        weights += 0.20;
+    }
+
+    // Network status (15%)
+    const pepName = snapshot.site_name;
+    let networkScore = 50; // default if no data
+    for (const [, dev] of pepwaveCache) {
+        if (dev.name && pepName && dev.name.includes(pepName.replace('AG-', ''))) {
+            networkScore = dev.online ? (dev.signal_bar >= 3 ? 100 : dev.signal_bar >= 1 ? 60 : 30) : 0;
+            break;
+        }
+    }
+    totalScore += networkScore * 0.15;
+    weights += 0.15;
+
+    // Maintenance recency (20%) — more recent = better
+    totalScore += 70 * 0.20; // default to 70 (no maintenance tracking in cache)
+    weights += 0.20;
+
+    const score = weights > 0 ? Math.round(totalScore / weights) : null;
+    const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F';
+    const color = score >= 90 ? '#27ae60' : score >= 75 ? '#16a085' : score >= 60 ? '#d4a017' : score >= 40 ? '#f39c12' : '#c0392b';
+
+    return { grade, score, color };
+}
+
+app.get('/api/action-queue', async (req, res) => {
+    try {
+        const actions = [];
+        const now = Date.now();
+
+        // Source 1: Energy deficit alerts
+        const alerts = computeAlerts();
+        for (const alert of alerts) {
+            const priority = alert.severity === 'critical' ? 1 : alert.severity === 'warning' ? 3 : 5;
+            actions.push({
+                key: `alert:${alert.site_id}`,
+                priority,
+                category: 'energy',
+                title: `Energy Deficit — ${alert.streak_days} day streak`,
+                subtitle: alert.site_name,
+                site_id: alert.site_id,
+                site_name: alert.site_name,
+                severity: alert.severity,
+                details: { streak_days: alert.streak_days, deficit_days: alert.deficit_days },
+                created_at: now,
+            });
+        }
+
+        // Source 2: Intelligence flags
+        for (const [siteId, snapshot] of snapshotCache) {
+            // Battery temp critical
+            if (snapshot.battery_temp !== null && snapshot.battery_temp > 45) {
+                actions.push({
+                    key: `intel:temp:${siteId}`,
+                    priority: 2,
+                    category: 'intelligence',
+                    title: `Battery Temp Critical — ${snapshot.battery_temp}°C`,
+                    subtitle: snapshot.site_name,
+                    site_id: siteId,
+                    site_name: snapshot.site_name,
+                    severity: 'critical',
+                    details: { temp: snapshot.battery_temp },
+                    created_at: now,
+                });
+            }
+
+            // Low SOC (proxy for autonomy)
+            if (snapshot.battery_soc !== null && snapshot.battery_soc < 15) {
+                actions.push({
+                    key: `intel:soc:${siteId}`,
+                    priority: 2,
+                    category: 'intelligence',
+                    title: `Critical Battery — ${snapshot.battery_soc}% SOC`,
+                    subtitle: snapshot.site_name,
+                    site_id: siteId,
+                    site_name: snapshot.site_name,
+                    severity: 'critical',
+                    details: { soc: snapshot.battery_soc },
+                    created_at: now,
+                });
+            } else if (snapshot.battery_soc !== null && snapshot.battery_soc < 30) {
+                actions.push({
+                    key: `intel:soc:${siteId}`,
+                    priority: 4,
+                    category: 'intelligence',
+                    title: `Low Battery — ${snapshot.battery_soc}% SOC`,
+                    subtitle: snapshot.site_name,
+                    site_id: siteId,
+                    site_name: snapshot.site_name,
+                    severity: 'warning',
+                    details: { soc: snapshot.battery_soc },
+                    created_at: now,
+                });
+            }
+        }
+
+        // Source 3: Maintenance overdue/upcoming
+        if (dbAvailable) {
+            try {
+                const upcoming = await getUpcomingMaintenance(30);
+                for (const item of upcoming) {
+                    if (item.status === 'cancelled' || item.status === 'completed') continue;
+                    const scheduled = item.scheduled_date;
+                    if (!scheduled) continue;
+                    const daysUntil = (scheduled - now) / 86400000;
+                    let priority, severity;
+                    if (daysUntil < 0) { priority = 2; severity = 'critical'; }
+                    else if (daysUntil <= 3) { priority = 4; severity = 'warning'; }
+                    else if (daysUntil <= 7) { priority = 6; severity = 'info'; }
+                    else continue;
+                    actions.push({
+                        key: `maint:${item.id}`,
+                        priority,
+                        category: 'maintenance',
+                        title: daysUntil < 0 ? `Overdue: ${item.title}` : `Due in ${Math.ceil(daysUntil)}d: ${item.title}`,
+                        subtitle: item.job_site_name || item.site_name || 'Unassigned',
+                        site_id: item.site_id,
+                        site_name: item.site_name,
+                        severity,
+                        details: { maintenance_id: item.id, scheduled_date: scheduled, visit_type: item.visit_type },
+                        created_at: item.created_at || now,
+                    });
+                }
+            } catch {}
+        }
+
+        // Get acknowledged actions
+        const acks = dbAvailable ? await getAcknowledgedActions() : [];
+        const ackMap = new Map(acks.map(a => [a.action_key, a]));
+
+        // Sort by priority, mark acknowledged
+        actions.sort((a, b) => a.priority - b.priority);
+        for (const action of actions) {
+            const ack = ackMap.get(action.key);
+            action.acknowledged = !!ack;
+            if (ack) {
+                action.acknowledged_by = ack.acknowledged_by_name;
+                action.acknowledged_at = ack.acknowledged_at;
+            }
+        }
+
+        const summary = {
+            total: actions.length,
+            critical: actions.filter(a => a.severity === 'critical').length,
+            warning: actions.filter(a => a.severity === 'warning').length,
+            info: actions.filter(a => !['critical', 'warning'].includes(a.severity)).length,
+            acknowledged: actions.filter(a => a.acknowledged).length,
+        };
+
+        res.json({ success: true, actions, summary });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/action-queue/:key/acknowledge', async (req, res) => {
+    try {
+        const ack = await dbAcknowledgeAction(decodeURIComponent(req.params.key), req.user.id, req.body.notes);
+        res.json({ success: true, ack });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/action-queue/:key/acknowledge', async (req, res) => {
+    try {
+        await dbUnacknowledgeAction(decodeURIComponent(req.params.key));
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
+// Health Grades (attached to fleet combined)
+// ============================================================
+
+app.get('/api/fleet/health-grades', (req, res) => {
+    const grades = {};
+    for (const [siteId] of snapshotCache) {
+        grades[siteId] = computeHealthGrade(siteId);
+    }
+    res.json({ success: true, grades });
+});
+
+// ============================================================
+// Checklist & Issue Template Routes
+// ============================================================
+
+app.get('/api/checklist-templates', async (req, res) => {
+    try {
+        const templates = await getChecklistTemplates();
+        res.json({ success: true, templates });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/checklist-templates', requireRole('admin'), async (req, res) => {
+    try {
+        const template = await insertChecklistTemplate(req.body);
+        res.json({ success: true, template });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/checklist-templates/:id', requireRole('admin'), async (req, res) => {
+    try {
+        const template = await updateChecklistTemplate(parseInt(req.params.id), req.body);
+        if (!template) return res.status(404).json({ error: 'Template not found' });
+        res.json({ success: true, template });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/maintenance/:id/checklists', async (req, res) => {
+    try {
+        const checklists = await getCompletedChecklists(parseInt(req.params.id));
+        res.json({ success: true, checklists });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/maintenance/:id/checklists', async (req, res) => {
+    try {
+        const checklist = await insertCompletedChecklist({
+            maintenance_log_id: parseInt(req.params.id),
+            template_id: req.body.template_id,
+            template_name: req.body.template_name,
+            completed_by: req.user.id,
+            items: req.body.items,
+        });
+        res.json({ success: true, checklist });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/issue-templates', async (req, res) => {
+    try {
+        const templates = await getIssueTemplates();
+        res.json({ success: true, templates });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/issue-templates', requireRole('admin'), async (req, res) => {
+    try {
+        const template = await insertIssueTemplate(req.body);
+        res.json({ success: true, template });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/issue-templates/:id', requireRole('admin'), async (req, res) => {
+    try {
+        const template = await updateIssueTemplate(parseInt(req.params.id), req.body);
+        if (!template) return res.status(404).json({ error: 'Template not found' });
+        res.json({ success: true, template });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
+// Maintenance Calendar
+// ============================================================
+
+app.get('/api/maintenance/calendar', async (req, res) => {
+    try {
+        const start = req.query.start ? parseInt(req.query.start) : Date.now() - 30 * 86400000;
+        const end = req.query.end ? parseInt(req.query.end) : Date.now() + 60 * 86400000;
+        const techId = req.query.technician_id ? parseInt(req.query.technician_id) : null;
+        const logs = await getMaintenanceCalendar(start, end, techId);
+        res.json({ success: true, logs });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============================================================
+// Reports
+// ============================================================
+
+app.get('/api/reports/trailer/:id', async (req, res) => {
+    try {
+        const siteId = parseInt(req.params.id);
+        const snapshot = snapshotCache.get(siteId);
+        const intel = await computeTrailerIntelligence(siteId);
+        const healthGrade = computeHealthGrade(siteId);
+        const energyData = dailyEnergy.get(siteId) || {};
+        const alertsList = computeAlerts().filter(a => a.site_id === siteId);
+
+        let maintenance = [];
+        let upcoming = [];
+        let batteryHistory = [];
+        if (dbAvailable) {
+            try { maintenance = await getMaintenanceLogs({ site_id: siteId, limit: 20 }); } catch {}
+            try { upcoming = (await getUpcomingMaintenance(30)).filter(m => m.site_id === siteId); } catch {}
+            try { batteryHistory = await getBatteryHistory(siteId, 30); } catch {}
+        }
+
+        const energyHistory = Object.entries(energyData)
+            .sort(([a], [b]) => b.localeCompare(a))
+            .slice(0, 14)
+            .map(([date, data]) => ({ date, ...data }));
+
+        res.json({
+            success: true,
+            report: {
+                generated_at: new Date().toISOString(),
+                type: 'trailer',
+                trailer: { site_id: siteId, site_name: snapshot?.site_name || `Site ${siteId}` },
+                current_status: snapshot || null,
+                health_grade: healthGrade,
+                intelligence: intel,
+                alerts: alertsList,
+                maintenance: { recent: maintenance, upcoming },
+                battery_history: batteryHistory,
+                energy_history: energyHistory,
+            },
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/reports/site/:id', async (req, res) => {
+    try {
+        const jobSiteId = parseInt(req.params.id);
+        const jobSite = await getJobSite(jobSiteId);
+        if (!jobSite) return res.status(404).json({ error: 'Job site not found' });
+
+        const trailers = await getTrailersByJobSite(jobSiteId);
+        const trailerSummaries = [];
+        for (const t of trailers) {
+            const snapshot = snapshotCache.get(t.site_id);
+            const grade = computeHealthGrade(t.site_id);
+            trailerSummaries.push({
+                site_id: t.site_id,
+                site_name: t.site_name,
+                health_grade: grade,
+                battery_soc: snapshot?.battery_soc,
+                solar_watts: snapshot?.solar_watts,
+                yield_today: snapshot?.solar_yield_today,
+            });
+        }
+
+        let maintenance = [];
+        if (dbAvailable) {
+            try { maintenance = await getMaintenanceLogs({ job_site_id: jobSiteId, limit: 20 }); } catch {}
+        }
+
+        res.json({
+            success: true,
+            report: {
+                generated_at: new Date().toISOString(),
+                type: 'site',
+                job_site: jobSite,
+                trailers: trailerSummaries,
+                maintenance: { recent: maintenance },
+            },
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/reports/fleet', async (req, res) => {
+    try {
+        const trailers = [];
+        for (const [siteId, snapshot] of snapshotCache) {
+            trailers.push({
+                site_id: siteId,
+                site_name: snapshot.site_name,
+                health_grade: computeHealthGrade(siteId),
+                battery_soc: snapshot.battery_soc,
+                solar_watts: snapshot.solar_watts,
+                yield_today: snapshot.solar_yield_today,
+            });
+        }
+
+        const alerts = computeAlerts();
+        let stats = null;
+        if (dbAvailable) {
+            try { stats = await getMaintenanceStats(); } catch {}
+        }
+
+        res.json({
+            success: true,
+            report: {
+                generated_at: new Date().toISOString(),
+                type: 'fleet',
+                trailer_count: trailers.length,
+                trailers,
+                alerts,
+                maintenance_stats: stats,
+            },
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- SPA fallback ---
 app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {
@@ -2373,6 +3002,18 @@ async function start() {
     // Seed daily energy from DB before polling starts
     if (dbAvailable) {
         await seedDailyEnergyFromDb();
+
+        // Seed default admin user if no users exist
+        try {
+            const users = await getUsers();
+            if (users.length === 0) {
+                const hash = await bcrypt.hash('admin123', 10);
+                await createUser('admin', hash, 'Administrator', 'admin');
+                console.log('  ✓ Default admin user created (username: admin, password: admin123)');
+            }
+        } catch (seedErr) {
+            console.warn('  ⚠ Could not seed admin user:', seedErr.message);
+        }
     }
 
     app.listen(PORT, () => {

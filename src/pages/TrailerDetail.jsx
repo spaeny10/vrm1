@@ -17,6 +17,7 @@ import ComponentForm from '../components/ComponentForm'
 import DataFreshness from '../components/DataFreshness'
 import Breadcrumbs from '../components/Breadcrumbs'
 import SignalBars from '../components/SignalBars'
+import ReportPanel from '../components/ReportPanel'
 import { signalQuality, formatUptime, formatMB } from '../utils/format'
 
 ChartJS.register(
@@ -53,6 +54,7 @@ function TrailerDetail() {
     const [pepwaveHistoryData, setPepwaveHistoryData] = useState([])
     const [showComponentForm, setShowComponentForm] = useState(false)
     const [editingComponent, setEditingComponent] = useState(null)
+    const [showReport, setShowReport] = useState(false)
 
     const socChartRef = useRef(null)
     const voltageChartRef = useRef(null)
@@ -302,6 +304,7 @@ function TrailerDetail() {
                 <Breadcrumbs items={[{ label: 'Fleet', to: '/' }, { label: siteName || `Site #${id}` }]} />
                 <div className="page-header-row">
                     <h1>{siteName || `Site #${id}`}</h1>
+                    <button className="btn btn-secondary btn-sm" onClick={() => setShowReport(true)}>Export Report</button>
                     <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
                 </div>
             </div>
@@ -894,6 +897,10 @@ function TrailerDetail() {
                     }}
                     onClose={() => { setShowComponentForm(false); setEditingComponent(null) }}
                 />
+            )}
+
+            {showReport && (
+                <ReportPanel type="trailer" id={id} onClose={() => setShowReport(false)} />
             )}
         </div>
     )

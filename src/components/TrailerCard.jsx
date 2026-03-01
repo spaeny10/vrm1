@@ -42,7 +42,21 @@ function SignalBadge({ pepwave }) {
     )
 }
 
-function TrailerCard({ site, snapshot, pepwave, jobSiteName }) {
+function HealthGradeBadge({ healthGrade }) {
+    if (!healthGrade) return null
+    const { grade, score, color } = healthGrade
+    return (
+        <span
+            className="health-grade-badge"
+            style={{ backgroundColor: color }}
+            title={`Health: ${grade} (${score}/100)`}
+        >
+            {grade}
+        </span>
+    )
+}
+
+function TrailerCard({ site, snapshot, pepwave, jobSiteName, healthGrade }) {
     const navigate = useNavigate()
 
     const soc = snapshot?.battery_soc ?? null
@@ -78,6 +92,7 @@ function TrailerCard({ site, snapshot, pepwave, jobSiteName }) {
                 </div>
                 <div className="site-card-badges">
                     <SignalBadge pepwave={pepwave} />
+                    <HealthGradeBadge healthGrade={healthGrade} />
                     <AlarmBadge level={status} />
                 </div>
             </div>

@@ -2,8 +2,10 @@ import { NavLink } from 'react-router-dom'
 import { useCallback } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchFleetAlerts } from '../api/vrm'
+import { useAuth } from './AuthProvider'
 
 function Sidebar() {
+    const { user, logout } = useAuth()
     const fetchAlertsFn = useCallback(() => fetchFleetAlerts(), [])
     const { data: alertsData } = useApiPolling(fetchAlertsFn, 60000)
     const alertCount = alertsData?.alerts?.length || 0
@@ -32,6 +34,16 @@ function Sidebar() {
                     </svg>
                     <span>Fleet Overview</span>
                 </NavLink>
+
+                {user && user.role !== 'viewer' && (
+                    <NavLink to="/my-work" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M9 11l3 3L22 4" />
+                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                        </svg>
+                        <span>My Work</span>
+                    </NavLink>
+                )}
 
                 <NavLink to="/map" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -83,6 +95,21 @@ function Sidebar() {
             </nav>
 
             <div className="sidebar-footer">
+                {user && (
+                    <div className="sidebar-user">
+                        <div className="sidebar-user-info">
+                            <span className="sidebar-user-name">{user.display_name}</span>
+                            <span className={`role-badge role-badge-${user.role}`}>{user.role}</span>
+                        </div>
+                        <button className="sidebar-logout" onClick={logout} title="Sign out">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                <polyline points="16 17 21 12 16 7" />
+                                <line x1="21" y1="12" x2="9" y2="12" />
+                            </svg>
+                        </button>
+                    </div>
+                )}
                 <div className="status-indicator">
                     <span className="status-dot online"></span>
                     <span>System Online</span>

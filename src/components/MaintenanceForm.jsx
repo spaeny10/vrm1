@@ -15,7 +15,7 @@ const STATUSES = [
     { value: 'completed', label: 'Completed' },
 ]
 
-function MaintenanceForm({ log, jobSites, onSave, onClose }) {
+function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], onSave, onClose }) {
     const isEdit = !!log
 
     const [formData, setFormData] = useState({
@@ -26,6 +26,7 @@ function MaintenanceForm({ log, jobSites, onSave, onClose }) {
         title: log?.title || '',
         description: log?.description || '',
         technician: log?.technician || '',
+        assigned_technician_id: log?.assigned_technician_id || '',
         scheduled_date: log?.scheduled_date ? new Date(log.scheduled_date).toISOString().slice(0, 10) : '',
         completed_date: log?.completed_date ? new Date(log.completed_date).toISOString().slice(0, 10) : '',
         labor_hours: log?.labor_hours || '',
@@ -45,6 +46,37 @@ function MaintenanceForm({ log, jobSites, onSave, onClose }) {
 
     const update = (field, value) => {
         setFormData(prev => ({ ...prev, [field]: value }))
+    }
+
+    // Handle issue template selection
+    const handleTemplateSelect = (templateId) => {
+        if (!templateId) return
+        const tpl = issueTemplates.find(t => String(t.id) === String(templateId))
+        if (!tpl) return
+        setFormData(prev => ({
+            ...prev,
+            visit_type: tpl.visit_type || prev.visit_type,
+            title: tpl.title || prev.title,
+            description: tpl.description || prev.description,
+            labor_hours: tpl.estimated_hours || prev.labor_hours,
+            parts_used: tpl.expected_parts && tpl.expected_parts.length > 0
+                ? tpl.expected_parts.map(p => ({ name: p.name || p, quantity: p.quantity || 1, cost_cents: p.cost_cents || 0 }))
+                : prev.parts_used,
+        }))
+    }
+
+    // Handle technician user selection
+    const handleTechUserSelect = (userId) => {
+        if (!userId) {
+            update('assigned_technician_id', '')
+            return
+        }
+        const u = techUsers.find(u => String(u.id) === String(userId))
+        setFormData(prev => ({
+            ...prev,
+            assigned_technician_id: userId,
+            technician: u ? (u.display_name || u.username) : prev.technician,
+        }))
     }
 
     const addPart = () => {
@@ -84,6 +116,7 @@ function MaintenanceForm({ log, jobSites, onSave, onClose }) {
                 title: formData.title.trim(),
                 description: formData.description.trim() || null,
                 technician: formData.technician.trim() || null,
+                assigned_technician_id: formData.assigned_technician_id ? parseInt(formData.assigned_technician_id) : null,
                 scheduled_date: formData.scheduled_date ? new Date(formData.scheduled_date + 'T12:00:00').getTime() : null,
                 completed_date: formData.completed_date ? new Date(formData.completed_date + 'T12:00:00').getTime() : null,
                 labor_hours: formData.labor_hours ? parseFloat(formData.labor_hours) : null,
@@ -114,6 +147,22 @@ function MaintenanceForm({ log, jobSites, onSave, onClose }) {
                 </div>
 
                 <form onSubmit={handleSubmit} className="maint-form">
+                    {/* Issue Template Selector */}
+                    {issueTemplates.length > 0 && !isEdit && (
+                        <div className="form-group form-group-wide" style={{ marginBottom: 16 }}>
+                            <label>Use Template</label>
+                            <select
+                                defaultValue=""
+                                onChange={e => handleTemplateSelect(e.target.value)}
+                            >
+                                <option value="">— Select a template to auto-fill —</option>
+                                {issueTemplates.map(tpl => (
+                                    <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
                     <div className="maint-form-grid">
                         {/* Job Site */}
                         <div className="form-group">
@@ -187,16 +236,43 @@ function MaintenanceForm({ log, jobSites, onSave, onClose }) {
                             />
                         </div>
 
-                        {/* Technician */}
+                        {/* Assigned Technician (user dropdown) */}
                         <div className="form-group">
-                            <label>Technician</label>
-                            <input
-                                type="text"
-                                value={formData.technician}
-                                onChange={e => update('technician', e.target.value)}
-                                placeholder="Name"
-                            />
+                            <label>Assigned Technician</label>
+                            {techUsers.length > 0 ? (
+                                <select
+                                    value={formData.assigned_technician_id}
+                                    onChange={e => handleTechUserSelect(e.target.value)}
+                                >
+                                    <option value="">— Select User —</option>
+                                    {techUsers.filter(u => u.is_active !== false).map(u => (
+                                        <option key={u.id} value={u.id}>
+                                            {u.display_name || u.username}{u.role === 'technician' ? '' : ` (${u.role})`}
+                                        </option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <input
+                                    type="text"
+                                    value={formData.technician}
+                                    onChange={e => update('technician', e.target.value)}
+                                    placeholder="Name"
+                                />
+                            )}
                         </div>
+
+                        {/* Technician label fallback (shown when user dropdown is used) */}
+                        {techUsers.length > 0 && (
+                            <div className="form-group">
+                                <label>Technician Label</label>
+                                <input
+                                    type="text"
+                                    value={formData.technician}
+                                    onChange={e => update('technician', e.target.value)}
+                                    placeholder="Display name override"
+                                />
+                            </div>
+                        )}
 
                         {/* Scheduled Date */}
                         <div className="form-group">

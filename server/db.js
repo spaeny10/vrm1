@@ -276,6 +276,155 @@ export async function initDb() {
             console.warn('  ⚠ Semantic search tables skipped (pgvector required)');
         }
 
+        // Users table (authentication + roles)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin','technician','viewer')),
+        active BOOLEAN DEFAULT TRUE,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        updated_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`);
+        console.log('  ✓ Users table ready');
+
+        // Action queue acknowledgements
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS action_queue_acks (
+        id SERIAL PRIMARY KEY,
+        action_key TEXT NOT NULL UNIQUE,
+        acknowledged_by INTEGER REFERENCES users(id),
+        acknowledged_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        notes TEXT
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_ack_key ON action_queue_acks(action_key)`);
+
+        // Checklist templates (admin-editable inspection checklists)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS checklist_templates (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        visit_type TEXT NOT NULL,
+        items JSONB NOT NULL,
+        active BOOLEAN DEFAULT TRUE,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        updated_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
+      )
+    `);
+
+        // Completed checklists (linked to maintenance logs)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS completed_checklists (
+        id SERIAL PRIMARY KEY,
+        maintenance_log_id INTEGER REFERENCES maintenance_logs(id) ON DELETE CASCADE,
+        template_id INTEGER REFERENCES checklist_templates(id),
+        template_name TEXT,
+        completed_by INTEGER REFERENCES users(id),
+        items JSONB NOT NULL,
+        completed_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_checklists_maint ON completed_checklists(maintenance_log_id)`);
+
+        // Issue templates (common maintenance log prefills)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS issue_templates (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        visit_type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        expected_parts JSONB,
+        estimated_hours REAL,
+        active BOOLEAN DEFAULT TRUE,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        updated_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
+      )
+    `);
+
+        console.log('  ✓ Checklists, issue templates, action queue tables ready');
+
+        // Add assigned_technician_id to maintenance_logs if not exists
+        await client.query(`
+      ALTER TABLE maintenance_logs ADD COLUMN IF NOT EXISTS assigned_technician_id INTEGER REFERENCES users(id)
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_maintenance_technician ON maintenance_logs(assigned_technician_id)`);
+
+        // Seed default checklist templates
+        const checklistCount = await client.query(`SELECT count(*) FROM checklist_templates`);
+        if (parseInt(checklistCount.rows[0].count) === 0) {
+            await client.query(`
+          INSERT INTO checklist_templates (name, visit_type, items) VALUES
+          ('Routine Inspection', 'inspection', $1),
+          ('Solar Troubleshooting', 'repair', $2),
+          ('Battery Service', 'scheduled', $3),
+          ('Network Fix', 'repair', $4)
+        `, [
+                JSON.stringify([
+                    { text: 'Check solar panel cleanliness', required: true },
+                    { text: 'Inspect wiring and connections', required: true },
+                    { text: 'Verify battery terminal tightness', required: true },
+                    { text: 'Check charge controller LED indicators', required: false },
+                    { text: 'Verify network connectivity', required: false },
+                    { text: 'Inspect enclosure seals and weatherproofing', required: true },
+                    { text: 'Check for physical damage or vandalism', required: true },
+                    { text: 'Verify ventilation and airflow', required: false },
+                ]),
+                JSON.stringify([
+                    { text: 'Measure panel open-circuit voltage', required: true },
+                    { text: 'Check MC4 connector integrity', required: true },
+                    { text: 'Inspect for shading obstructions', required: true },
+                    { text: 'Verify charge controller settings', required: true },
+                    { text: 'Measure string current', required: false },
+                    { text: 'Clean panel surfaces', required: false },
+                    { text: 'Check panel mounting and tilt angle', required: false },
+                ]),
+                JSON.stringify([
+                    { text: 'Measure individual cell voltages', required: true },
+                    { text: 'Check battery terminal torque', required: true },
+                    { text: 'Inspect for corrosion or swelling', required: true },
+                    { text: 'Verify BMS settings and operation', required: true },
+                    { text: 'Check battery ventilation', required: false },
+                    { text: 'Record battery temperature', required: true },
+                    { text: 'Test load disconnect function', required: false },
+                ]),
+                JSON.stringify([
+                    { text: 'Check SIM card seating', required: true },
+                    { text: 'Verify APN settings', required: true },
+                    { text: 'Test signal strength at location', required: true },
+                    { text: 'Inspect antenna connections', required: true },
+                    { text: 'Check router firmware version', required: false },
+                    { text: 'Verify WAN interface status', required: true },
+                    { text: 'Test client device connectivity', required: false },
+                ]),
+            ]);
+            console.log('  ✓ Default checklist templates seeded');
+        }
+
+        // Seed default issue templates
+        const issueCount = await client.query(`SELECT count(*) FROM issue_templates`);
+        if (parseInt(issueCount.rows[0].count) === 0) {
+            await client.query(`
+          INSERT INTO issue_templates (name, visit_type, title, description, expected_parts, estimated_hours) VALUES
+          ('Panel Cleaning', 'inspection', 'Solar Panel Cleaning', 'Clean all solar panels to remove dust, debris, and bird droppings affecting output.', '[]', 1.0),
+          ('Battery Replacement', 'repair', 'Battery Replacement', 'Replace failing battery unit. Disconnect old battery, install new unit, verify BMS configuration.', $1, 3.0),
+          ('Network Troubleshooting', 'repair', 'Network Connectivity Repair', 'Diagnose and resolve cellular network connectivity issues.', '[]', 1.5),
+          ('Generator Service', 'scheduled', 'Generator Maintenance', 'Scheduled generator maintenance including oil change, filter replacement, and run test.', $2, 2.0),
+          ('Charge Controller Reset', 'repair', 'Charge Controller Reset/Replacement', 'Reset or replace solar charge controller. Verify settings and solar input after service.', '[]', 1.0),
+          ('Antenna Replacement', 'repair', 'Cellular Antenna Replacement', 'Replace damaged or underperforming cellular antenna.', $3, 1.0)
+        `, [
+                JSON.stringify([{ name: '230Ah 24V Battery', quantity: 1 }]),
+                JSON.stringify([{ name: 'Oil Filter', quantity: 1 }, { name: 'Spark Plug', quantity: 1 }]),
+                JSON.stringify([{ name: 'Cellular Antenna', quantity: 1 }]),
+            ]);
+            console.log('  ✓ Default issue templates seeded');
+        }
+
         // Default retention: 90 days
         await client.query(`
       INSERT INTO settings (key, value)
@@ -1135,6 +1284,255 @@ export async function getBatteryHistory(siteId, days = 30) {
          ORDER BY date ASC`,
         [siteId, cutoff]
     );
+    return result.rows;
+}
+
+// ============================================================
+// Users
+// ============================================================
+
+export async function createUser(username, passwordHash, displayName, role) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `INSERT INTO users (username, password_hash, display_name, role)
+         VALUES ($1, $2, $3, $4) RETURNING id, username, display_name, role, active, created_at`,
+        [username, passwordHash, displayName, role]
+    );
+    return result.rows[0];
+}
+
+export async function getUserByUsername(username) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `SELECT * FROM users WHERE username = $1 AND active = TRUE`,
+        [username]
+    );
+    return result.rows[0] || null;
+}
+
+export async function getUserById(id) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `SELECT id, username, display_name, role, active, created_at FROM users WHERE id = $1`,
+        [id]
+    );
+    return result.rows[0] || null;
+}
+
+export async function getUsers() {
+    if (!pool) return [];
+    const result = await pool.query(
+        `SELECT id, username, display_name, role, active, created_at, updated_at FROM users ORDER BY created_at ASC`
+    );
+    return result.rows;
+}
+
+export async function updateUser(id, updates) {
+    if (!pool) return null;
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    for (const [key, val] of Object.entries(updates)) {
+        if (['display_name', 'role', 'active', 'password_hash'].includes(key)) {
+            fields.push(`${key} = $${idx++}`);
+            values.push(val);
+        }
+    }
+    if (fields.length === 0) return null;
+    fields.push(`updated_at = $${idx++}`);
+    values.push(Date.now());
+    values.push(id);
+    const result = await pool.query(
+        `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, username, display_name, role, active`,
+        values
+    );
+    return result.rows[0] || null;
+}
+
+export async function deleteUser(id) {
+    if (!pool) return;
+    await pool.query(`UPDATE users SET active = FALSE, updated_at = $2 WHERE id = $1`, [id, Date.now()]);
+}
+
+// ============================================================
+// Action Queue Acknowledgements
+// ============================================================
+
+export async function getAcknowledgedActions() {
+    if (!pool) return [];
+    const result = await pool.query(
+        `SELECT a.action_key, a.acknowledged_at, a.notes, u.display_name AS acknowledged_by_name
+         FROM action_queue_acks a LEFT JOIN users u ON a.acknowledged_by = u.id`
+    );
+    return result.rows;
+}
+
+export async function acknowledgeAction(actionKey, userId, notes) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `INSERT INTO action_queue_acks (action_key, acknowledged_by, acknowledged_at, notes)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (action_key) DO UPDATE SET acknowledged_by = $2, acknowledged_at = $3, notes = $4
+         RETURNING *`,
+        [actionKey, userId, Date.now(), notes || null]
+    );
+    return result.rows[0];
+}
+
+export async function unacknowledgeAction(actionKey) {
+    if (!pool) return;
+    await pool.query(`DELETE FROM action_queue_acks WHERE action_key = $1`, [actionKey]);
+}
+
+// ============================================================
+// Checklist Templates
+// ============================================================
+
+export async function getChecklistTemplates() {
+    if (!pool) return [];
+    const result = await pool.query(`SELECT * FROM checklist_templates WHERE active = TRUE ORDER BY name`);
+    return result.rows;
+}
+
+export async function insertChecklistTemplate(template) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `INSERT INTO checklist_templates (name, visit_type, items)
+         VALUES ($1, $2, $3) RETURNING *`,
+        [template.name, template.visit_type, JSON.stringify(template.items)]
+    );
+    return result.rows[0];
+}
+
+export async function updateChecklistTemplate(id, updates) {
+    if (!pool) return null;
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    for (const [key, val] of Object.entries(updates)) {
+        if (['name', 'visit_type', 'active'].includes(key)) {
+            fields.push(`${key} = $${idx++}`);
+            values.push(val);
+        } else if (key === 'items') {
+            fields.push(`items = $${idx++}`);
+            values.push(JSON.stringify(val));
+        }
+    }
+    if (fields.length === 0) return null;
+    fields.push(`updated_at = $${idx++}`);
+    values.push(Date.now());
+    values.push(id);
+    const result = await pool.query(
+        `UPDATE checklist_templates SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+        values
+    );
+    return result.rows[0] || null;
+}
+
+// ============================================================
+// Completed Checklists
+// ============================================================
+
+export async function getCompletedChecklists(maintenanceLogId) {
+    if (!pool) return [];
+    const result = await pool.query(
+        `SELECT c.*, u.display_name AS completed_by_name
+         FROM completed_checklists c LEFT JOIN users u ON c.completed_by = u.id
+         WHERE c.maintenance_log_id = $1 ORDER BY c.completed_at DESC`,
+        [maintenanceLogId]
+    );
+    return result.rows;
+}
+
+export async function insertCompletedChecklist(checklist) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `INSERT INTO completed_checklists (maintenance_log_id, template_id, template_name, completed_by, items)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [checklist.maintenance_log_id, checklist.template_id, checklist.template_name,
+         checklist.completed_by, JSON.stringify(checklist.items)]
+    );
+    return result.rows[0];
+}
+
+// ============================================================
+// Issue Templates
+// ============================================================
+
+export async function getIssueTemplates() {
+    if (!pool) return [];
+    const result = await pool.query(`SELECT * FROM issue_templates WHERE active = TRUE ORDER BY name`);
+    return result.rows;
+}
+
+export async function insertIssueTemplate(template) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `INSERT INTO issue_templates (name, visit_type, title, description, expected_parts, estimated_hours)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [template.name, template.visit_type, template.title, template.description,
+         JSON.stringify(template.expected_parts || []), template.estimated_hours || null]
+    );
+    return result.rows[0];
+}
+
+export async function updateIssueTemplate(id, updates) {
+    if (!pool) return null;
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    for (const [key, val] of Object.entries(updates)) {
+        if (['name', 'visit_type', 'title', 'description', 'estimated_hours', 'active'].includes(key)) {
+            fields.push(`${key} = $${idx++}`);
+            values.push(val);
+        } else if (key === 'expected_parts') {
+            fields.push(`expected_parts = $${idx++}`);
+            values.push(JSON.stringify(val));
+        }
+    }
+    if (fields.length === 0) return null;
+    fields.push(`updated_at = $${idx++}`);
+    values.push(Date.now());
+    values.push(id);
+    const result = await pool.query(
+        `UPDATE issue_templates SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+        values
+    );
+    return result.rows[0] || null;
+}
+
+// ============================================================
+// Maintenance Calendar
+// ============================================================
+
+export async function getMaintenanceCalendar(startMs, endMs, technicianId) {
+    if (!pool) return [];
+    let query = `
+        SELECT m.*, j.name AS job_site_name, u.display_name AS assigned_technician_name
+        FROM maintenance_logs m
+        LEFT JOIN job_sites j ON m.job_site_id = j.id
+        LEFT JOIN users u ON m.assigned_technician_id = u.id
+        WHERE m.status != 'cancelled'
+    `;
+    const params = [];
+    let idx = 1;
+    if (startMs) {
+        query += ` AND (m.scheduled_date >= $${idx} OR m.completed_date >= $${idx})`;
+        params.push(startMs);
+        idx++;
+    }
+    if (endMs) {
+        query += ` AND (m.scheduled_date <= $${idx} OR m.completed_date <= $${idx})`;
+        params.push(endMs);
+        idx++;
+    }
+    if (technicianId) {
+        query += ` AND m.assigned_technician_id = $${idx}`;
+        params.push(technicianId);
+        idx++;
+    }
+    query += ` ORDER BY COALESCE(m.scheduled_date, m.created_at) ASC`;
+    const result = await pool.query(query, params);
     return result.rows;
 }
 

@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchFleetIntelligence } from '../api/vrm'
+import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchFleetIntelligence, fetchActionQueue, acknowledgeAction, fetchHealthGrades } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
@@ -13,6 +13,50 @@ function FleetOverview() {
     const [sortBy, setSortBy] = useState('name')
     const [filterAlarm, setFilterAlarm] = useState('all')
     const [searchTerm, setSearchTerm] = useState('')
+    const [actionQueueOpen, setActionQueueOpen] = useState(true)
+
+    // Action queue data
+    const fetchActionQueueFn = useCallback(() => fetchActionQueue(), [])
+    const { data: actionQueueData, refetch: refetchActions } = useApiPolling(fetchActionQueueFn, 30000)
+    const actionItems = actionQueueData?.actions || []
+
+    // Health grades data
+    const fetchHealthGradesFn = useCallback(() => fetchHealthGrades(), [])
+    const { data: healthGradesData } = useApiPolling(fetchHealthGradesFn, 60000)
+    const healthGradesMap = useMemo(() => {
+        const map = {}
+        const grades = healthGradesData?.grades || []
+        grades.forEach(g => { map[g.site_id] = g })
+        return map
+    }, [healthGradesData])
+
+    // Action queue computed values
+    const actionQueueSummary = useMemo(() => {
+        const critical = actionItems.filter(a => a.priority <= 3 && !a.acknowledged_at).length
+        const warnings = actionItems.filter(a => a.priority >= 4 && a.priority <= 5 && !a.acknowledged_at).length
+        const acknowledged = actionItems.filter(a => a.acknowledged_at).length
+        return { critical, warnings, acknowledged }
+    }, [actionItems])
+
+    const sortedActions = useMemo(() => {
+        const unacked = actionItems
+            .filter(a => !a.acknowledged_at)
+            .sort((a, b) => a.priority - b.priority)
+            .slice(0, 10)
+        const acked = actionItems
+            .filter(a => a.acknowledged_at)
+            .sort((a, b) => a.priority - b.priority)
+        return { unacked, acked }
+    }, [actionItems])
+
+    const handleAcknowledge = async (key) => {
+        try {
+            await acknowledgeAction(key, '')
+            refetchActions()
+        } catch (err) {
+            console.error('Failed to acknowledge action:', err)
+        }
+    }
 
     // Job sites data
     const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
@@ -245,6 +289,81 @@ function FleetOverview() {
                 </div>
             )}
 
+            {/* Action Queue Section */}
+            {actionItems.length > 0 && (
+                <div className="action-queue">
+                    <div
+                        className="action-queue-header"
+                        onClick={() => setActionQueueOpen(prev => !prev)}
+                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                    >
+                        <h2>
+                            Action Queue
+                            <svg
+                                width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" strokeWidth="2"
+                                style={{ marginLeft: 8, transform: actionQueueOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                            >
+                                <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                        </h2>
+                        <span className="action-queue-summary">
+                            {actionQueueSummary.critical > 0 && <span className="priority-badge priority-badge-critical">{actionQueueSummary.critical} critical</span>}
+                            {actionQueueSummary.warnings > 0 && <span className="priority-badge priority-badge-warning">{actionQueueSummary.warnings} warnings</span>}
+                            <span className="priority-badge priority-badge-info">{actionQueueSummary.acknowledged} acknowledged</span>
+                        </span>
+                    </div>
+                    {actionQueueOpen && (
+                        <div className="action-queue-list">
+                            {sortedActions.unacked.map(action => (
+                                <div key={action.key} className="action-queue-item">
+                                    <span className={`priority-badge ${action.priority <= 3 ? 'priority-badge-critical' : action.priority <= 5 ? 'priority-badge-warning' : 'priority-badge-info'}`}>
+                                        {action.priority}
+                                    </span>
+                                    <span className="action-queue-category">
+                                        {action.category === 'battery' ? '🔋' : action.category === 'solar' ? '☀️' : action.category === 'network' ? '📡' : '⚠️'}
+                                        {' '}{action.category}
+                                    </span>
+                                    <div className="action-queue-text">
+                                        <span className="action-queue-title">{action.title}</span>
+                                        {action.subtitle && <span className="action-queue-subtitle">{action.subtitle}</span>}
+                                    </div>
+                                    <button
+                                        className="action-ack-btn"
+                                        onClick={(e) => { e.stopPropagation(); handleAcknowledge(action.key) }}
+                                        title="Acknowledge"
+                                    >
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                            <polyline points="20 6 9 17 4 12" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            ))}
+                            {sortedActions.acked.length > 0 && sortedActions.acked.map(action => (
+                                <div key={action.key} className="action-queue-item action-queue-item-acked">
+                                    <span className={`priority-badge ${action.priority <= 3 ? 'priority-badge-critical' : action.priority <= 5 ? 'priority-badge-warning' : 'priority-badge-info'}`}>
+                                        {action.priority}
+                                    </span>
+                                    <span className="action-queue-category">
+                                        {action.category === 'battery' ? '🔋' : action.category === 'solar' ? '☀️' : action.category === 'network' ? '📡' : '⚠️'}
+                                        {' '}{action.category}
+                                    </span>
+                                    <div className="action-queue-text">
+                                        <span className="action-queue-title">{action.title}</span>
+                                        {action.subtitle && <span className="action-queue-subtitle">{action.subtitle}</span>}
+                                    </div>
+                                    <span className="action-ack-done" title="Acknowledged">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                            <polyline points="20 6 9 17 4 12" />
+                                        </svg>
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             <QueryBar />
 
             <div className="fleet-controls">
@@ -305,7 +424,7 @@ function FleetOverview() {
                 {viewMode === 'sites' ? (
                     <>
                         {filteredJobSites.map(js => (
-                            <JobSiteCard key={js.id} jobSite={js} />
+                            <JobSiteCard key={js.id} jobSite={js} healthGrades={healthGradesMap} />
                         ))}
                         {filteredJobSites.length === 0 && (
                             <div className="no-results">
@@ -322,6 +441,7 @@ function FleetOverview() {
                                 snapshot={snapshotMap[site.idSite]}
                                 pepwave={pepwaveMap[site.name]}
                                 jobSiteName={trailerJobSiteMap[site.idSite]}
+                                healthGrade={healthGradesMap[site.idSite]}
                             />
                         ))}
                         {filteredSites.length === 0 && (

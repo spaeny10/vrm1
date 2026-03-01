@@ -1,6 +1,8 @@
 import { Routes, Route } from 'react-router-dom'
+import { useAuth } from './components/AuthProvider'
 import Sidebar from './components/Sidebar'
 import ErrorBoundary from './components/ErrorBoundary'
+import LoginPage from './pages/LoginPage'
 import FleetOverview from './pages/FleetOverview'
 import JobSiteDetail from './pages/JobSiteDetail'
 import TrailerDetail from './pages/TrailerDetail'
@@ -10,9 +12,27 @@ import NetworkPage from './pages/NetworkPage'
 import MaintenancePage from './pages/MaintenancePage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import Settings from './pages/Settings'
+import MyWorkPage from './pages/MyWorkPage'
 import NotFound from './pages/NotFound'
 
 function App() {
+    const { user, loading } = useAuth()
+
+    if (loading) {
+        return (
+            <div className="login-page">
+                <div className="login-card" style={{ textAlign: 'center', padding: '40px' }}>
+                    <div className="login-logo">VRM</div>
+                    <p style={{ color: 'var(--text-secondary)', marginTop: '16px' }}>Loading...</p>
+                </div>
+            </div>
+        )
+    }
+
+    if (!user) {
+        return <LoginPage />
+    }
+
     return (
         <div className="app-layout">
             <Sidebar />
@@ -28,6 +48,7 @@ function App() {
                         <Route path="/maintenance" element={<MaintenancePage />} />
                         <Route path="/analytics" element={<AnalyticsPage />} />
                         <Route path="/settings" element={<Settings />} />
+                        <Route path="/my-work" element={<MyWorkPage />} />
                         <Route path="*" element={<NotFound />} />
                     </Routes>
                 </ErrorBoundary>

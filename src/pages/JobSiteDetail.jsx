@@ -11,6 +11,7 @@ import { fetchJobSite, fetchSiteMaintenance } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import Breadcrumbs from '../components/Breadcrumbs'
+import ReportPanel from '../components/ReportPanel'
 
 ChartJS.register(
     CategoryScale, LinearScale, PointElement, LineElement,
@@ -22,6 +23,7 @@ function JobSiteDetail() {
     const navigate = useNavigate()
     const [editingName, setEditingName] = useState(false)
     const [nameInput, setNameInput] = useState('')
+    const [showReport, setShowReport] = useState(false)
 
     const fetchFn = useCallback(() => fetchJobSite(id), [id])
     const fetchMaintenanceFn = useCallback(() => fetchSiteMaintenance(id), [id])
@@ -105,6 +107,7 @@ function JobSiteDetail() {
         <div className="site-detail">
             <div className="detail-top-bar">
                 <Breadcrumbs items={[{ label: 'Fleet', to: '/' }, { label: jobSite.name }]} />
+                <button className="btn btn-secondary btn-sm" onClick={() => setShowReport(true)}>Export Report</button>
                 <div className="detail-title-section">
                     {editingName ? (
                         <div className="inline-edit">
@@ -238,6 +241,10 @@ function JobSiteDetail() {
                     </div>
                 )}
             </div>
+
+            {showReport && (
+                <ReportPanel type="site" id={id} onClose={() => setShowReport(false)} />
+            )}
         </div>
     )
 }
