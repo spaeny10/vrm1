@@ -256,6 +256,17 @@ body {
   box-shadow: var(--shadow);
 }
 
+.kpi-clickable {
+  cursor: pointer;
+}
+
+.kpi-active {
+  outline: 2px solid #fff;
+  outline-offset: -2px;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
 .kpi-blue {
   background: var(--kpi-blue);
 }
@@ -2932,13 +2943,20 @@ body {
   margin-bottom: 24px;
 }
 
+.deployment-kpi-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
 .deployment-kpi-label {
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-secondary);
-  margin-bottom: 12px;
+  margin: 0;
 }
 
 /* HQ Badge */

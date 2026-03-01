@@ -14,6 +14,7 @@ function FleetOverview() {
     const [filterAlarm, setFilterAlarm] = useState('all')
     const [searchTerm, setSearchTerm] = useState('')
     const [actionQueueOpen, setActionQueueOpen] = useState(true)
+    const [deploymentFilter, setDeploymentFilter] = useState(null) // null | 'billing' | 'standby' | 'hq' | 'pickup'
 
     // Action queue data
     const fetchActionQueueFn = useCallback(() => fetchActionQueue(), [])
@@ -156,9 +157,23 @@ function FleetOverview() {
     // Deployment KPIs from backend
     const deployment = deploymentData || {}
 
-    // Filter + sort job sites (exclude completed from dashboard view)
+    // Filter + sort job sites
     const filteredJobSites = useMemo(() => {
-        let result = jobSites.filter(js => js.status !== 'completed')
+        let result = [...jobSites]
+
+        // Apply deployment filter (overrides the default completed exclusion)
+        if (deploymentFilter === 'billing') {
+            result = result.filter(js => js.status === 'active' && !js.is_headquarters)
+        } else if (deploymentFilter === 'standby') {
+            result = result.filter(js => js.status === 'standby' && !js.is_headquarters)
+        } else if (deploymentFilter === 'hq') {
+            result = result.filter(js => js.is_headquarters)
+        } else if (deploymentFilter === 'pickup') {
+            result = result.filter(js => js.status === 'completed')
+        } else {
+            // Default: exclude completed
+            result = result.filter(js => js.status !== 'completed')
+        }
 
         if (searchTerm) {
             const term = searchTerm.toLowerCase()
@@ -180,7 +195,12 @@ function FleetOverview() {
         })
 
         return result
-    }, [jobSites, sortBy, filterAlarm, searchTerm])
+    }, [jobSites, sortBy, filterAlarm, searchTerm, deploymentFilter])
+
+    const handleDeploymentFilter = (filter) => {
+        setDeploymentFilter(prev => prev === filter ? null : filter)
+        setViewMode('sites')
+    }
 
     // Filter + sort trailers (existing logic)
     const filteredSites = useMemo(() => {
@@ -294,31 +314,46 @@ function FleetOverview() {
             {/* Deployment KPIs */}
             {deployment.active_billing && (
                 <div className="deployment-kpi-section">
-                    <h3 className="deployment-kpi-label">Deployment Status</h3>
+                    <div className="deployment-kpi-header">
+                        <h3 className="deployment-kpi-label">Deployment Status</h3>
+                        {deploymentFilter && (
+                            <button className="btn btn-sm btn-ghost" onClick={() => setDeploymentFilter(null)}>
+                                Clear filter
+                            </button>
+                        )}
+                    </div>
                     <div className="kpi-row">
                         <KpiCard
                             title="Actively Billing"
                             value={`${deployment.active_billing.sites} sites`}
                             unit={`${deployment.active_billing.trailers} trailers`}
                             color="green"
+                            onClick={() => handleDeploymentFilter('billing')}
+                            active={deploymentFilter === 'billing'}
                         />
                         <KpiCard
                             title="Standby"
                             value={`${deployment.standby?.sites || 0} sites`}
                             unit={`${deployment.standby?.trailers || 0} trailers`}
                             color="yellow"
+                            onClick={() => handleDeploymentFilter('standby')}
+                            active={deploymentFilter === 'standby'}
                         />
                         <KpiCard
                             title="Available at HQ"
                             value={deployment.available_at_hq?.trailers || 0}
                             unit="trailers"
                             color="blue"
+                            onClick={() => handleDeploymentFilter('hq')}
+                            active={deploymentFilter === 'hq'}
                         />
                         <KpiCard
                             title="Awaiting Pickup"
                             value={`${deployment.awaiting_pickup?.sites || 0} sites`}
                             unit={`${deployment.awaiting_pickup?.trailers || 0} trailers`}
                             color="red"
+                            onClick={() => handleDeploymentFilter('pickup')}
+                            active={deploymentFilter === 'pickup'}
                         />
                     </div>
                 </div>
