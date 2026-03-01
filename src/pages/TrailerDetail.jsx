@@ -9,7 +9,7 @@ import 'chartjs-adapter-date-fns'
 import zoomPlugin from 'chartjs-plugin-zoom'
 import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent, fetchBatteryHealth, fetchTrailerIntelligence, analyzeTrailer } from '../api/vrm'
+import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent, fetchBatteryHealth, fetchTrailerIntelligence, analyzeTrailer, fetchSites, fetchJobSites } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import AlarmBadge from '../components/AlarmBadge'
@@ -69,6 +69,10 @@ function TrailerDetail() {
     const fetchAlarmsFn = useCallback(() => fetchAlarms(id), [id])
     const fetchSystemFn = useCallback(() => fetchSystemOverview(id), [id])
     const fetchNetworkFn = useCallback(() => fetchFleetNetwork(), [])
+    const fetchSitesFn = useCallback(() => fetchSites(), [])
+    const { data: sitesData } = useApiPolling(fetchSitesFn, 120000)
+    const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
+    const { data: jobSitesData } = useApiPolling(fetchJobSitesFn, 120000)
 
     const fetchComponentsFn = useCallback(() => fetchComponents(id), [id])
     const fetchBatteryHealthFn = useCallback(() => fetchBatteryHealth(id), [id])
@@ -117,13 +121,24 @@ function TrailerDetail() {
     // Find matching Pepwave device by site name (MUST be before useEffect that uses it)
     // We need the site name — get it from the diagnostics data or system data
     const siteName = useMemo(() => {
-        // Try to find name from various sources
+        // Try sites list first (cached from dashboard, resolves immediately)
+        const siteMatch = sitesData?.records?.find(s => String(s.idSite) === String(id))
+        if (siteMatch?.name) return siteMatch.name
+        // Try system overview
         const sysName = systemData?.records?.name
         if (sysName) return sysName
-        // Fallback: check if any record has a site name
+        // Fallback: check if any diagnostic record has a site name
         const diagRecord = records.find(r => r.idSiteName)
         return diagRecord?.idSiteName || null
-    }, [systemData, records])
+    }, [sitesData, systemData, records, id])
+
+    // Find the job site this trailer belongs to
+    const parentJobSite = useMemo(() => {
+        if (!jobSitesData?.job_sites) return null
+        return jobSitesData.job_sites.find(js =>
+            js.trailers?.some(t => String(t.site_id) === String(id))
+        )
+    }, [jobSitesData, id])
 
     const battery = useMemo(() => ({
         soc: diagValue(records, 'SOC') ?? diagValue(records, 'bs'),
@@ -304,9 +319,16 @@ function TrailerDetail() {
     return (
         <div className="site-detail">
             <div className="page-header">
-                <Breadcrumbs items={[{ label: 'Fleet', to: '/' }, { label: siteName || `Site #${id}` }]} />
+                <Breadcrumbs items={[
+                    { label: 'Fleet', to: '/' },
+                    ...(parentJobSite ? [{ label: parentJobSite.name, to: `/site/${parentJobSite.id}` }] : []),
+                    { label: siteName || `Trailer #${id}` }
+                ]} />
                 <div className="page-header-row">
-                    <h1>{siteName || `Site #${id}`}</h1>
+                    <h1>
+                        {siteName || `Trailer #${id}`}
+                        {parentJobSite && <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: '0.7em', marginLeft: 10 }}>({parentJobSite.name})</span>}
+                    </h1>
                     <button className="btn btn-secondary btn-sm" onClick={() => setShowReport(true)}>Export Report</button>
                     <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
                 </div>
