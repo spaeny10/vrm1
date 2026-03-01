@@ -203,6 +203,25 @@ export async function fetchMapSites() {
     return apiFetch(`${API_BASE}/map/sites`);
 }
 
+export async function fetchGpsTrailers() {
+    return apiFetch(`${API_BASE}/gps/trailers`);
+}
+
+export async function refreshGps() {
+    return apiFetch(`${API_BASE}/gps/refresh`, { method: 'POST' });
+}
+
+export async function fetchUnlinkedIc2Devices() {
+    return apiFetch(`${API_BASE}/gps/unlinked-devices`);
+}
+
+export async function linkIc2Device(siteId, ic2DeviceId) {
+    return apiFetch(`${API_BASE}/gps/link-device`, {
+        method: 'POST',
+        body: JSON.stringify({ site_id: siteId, ic2_device_id: ic2DeviceId }),
+    });
+}
+
 // ============================================================
 // Maintenance
 // ============================================================

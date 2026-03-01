@@ -1,7 +1,7 @@
 import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device } from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
 import { useAuth } from '../components/AuthProvider'
 
@@ -52,6 +52,52 @@ function Settings() {
     const [expandedSite, setExpandedSite] = useState(null)
     const [activeDrag, setActiveDrag] = useState(null)
     const [overJobSiteId, setOverJobSiteId] = useState(null)
+
+    // GPS Verification state
+    const [gpsTrailers, setGpsTrailers] = useState(null)
+    const [gpsLoading, setGpsLoading] = useState(false)
+    const [gpsRefreshing, setGpsRefreshing] = useState(false)
+    const [unlinkedDevices, setUnlinkedDevices] = useState([])
+    const [linkingTrailerId, setLinkingTrailerId] = useState(null)
+
+    const loadGpsData = async () => {
+        setGpsLoading(true)
+        try {
+            const [gpsData, devData] = await Promise.all([
+                fetchGpsTrailers(),
+                fetchUnlinkedIc2Devices(),
+            ])
+            setGpsTrailers(gpsData.trailers || [])
+            setUnlinkedDevices(devData.devices || [])
+        } catch (err) {
+            toast.error('Error loading GPS data: ' + err.message)
+        }
+        setGpsLoading(false)
+    }
+
+    const handleGpsRefresh = async () => {
+        setGpsRefreshing(true)
+        try {
+            const result = await refreshGps()
+            toast.success(`GPS refreshed: ${result.updated} devices updated from IC2`)
+            await loadGpsData()
+            refetchJobSites()
+        } catch (err) {
+            toast.error('GPS refresh failed: ' + err.message)
+        }
+        setGpsRefreshing(false)
+    }
+
+    const handleLinkDevice = async (siteId, ic2DeviceId) => {
+        try {
+            await linkIc2Device(siteId, ic2DeviceId)
+            toast.success('IC2 device linked successfully')
+            setLinkingTrailerId(null)
+            await loadGpsData()
+        } catch (err) {
+            toast.error('Error linking device: ' + err.message)
+        }
+    }
 
     // User Management state (admin only)
     const [users, setUsers] = useState([])
@@ -576,6 +622,98 @@ function Settings() {
                     ) : (
                         <div className="empty-section">
                             <p>No job sites yet. Sites are created automatically after the first VRM poll with GPS data.</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* GPS Verification */}
+                <div className="settings-card settings-card-wide">
+                    <div className="settings-card-header">
+                        <h2>GPS Verification</h2>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button className="btn btn-secondary" onClick={loadGpsData} disabled={gpsLoading}>
+                                {gpsLoading ? 'Loading...' : 'Check GPS'}
+                            </button>
+                            <button className="btn btn-primary" onClick={handleGpsRefresh} disabled={gpsRefreshing}>
+                                {gpsRefreshing ? 'Refreshing...' : 'Refresh from IC2'}
+                            </button>
+                        </div>
+                    </div>
+                    <p className="settings-desc">
+                        GPS coordinates are sourced from IC2 Peplink routers. Click "Check GPS" to compare database vs live coordinates.
+                        "Refresh from IC2" will re-fetch all GPS from Peplink devices and re-run clustering.
+                    </p>
+                    {gpsTrailers && (
+                        <div className="jobsite-mgmt-table-wrapper">
+                            <table className="maint-table">
+                                <thead>
+                                    <tr>
+                                        <th>Trailer</th>
+                                        <th>IC2 Device</th>
+                                        <th>DB Latitude</th>
+                                        <th>DB Longitude</th>
+                                        <th>IC2 Latitude</th>
+                                        <th>IC2 Longitude</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {gpsTrailers.map(t => {
+                                        const hasDb = t.db_latitude != null && t.db_longitude != null
+                                        const hasIc2 = t.ic2_latitude != null && t.ic2_longitude != null
+                                        const mismatch = hasDb && hasIc2 && (
+                                            Math.abs(t.db_latitude - t.ic2_latitude) > 0.001 ||
+                                            Math.abs(t.db_longitude - t.ic2_longitude) > 0.001
+                                        )
+                                        const noGps = !hasDb && !hasIc2
+                                        return (
+                                            <tr key={t.site_id} style={mismatch ? { background: 'rgba(231, 76, 60, 0.1)' } : noGps ? { opacity: 0.5 } : {}}>
+                                                <td>
+                                                    <strong>{t.site_name}</strong>
+                                                    {!t.ic2_online && <span style={{ color: 'var(--text-muted)', fontSize: '11px', marginLeft: '6px' }}>offline</span>}
+                                                </td>
+                                                <td>
+                                                    {t.ic2_device_id ? (
+                                                        <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>{t.ic2_device_id}</span>
+                                                    ) : linkingTrailerId === t.site_id ? (
+                                                        <select
+                                                            style={{ fontSize: '12px', maxWidth: '160px' }}
+                                                            onChange={e => { if (e.target.value) handleLinkDevice(t.site_id, parseInt(e.target.value)) }}
+                                                            autoFocus
+                                                            onBlur={() => setLinkingTrailerId(null)}
+                                                        >
+                                                            <option value="">Select device...</option>
+                                                            {unlinkedDevices.map(d => (
+                                                                <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+                                                            ))}
+                                                        </select>
+                                                    ) : (
+                                                        <button className="btn btn-sm btn-ghost" onClick={() => setLinkingTrailerId(t.site_id)}>
+                                                            Link
+                                                        </button>
+                                                    )}
+                                                </td>
+                                                <td>{hasDb ? t.db_latitude.toFixed(5) : '—'}</td>
+                                                <td>{hasDb ? t.db_longitude.toFixed(5) : '—'}</td>
+                                                <td style={mismatch ? { color: 'var(--warning)', fontWeight: 600 } : {}}>{hasIc2 ? t.ic2_latitude.toFixed(5) : '—'}</td>
+                                                <td style={mismatch ? { color: 'var(--warning)', fontWeight: 600 } : {}}>{hasIc2 ? t.ic2_longitude.toFixed(5) : '—'}</td>
+                                                <td>
+                                                    {mismatch && <span className="health-grade grade-D">Mismatch</span>}
+                                                    {!mismatch && hasDb && hasIc2 && <span className="health-grade grade-A">OK</span>}
+                                                    {noGps && <span className="health-grade grade-F">No GPS</span>}
+                                                    {!noGps && !hasIc2 && hasDb && <span className="health-grade grade-C">DB Only</span>}
+                                                    {!noGps && hasIc2 && !hasDb && <span className="health-grade grade-C">IC2 Only</span>}
+                                                    {t.gps_stale && hasDb && <span style={{ color: 'var(--text-muted)', fontSize: '11px', marginLeft: '6px' }}>stale</span>}
+                                                </td>
+                                            </tr>
+                                        )
+                                    })}
+                                </tbody>
+                            </table>
+                            <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '8px' }}>
+                                {gpsTrailers.length} trailers — {gpsTrailers.filter(t => t.ic2_latitude != null).length} with IC2 GPS,{' '}
+                                {gpsTrailers.filter(t => t.db_latitude != null && t.ic2_latitude != null && (Math.abs(t.db_latitude - t.ic2_latitude) > 0.001 || Math.abs(t.db_longitude - t.ic2_longitude) > 0.001)).length} mismatches
+                            </p>
                         </div>
                     )}
                 </div>

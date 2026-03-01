@@ -12,7 +12,7 @@ import {
     insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
     upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding,
     getJobSites, getJobSite, insertJobSite, updateJobSite,
-    getTrailerAssignments, getTrailersByJobSite, upsertTrailerAssignment,
+    getTrailerAssignments, getTrailersByJobSite, upsertTrailerAssignment, linkIc2Device,
     assignTrailerToJobSite, getTrailersWithGps,
     getMaintenanceLogs, getMaintenanceLog, insertMaintenanceLog,
     updateMaintenanceLog, deleteMaintenanceLog, getMaintenanceStats, getMaintenanceCostsByJobSite,
@@ -187,6 +187,8 @@ let dbAvailable = false;
 
 // Pepwave device cache: deviceName -> device data
 const pepwaveCache = new Map();
+const ic2DeviceIdToSiteId = new Map();  // ic2DeviceId -> siteId (persistent linkage)
+const ic2DeviceIdToName = new Map();    // ic2DeviceId -> deviceName (for pepwave lookups)
 let lastIc2Poll = 0;
 let dbPool = null;
 let bandwidthLoggedOnce = false;
@@ -578,6 +580,46 @@ async function persistAlertHistory(currentAlerts) {
     } catch (err) {
         console.error('  persistAlertHistory error:', err.message);
     }
+}
+
+// ============================================================
+// IC2 device resolution helpers
+// ============================================================
+
+/**
+ * Resolve an IC2 device to a site_id.
+ * Priority: 1) stored ic2_device_id linkage, 2) name match to VRM, 3) synthetic -dev.id
+ */
+function resolveIc2DeviceToSiteId(dev, vrmSites) {
+    // Priority 1: stored linkage
+    if (ic2DeviceIdToSiteId.has(dev.id)) {
+        const siteId = ic2DeviceIdToSiteId.get(dev.id);
+        const vrmSite = vrmSites.find(s => s.idSite === siteId);
+        return { siteId, siteName: vrmSite?.name || dev.name };
+    }
+    // Priority 2: name match to VRM
+    const vrmSite = vrmSites.find(s => s.name === dev.name);
+    if (vrmSite) {
+        ic2DeviceIdToSiteId.set(dev.id, vrmSite.idSite);
+        return { siteId: vrmSite.idSite, siteName: vrmSite.name };
+    }
+    // Priority 3: IC2-only device
+    const syntheticId = -dev.id;
+    ic2DeviceIdToSiteId.set(dev.id, syntheticId);
+    return { siteId: syntheticId, siteName: dev.name };
+}
+
+/**
+ * Look up pepwave data for a trailer, trying name first then IC2 device ID.
+ */
+function getPepwaveForTrailer(trailer) {
+    let pw = pepwaveCache.get(trailer.site_name);
+    if (pw) return pw;
+    if (trailer.ic2_device_id) {
+        const name = ic2DeviceIdToName.get(trailer.ic2_device_id);
+        if (name) pw = pepwaveCache.get(name);
+    }
+    return pw || null;
 }
 
 // ============================================================
@@ -1248,6 +1290,125 @@ app.get('/api/map/sites', async (req, res) => {
     }
 });
 
+// --- GPS Verification ---
+
+// Get all trailer GPS coordinates (DB + live IC2 cache)
+app.get('/api/gps/trailers', async (req, res) => {
+    try {
+        const assignments = dbAvailable ? await getTrailerAssignments() : [];
+        const trailers = assignments.map(a => {
+            const live = gpsCache.get(a.site_id);
+            const pepwave = getPepwaveForTrailer(a);
+            return {
+                site_id: a.site_id,
+                site_name: a.site_name,
+                ic2_device_id: a.ic2_device_id || null,
+                job_site_id: a.job_site_id,
+                manual_override: a.manual_override,
+                db_latitude: a.latitude,
+                db_longitude: a.longitude,
+                live_latitude: live?.latitude || null,
+                live_longitude: live?.longitude || null,
+                ic2_latitude: pepwave?.latitude || null,
+                ic2_longitude: pepwave?.longitude || null,
+                ic2_online: pepwave?.online || false,
+                gps_stale: live ? (Date.now() - live.updatedAt > 600000) : true, // >10 min = stale
+            };
+        });
+        res.json({ success: true, trailers });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Force refresh GPS from IC2 for all devices
+app.post('/api/gps/refresh', async (req, res) => {
+    try {
+        if (!IC2_CLIENT_ID || !IC2_CLIENT_SECRET) {
+            return res.status(400).json({ success: false, error: 'IC2 not configured' });
+        }
+        const vrmSites = sitesCache?.records || [];
+        const result = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d?has_status=true`);
+        const devices = result.data || [];
+        const gpsDevices = devices.filter(d => d.gps_exist || d.gps_support);
+
+        let updated = 0, failed = 0;
+        for (let i = 0; i < gpsDevices.length; i += 5) {
+            const batch = gpsDevices.slice(i, i + 5);
+            const promises = batch.map(async (dev) => {
+                try {
+                    const locData = await ic2Fetch(`/rest/o/${IC2_ORG_ID}/g/${IC2_GROUP_ID}/d/${dev.id}/loc`);
+                    const loc = (locData.data || [])[0];
+                    if (loc && loc.la && loc.lo) {
+                        const cached = pepwaveCache.get(dev.name);
+                        if (cached) { cached.latitude = loc.la; cached.longitude = loc.lo; }
+
+                        const { siteId, siteName } = resolveIc2DeviceToSiteId(dev, vrmSites);
+                        gpsCache.set(siteId, { latitude: loc.la, longitude: loc.lo, updatedAt: Date.now() });
+
+                        if (dbAvailable) {
+                            await upsertTrailerAssignment(siteId, siteName, loc.la, loc.lo, null, dev.id);
+                        }
+                        updated++;
+                    }
+                } catch { failed++; }
+            });
+            await Promise.all(promises);
+            if (i + 5 < gpsDevices.length) await new Promise(r => setTimeout(r, 500));
+        }
+
+        // Re-run clustering after GPS refresh
+        if (dbAvailable && updated > 0) {
+            try { await runClustering(); } catch (e) { /* non-critical */ }
+        }
+
+        res.json({ success: true, updated, failed, total_gps_devices: gpsDevices.length });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Get unlinked IC2 devices (not yet bound to any trailer assignment)
+app.get('/api/gps/unlinked-devices', async (req, res) => {
+    try {
+        const assignments = dbAvailable ? await getTrailerAssignments() : [];
+        const linkedDeviceIds = new Set(assignments.filter(a => a.ic2_device_id).map(a => a.ic2_device_id));
+
+        const unlinked = Array.from(pepwaveCache.values())
+            .filter(dev => dev.id && !linkedDeviceIds.has(dev.id))
+            .map(dev => ({ id: dev.id, name: dev.name, sn: dev.sn, online: dev.online }));
+
+        res.json({ success: true, devices: unlinked });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Manually link an IC2 device to a trailer assignment
+app.post('/api/gps/link-device', async (req, res) => {
+    try {
+        const { site_id, ic2_device_id } = req.body;
+        if (!site_id || !ic2_device_id) {
+            return res.status(400).json({ success: false, error: 'site_id and ic2_device_id required' });
+        }
+        if (!dbAvailable) {
+            return res.status(500).json({ success: false, error: 'Database not available' });
+        }
+
+        const assignment = await linkIc2Device(site_id, ic2_device_id);
+        if (!assignment) {
+            return res.status(404).json({ success: false, error: 'Trailer assignment not found' });
+        }
+
+        // Update in-memory map
+        ic2DeviceIdToSiteId.set(ic2_device_id, site_id);
+
+        res.json({ success: true, assignment });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ============================================================
 // Maintenance API
 // ============================================================
@@ -1820,12 +1981,15 @@ async function pollAllSites() {
                     const consumedAh = extractDiagValue(records, 'CE');
                     const batteryVoltage = extractDiagValue(records, 'V') ?? extractDiagValue(records, 'bv');
 
-                    // Extract GPS coordinates
-                    const latitude = extractDiagValue(records, 'lt') ?? site.latitude ?? null;
-                    const longitude = extractDiagValue(records, 'lg') ?? site.longitude ?? null;
-
-                    if (latitude != null && longitude != null) {
-                        gpsCache.set(site.idSite, { latitude, longitude, updatedAt: Date.now() });
+                    // GPS: only use IC2 Peplink as authoritative source.
+                    // VRM coordinates are often stale/default. Only seed gpsCache
+                    // from VRM if IC2 hasn't provided coordinates yet.
+                    if (!gpsCache.has(site.idSite)) {
+                        const latitude = extractDiagValue(records, 'lt') ?? site.latitude ?? null;
+                        const longitude = extractDiagValue(records, 'lg') ?? site.longitude ?? null;
+                        if (latitude != null && longitude != null) {
+                            gpsCache.set(site.idSite, { latitude, longitude, updatedAt: Date.now() });
+                        }
                     }
 
                     const snapshot = {
@@ -1867,9 +2031,9 @@ async function pollAllSites() {
                         try {
                             await insertSnapshot({ ...snapshot, raw_battery: null, raw_solar: null });
                         } catch (dbErr) { /* in memory */ }
-                        // Persist GPS + trailer assignment
+                        // Persist trailer assignment (GPS comes from IC2, pass null to preserve existing)
                         try {
-                            await upsertTrailerAssignment(site.idSite, site.name, latitude, longitude);
+                            await upsertTrailerAssignment(site.idSite, site.name, null, null);
                         } catch (dbErr) { /* non-critical */ }
                     }
 
@@ -2037,6 +2201,7 @@ async function pollIc2Devices() {
             };
 
             pepwaveCache.set(dev.name, record);
+            ic2DeviceIdToName.set(dev.id, dev.name);
 
             // Track offline duration
             if (record.online) {
@@ -2093,22 +2258,13 @@ async function pollIc2Devices() {
                                 cached.latitude = loc.la;
                                 cached.longitude = loc.lo;
                             }
-                            // Match to VRM trailer by name
-                            const vrmSite = vrmSites.find(s => s.name === dev.name);
-                            if (vrmSite) {
-                                gpsCache.set(vrmSite.idSite, { latitude: loc.la, longitude: loc.lo, updatedAt: Date.now() });
-                                gpsMatched++;
-                                if (dbAvailable) {
-                                    try {
-                                        await upsertTrailerAssignment(vrmSite.idSite, vrmSite.name, loc.la, loc.lo);
-                                    } catch (e) { /* non-critical */ }
-                                }
-                            } else if (dbAvailable) {
-                                // IC2-only device (no VRM match) — use negative IC2 device ID
-                                const syntheticId = -dev.id;
-                                gpsCache.set(syntheticId, { latitude: loc.la, longitude: loc.lo, updatedAt: Date.now() });
+                            // Resolve using stored IC2 device ID linkage, fall back to name match
+                            const { siteId, siteName } = resolveIc2DeviceToSiteId(dev, vrmSites);
+                            gpsCache.set(siteId, { latitude: loc.la, longitude: loc.lo, updatedAt: Date.now() });
+                            if (siteId > 0) gpsMatched++;
+                            if (dbAvailable) {
                                 try {
-                                    await upsertTrailerAssignment(syntheticId, dev.name, loc.la, loc.lo);
+                                    await upsertTrailerAssignment(siteId, siteName, loc.la, loc.lo, null, dev.id);
                                 } catch (e) { /* non-critical */ }
                             }
                         }
@@ -2128,15 +2284,11 @@ async function pollIc2Devices() {
         if (dbAvailable && sitesCache) {
             const vrmSites = sitesCache.records || [];
             for (const dev of devices) {
-                const vrmSite = vrmSites.find(s => s.name === dev.name);
-                if (!vrmSite) {
-                    const syntheticId = -dev.id;
-                    // Only insert if not already covered by GPS section above
-                    if (!gpsCache.has(syntheticId)) {
-                        try {
-                            await upsertTrailerAssignment(syntheticId, dev.name, null, null);
-                        } catch (e) { /* non-critical */ }
-                    }
+                const { siteId } = resolveIc2DeviceToSiteId(dev, vrmSites);
+                if (siteId < 0 && !gpsCache.has(siteId)) {
+                    try {
+                        await upsertTrailerAssignment(siteId, dev.name, null, null, null, dev.id);
+                    } catch (e) { /* non-critical */ }
                 }
             }
         }
@@ -3013,6 +3165,19 @@ async function start() {
             }
         } catch (seedErr) {
             console.warn('  ⚠ Could not seed admin user:', seedErr.message);
+        }
+
+        // Load IC2 device linkages into memory
+        try {
+            const assignments = await getTrailerAssignments();
+            for (const a of assignments) {
+                if (a.ic2_device_id != null) {
+                    ic2DeviceIdToSiteId.set(a.ic2_device_id, a.site_id);
+                }
+            }
+            console.log(`  ✓ Loaded ${ic2DeviceIdToSiteId.size} IC2 device linkages`);
+        } catch (linkErr) {
+            console.warn('  ⚠ Could not load IC2 linkages:', linkErr.message);
         }
     }
 

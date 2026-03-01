@@ -130,6 +130,13 @@ export async function initDb() {
       ON trailer_assignments(job_site_id)
     `);
 
+        // Add IC2 device ID column for persistent GPS binding
+        await client.query(`ALTER TABLE trailer_assignments ADD COLUMN IF NOT EXISTS ic2_device_id INTEGER`);
+        await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_trailer_assignments_ic2_device
+      ON trailer_assignments(ic2_device_id) WHERE ic2_device_id IS NOT NULL
+    `);
+
         console.log('  ✓ Job sites and trailer assignments tables ready');
 
         // Maintenance logs table
@@ -765,21 +772,31 @@ export async function getTrailersByJobSite(jobSiteId) {
     return result.rows;
 }
 
-export async function upsertTrailerAssignment(siteId, siteName, latitude, longitude, jobSiteId = null) {
+export async function upsertTrailerAssignment(siteId, siteName, latitude, longitude, jobSiteId = null, ic2DeviceId = null) {
     if (!pool) return null;
     const result = await pool.query(
-        `INSERT INTO trailer_assignments (site_id, site_name, latitude, longitude, job_site_id, assigned_at)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO trailer_assignments (site_id, site_name, latitude, longitude, job_site_id, ic2_device_id, assigned_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (site_id) DO UPDATE SET
            site_name = $2,
            latitude = COALESCE($3, trailer_assignments.latitude),
            longitude = COALESCE($4, trailer_assignments.longitude),
            job_site_id = CASE WHEN trailer_assignments.manual_override THEN trailer_assignments.job_site_id ELSE COALESCE($5, trailer_assignments.job_site_id) END,
-           assigned_at = $6
+           ic2_device_id = COALESCE($6, trailer_assignments.ic2_device_id),
+           assigned_at = $7
          RETURNING *`,
-        [siteId, siteName, latitude, longitude, jobSiteId, Date.now()]
+        [siteId, siteName, latitude, longitude, jobSiteId, ic2DeviceId, Date.now()]
     );
     return result.rows[0];
+}
+
+export async function linkIc2Device(siteId, ic2DeviceId) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `UPDATE trailer_assignments SET ic2_device_id = $1, assigned_at = $2 WHERE site_id = $3 RETURNING *`,
+        [ic2DeviceId, Date.now(), siteId]
+    );
+    return result.rows[0] || null;
 }
 
 export async function assignTrailerToJobSite(siteId, jobSiteId, manual = false) {
