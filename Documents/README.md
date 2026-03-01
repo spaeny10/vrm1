@@ -1,6 +1,6 @@
-# BVIM Dashboard
+# BIGView OMNI — Fleet Management
 
-A real-time fleet monitoring dashboard for Victron Energy solar systems and Pepwave cellular routers. Features AI-powered natural language queries, GPS tracking via IC2 Peplink, and fleet intelligence analytics.
+A real-time fleet management platform for Victron Energy solar systems and Pepwave cellular routers. Features AI-powered natural language queries, GPS tracking via IC2 Peplink, fleet intelligence analytics, and deployment lifecycle management.
 
 ## Features
 
@@ -183,7 +183,7 @@ VRM1/
 │   └── db.js             # Database connection, schema, upsert functions
 ├── src/
 │   ├── components/
-│   │   ├── Sidebar.jsx       # Navigation sidebar with BVIM branding
+│   │   ├── Sidebar.jsx       # Navigation sidebar with BIGView OMNI branding
 │   │   ├── AuthProvider.jsx  # JWT auth context
 │   │   ├── ErrorBoundary.jsx # React error boundary
 │   │   └── QueryBar.jsx      # AI-powered natural language search
@@ -198,7 +198,7 @@ VRM1/
 │   │   ├── TrailerDetail.jsx    # Per-trailer detail view
 │   │   ├── MaintenancePage.jsx  # Maintenance task board
 │   │   ├── Settings.jsx         # Settings + GPS verification
-│   │   ├── LoginPage.jsx        # Login with BVIM branding
+│   │   ├── LoginPage.jsx        # Login with BIGView OMNI branding
 │   │   └── NotFound.jsx         # 404 page
 │   ├── hooks/
 │   │   └── useApiPolling.js  # Polling hook for real-time data

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the BVIM Dashboard.
+All notable changes to BIGView OMNI.
 
 ---
 
@@ -16,8 +16,8 @@ All notable changes to the BVIM Dashboard.
 - **Geographic Query Guidance** — FLEET_SCHEMA updated with instructions to use `job_sites.address` for state/location filtering instead of site names. Added note that HQ is in Kansas.
 
 ### Changed
-- **Rebranded to BVIM** — App name changed from "VRM Fleet Dashboard" to "BVIM Dashboard" throughout (sidebar, login, loading screen, page title, package.json).
-- **Mountain Logo** — Lightning bolt icon replaced with mountain logo (3 overlapping triangles: dark, red, gold).
+- **Rebranded to BIGView OMNI** — App name changed to "BIGView OMNI — Fleet Management" throughout (sidebar, login, loading screen, page title, package.json).
+- **Official BIGView Logo** — Mountain logo replaced with official BIGView company logo.
 - **Intelligence Tab Default** — Intelligence tab moved to first position in Fleet Details and set as the default active tab.
 - **IC2 as Sole GPS Authority** — VRM poll no longer writes GPS coordinates. IC2 Peplink is the exclusive source of GPS data. VRM only seeds GPS cache if IC2 hasn't provided coordinates yet.
 - **Dashboard Spacing** — Increased gaps between KPI cards (20px), action queue padding (20px 24px), site grid gap (20px), and fleet controls margin.

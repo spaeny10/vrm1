@@ -26,8 +26,8 @@ export default function LoginPage() {
             <form className="login-card" onSubmit={handleSubmit}>
                 <div className="login-brand">
                     <img src="/logo.webp" alt="BIGView" className="login-logo-img" />
-                    <h1 className="login-title">BVIM Dashboard</h1>
-                    <p className="login-subtitle">Sign in to continue</p>
+                    <h1 className="login-title">BIGView OMNI</h1>
+                    <p className="login-subtitle">Fleet Management — Sign in to continue</p>
                 </div>
 
                 {error && <div className="login-error">{error}</div>}
