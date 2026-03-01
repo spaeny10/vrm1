@@ -273,6 +273,8 @@ function FleetOverview() {
                 </p>
             </div>
 
+            <QueryBar />
+
             <div className="kpi-row">
                 <KpiCard title="Job Sites" value={kpis.jobSiteCount} color="blue" />
                 <KpiCard title="Trailers Online" value={`${kpis.trailersOnline}/${kpis.totalTrailers}`} color="green" />
@@ -355,8 +357,6 @@ function FleetOverview() {
                     )}
                 </div>
             )}
-
-            <QueryBar />
 
             <div className="fleet-controls">
                 <div className="search-box">
