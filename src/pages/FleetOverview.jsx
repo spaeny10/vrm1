@@ -24,10 +24,15 @@ function FleetOverview() {
     const fetchHealthGradesFn = useCallback(() => fetchHealthGrades(), [])
     const { data: healthGradesData } = useApiPolling(fetchHealthGradesFn, 60000)
     const healthGradesMap = useMemo(() => {
-        const map = {}
-        const grades = healthGradesData?.grades || []
-        grades.forEach(g => { map[g.site_id] = g })
-        return map
+        const grades = healthGradesData?.grades
+        if (!grades || typeof grades !== 'object') return {}
+        // Backend returns { siteId: gradeObj } already as a map
+        if (Array.isArray(grades)) {
+            const map = {}
+            grades.forEach(g => { map[g.site_id] = g })
+            return map
+        }
+        return grades
     }, [healthGradesData])
 
     // Action queue computed values
