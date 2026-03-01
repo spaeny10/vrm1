@@ -13,7 +13,7 @@ function FleetOverview() {
     const [sortBy, setSortBy] = useState('name')
     const [filterAlarm, setFilterAlarm] = useState('all')
     const [searchTerm, setSearchTerm] = useState('')
-    const [actionQueueOpen, setActionQueueOpen] = useState(true)
+    const [actionQueueOpen, setActionQueueOpen] = useState(false)
     const [deploymentFilter, setDeploymentFilter] = useState(null) // null | 'billing' | 'standby' | 'hq' | 'pickup'
 
     // Action queue data
