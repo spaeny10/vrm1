@@ -202,7 +202,7 @@ let initialClusteringDone = false;
 const socStartOfDay = new Map();
 
 // Consumption accumulator: siteId -> { date, wh, lastTimestamp }
-// Integrates AC consumption power over time when CE diagnostic unavailable
+// Integrates DC load power over time when CE diagnostic unavailable
 const consumptionAccumulator = new Map();
 
 // ============================================================
@@ -423,7 +423,7 @@ function todayStr() {
     return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, batterySoc, acConsumptionW = null, loadCurrent = null) {
+function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, batterySoc, dcLoadW = null, loadCurrent = null) {
     const date = todayStr();
     const now = Date.now();
     if (!dailyEnergy.has(siteId)) {
@@ -441,10 +441,10 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
         consumptionSource = 'CE diagnostic';
     }
 
-    // Tier 2: Accumulate AC consumption power over time (Riemann sum)
+    // Tier 2: Accumulate DC load power over time (Riemann sum)
     if (consumedWh === null) {
-        // Determine instantaneous consumption watts from available sources
-        let consumptionW = acConsumptionW;
+        // Determine instantaneous DC load watts from available sources
+        let consumptionW = dcLoadW;
         if (consumptionW === null && loadCurrent !== null && voltage !== null) {
             consumptionW = Math.abs(loadCurrent) * voltage;
         }
@@ -459,7 +459,7 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
             acc.lastTimestamp = now;
             if (acc.wh > 0) {
                 consumedWh = Math.round(acc.wh);
-                consumptionSource = 'AC power accumulation';
+                consumptionSource = 'DC power accumulation';
             }
         } else {
             // Start new accumulator for this day
@@ -1915,7 +1915,7 @@ app.post('/api/analyze/trailer/:id', async (req, res) => {
             `Charge State: ${fmt(snapshot.charge_state)}`,
             '',
             '=== DEVICE STATUS ===',
-            `AC Consumption (now): ${fmt(snapshot.ac_consumption_watts, 'W')}`,
+            `DC Load Power (now): ${fmt(snapshot.dc_load_watts, 'W')}`,
             `Load Current: ${fmt(snapshot.load_current, 'A')}`,
             `Load Output: ${fmt(snapshot.load_state)}`,
             `Inverter Mode: ${fmt(snapshot.inverter_mode)}`,
@@ -1981,7 +1981,7 @@ Consider:
 - Any temperature or voltage concerns?
 - Are there active alarms or error codes that need attention?
 - What is the inverter mode and is the load output functioning?
-- How reliable is the consumption data? (Check the "Consumption Data Source" — CE diagnostic is most accurate, AC power accumulation and SOC delta are estimates)
+- How reliable is the consumption data? (Check the "Consumption Data Source" — CE diagnostic is most accurate, DC power accumulation and SOC delta are estimates)
 - If consumption data shows N/A, note that autonomy calculations are unavailable and recommend investigating load metering
 - How does lifetime yield compare to expected cumulative production for the trailer's age?
 
@@ -2054,7 +2054,7 @@ async function pollAllSites() {
                     const batteryVoltage = extractDiagValue(records, 'V') ?? extractDiagValue(records, 'bv');
 
                     // Extended diagnostics for richer AI analysis
-                    const acConsumptionW = extractDiagValue(records, 'Pc');
+                    const dcLoadW = extractDiagValue(records, 'Pc');  // DC load power (watts)
                     const loadCurrent = extractDiagValue(records, 'IL');
                     const loadState = extractDiagValue(records, 'LOAD');
                     const lifetimeYieldKwh = extractDiagValue(records, 'H19');
@@ -2090,7 +2090,7 @@ async function pollAllSites() {
                         charge_state: extractDiagValue(records, 'ScS'),
                         consumed_ah: consumedAh,
                         // Extended diagnostics
-                        ac_consumption_watts: acConsumptionW,
+                        dc_load_watts: dcLoadW,
                         load_current: loadCurrent,
                         load_state: loadState,
                         lifetime_yield_kwh: lifetimeYieldKwh,
@@ -2102,7 +2102,7 @@ async function pollAllSites() {
                     };
 
                     snapshotCache.set(site.idSite, snapshot);
-                    updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage, snapshot.battery_soc, acConsumptionW, loadCurrent);
+                    updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage, snapshot.battery_soc, dcLoadW, loadCurrent);
 
                     if (yieldYesterday !== null) {
                         const yesterday = new Date();
@@ -2129,7 +2129,7 @@ async function pollAllSites() {
                                     error_code: errorCode,
                                     load_current: loadCurrent,
                                     load_state: loadState,
-                                    ac_consumption_watts: acConsumptionW,
+                                    dc_load_watts: dcLoadW,
                                     inverter_mode: inverterMode,
                                 },
                                 raw_solar: {
