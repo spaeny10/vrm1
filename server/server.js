@@ -1132,6 +1132,64 @@ app.post('/api/settings/purge', async (req, res) => {
 });
 
 // ============================================================
+// Fleet Deployment Summary
+// ============================================================
+
+app.get('/api/fleet/deployment', async (req, res) => {
+    try {
+        const jobSites = await getJobSites();
+        const assignments = await getTrailerAssignments();
+
+        const assignmentsByJobSite = new Map();
+        for (const a of assignments) {
+            if (!assignmentsByJobSite.has(a.job_site_id)) {
+                assignmentsByJobSite.set(a.job_site_id, []);
+            }
+            assignmentsByJobSite.get(a.job_site_id).push(a);
+        }
+
+        let activeBillingSites = 0, activeBillingTrailers = 0;
+        let standbySites = 0, standbyTrailers = 0;
+        let hqTrailers = 0;
+        let awaitingPickupSites = 0, awaitingPickupTrailers = 0;
+
+        for (const js of jobSites) {
+            const trailerCount = (assignmentsByJobSite.get(js.id) || []).length;
+
+            if (js.is_headquarters) {
+                hqTrailers += trailerCount;
+                continue;
+            }
+
+            if (js.status === 'active') {
+                activeBillingSites++;
+                activeBillingTrailers += trailerCount;
+            } else if (js.status === 'standby') {
+                standbySites++;
+                standbyTrailers += trailerCount;
+            } else if (js.status === 'completed') {
+                // Completed but not yet picked up
+                if (!js.pickup_date || new Date(js.pickup_date) >= new Date(new Date().toDateString())) {
+                    awaitingPickupSites++;
+                    awaitingPickupTrailers += trailerCount;
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            active_billing: { sites: activeBillingSites, trailers: activeBillingTrailers },
+            standby: { sites: standbySites, trailers: standbyTrailers },
+            available_at_hq: { trailers: hqTrailers },
+            awaiting_pickup: { sites: awaitingPickupSites, trailers: awaitingPickupTrailers },
+            total_deployed: { sites: activeBillingSites + standbySites, trailers: activeBillingTrailers + standbyTrailers },
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
 // Job Sites API
 // ============================================================
 
@@ -1326,6 +1384,11 @@ app.get('/api/map/sites', async (req, res) => {
                     latitude: js.latitude,
                     longitude: js.longitude,
                     status: js.status,
+                    is_headquarters: !!js.is_headquarters,
+                    delivery_date: js.delivery_date || null,
+                    active_date: js.active_date || null,
+                    calloff_date: js.calloff_date || null,
+                    pickup_date: js.pickup_date || null,
                     trailer_count: trailers.length,
                     trailers_online: trailersOnline,
                     avg_soc: socCount > 0 ? +(totalSoc / socCount).toFixed(1) : null,

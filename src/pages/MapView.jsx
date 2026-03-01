@@ -68,9 +68,18 @@ const US_STATE_ABBRS = {
     DC:'District of Columbia',
 }
 
+const DEPLOYMENT_COLORS = {
+    active: '#2ecc71',
+    standby: '#f1c40f',
+    completed: '#7f8c8d',
+}
+
+const HQ_COLOR = '#9b59b6'
+
 function MapView() {
     const navigate = useNavigate()
     const [statusFilter, setStatusFilter] = useState('all')
+    const [deploymentFilter, setDeploymentFilter] = useState('all')
     const [searchTerm, setSearchTerm] = useState('')
     const [expandedStates, setExpandedStates] = useState({})
 
@@ -84,23 +93,31 @@ function MapView() {
         if (statusFilter !== 'all') {
             result = result.filter(m => m.worst_status === statusFilter)
         }
+        if (deploymentFilter !== 'all') {
+            if (deploymentFilter === 'hq') {
+                result = result.filter(m => m.is_headquarters)
+            } else {
+                result = result.filter(m => m.status === deploymentFilter && !m.is_headquarters)
+            }
+        }
         if (searchTerm) {
             const term = searchTerm.toLowerCase()
             result = result.filter(m => m.name.toLowerCase().includes(term))
         }
         return result
-    }, [markers, statusFilter, searchTerm])
+    }, [markers, statusFilter, deploymentFilter, searchTerm])
 
-    // Group sites by state
+    // Group sites by state (exclude HQ from totals)
     const stateGroups = useMemo(() => {
         const groups = {}
         for (const site of filtered) {
+            if (site.is_headquarters) continue
             const state = extractState(site)
             if (!groups[state]) groups[state] = []
             groups[state].push(site)
         }
         // Sort states alphabetically, compute totals
-        return Object.keys(groups).sort().map(state => {
+        const stateList = Object.keys(groups).sort().map(state => {
             const sites = groups[state]
             const totalTrailers = sites.reduce((s, m) => s + m.trailer_count, 0)
             const totalOnline = sites.reduce((s, m) => s + m.trailers_online, 0)
@@ -113,6 +130,18 @@ function MapView() {
                 : sites.some(s => s.worst_status === 'healthy') ? 'healthy' : 'unknown'
             return { state, sites, totalTrailers, totalOnline, avgSoc, worstStatus }
         })
+        // Add HQ as a separate group at the end if any HQ sites are in filtered
+        const hqSites = filtered.filter(s => s.is_headquarters)
+        if (hqSites.length > 0) {
+            const totalTrailers = hqSites.reduce((s, m) => s + m.trailer_count, 0)
+            const totalOnline = hqSites.reduce((s, m) => s + m.trailers_online, 0)
+            const socValues = hqSites.filter(m => m.avg_soc != null).map(m => m.avg_soc)
+            const avgSoc = socValues.length > 0
+                ? +(socValues.reduce((s, v) => s + v, 0) / socValues.length).toFixed(1)
+                : null
+            stateList.push({ state: 'Headquarters', sites: hqSites, totalTrailers, totalOnline, avgSoc, worstStatus: 'healthy', isHq: true })
+        }
+        return stateList
     }, [filtered])
 
     const toggleState = (state) => {
@@ -172,6 +201,23 @@ function MapView() {
                         </button>
                     ))}
                 </div>
+                <div className="map-status-filters">
+                    {['all', 'active', 'standby', 'completed', 'hq'].map(s => (
+                        <button
+                            key={s}
+                            className={`map-filter-btn ${deploymentFilter === s ? 'map-filter-active' : ''}`}
+                            onClick={() => setDeploymentFilter(s)}
+                            style={s !== 'all' ? { '--filter-color': s === 'hq' ? HQ_COLOR : DEPLOYMENT_COLORS[s] } : {}}
+                        >
+                            {s === 'all' ? 'All Sites' : s === 'hq' ? 'HQ' : s.charAt(0).toUpperCase() + s.slice(1)}
+                            <span className="map-filter-count">
+                                {s === 'all' ? markers.length
+                                    : s === 'hq' ? markers.filter(m => m.is_headquarters).length
+                                    : markers.filter(m => m.status === s && !m.is_headquarters).length}
+                            </span>
+                        </button>
+                    ))}
+                </div>
             </div>
 
             {/* Map */}
@@ -193,14 +239,14 @@ function MapView() {
                             key={site.id}
                             center={[site.latitude, site.longitude]}
                             radius={Math.max(12, 8 + site.trailer_count * 3)}
-                            fillColor={STATUS_COLORS[site.worst_status] || STATUS_COLORS.unknown}
-                            color="rgba(255,255,255,0.3)"
-                            weight={2}
+                            fillColor={site.is_headquarters ? HQ_COLOR : STATUS_COLORS[site.worst_status] || STATUS_COLORS.unknown}
+                            color={site.is_headquarters ? 'rgba(155,89,182,0.5)' : 'rgba(255,255,255,0.3)'}
+                            weight={site.is_headquarters ? 3 : 2}
                             fillOpacity={0.85}
                         >
                             <Popup className="map-popup">
                                 <div className="map-popup-content">
-                                    <h3>{site.name}</h3>
+                                    <h3>{site.name}{site.is_headquarters && <span className="hq-badge">HQ</span>}</h3>
                                     <div className="map-popup-stats">
                                         <div className="map-popup-stat">
                                             <span className="map-popup-label">Trailers</span>
@@ -244,7 +290,8 @@ function MapView() {
                                 <th>Site</th>
                                 <th>Trailers</th>
                                 <th>Avg SOC</th>
-                                <th>Status</th>
+                                <th>Deployment</th>
+                                <th>Health</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -253,7 +300,7 @@ function MapView() {
                                 return (
                                     <React.Fragment key={group.state}>
                                         <tr
-                                            className="map-state-row"
+                                            className={`map-state-row ${group.isHq ? 'map-state-hq' : ''}`}
                                             onClick={() => toggleState(group.state)}
                                         >
                                             <td className="map-state-name">
@@ -265,10 +312,12 @@ function MapView() {
                                                     <polyline points="9 18 15 12 9 6" />
                                                 </svg>
                                                 {group.state}
+                                                {group.isHq && <span className="hq-badge">HQ</span>}
                                                 <span className="map-state-site-count">{group.sites.length} site{group.sites.length !== 1 ? 's' : ''}</span>
                                             </td>
                                             <td className="map-state-total">{group.totalOnline}/{group.totalTrailers}</td>
                                             <td className="map-state-total">{group.avgSoc != null ? `${group.avgSoc}%` : '--'}</td>
+                                            <td></td>
                                             <td>
                                                 <span className={`jobsite-status-badge jobsite-status-${group.worstStatus}`}>
                                                     {group.worstStatus}
@@ -278,12 +327,20 @@ function MapView() {
                                         {isExpanded && group.sites.map(site => (
                                             <tr
                                                 key={site.id}
-                                                className="map-site-row"
+                                                className={`map-site-row ${site.is_headquarters ? 'map-site-hq' : ''}`}
                                                 onClick={() => navigate(`/site/${site.id}`)}
                                             >
-                                                <td className="map-site-name map-site-indent">{site.name}</td>
+                                                <td className="map-site-name map-site-indent">
+                                                    {site.name}
+                                                    {site.is_headquarters && <span className="hq-badge">HQ</span>}
+                                                </td>
                                                 <td>{site.trailers_online}/{site.trailer_count}</td>
                                                 <td>{site.avg_soc != null ? `${site.avg_soc}%` : '--'}</td>
+                                                <td>
+                                                    <span className={`deployment-status-badge deployment-${site.status}`}>
+                                                        {site.status}
+                                                    </span>
+                                                </td>
                                                 <td>
                                                     <span className={`jobsite-status-badge jobsite-status-${site.worst_status}`}>
                                                         {site.worst_status}

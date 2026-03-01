@@ -2934,6 +2934,110 @@ body {
   color: var(--text-primary);
 }
 
+/* ========== Deployment Styles ========== */
+
+.deployment-kpi-section {
+  margin-bottom: 24px;
+}
+
+.deployment-kpi-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+/* HQ Badge */
+.hq-badge {
+  display: inline-block;
+  background: rgba(155, 89, 182, 0.2);
+  color: #9b59b6;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+}
+
+.btn-hq-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 1px 4px;
+  margin-left: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.jobsite-mgmt-row:hover .btn-hq-toggle,
+tr:hover .btn-hq-toggle {
+  opacity: 0.6;
+}
+
+.btn-hq-toggle:hover {
+  opacity: 1 !important;
+  color: #9b59b6;
+}
+
+/* Deployment status badges */
+.deployment-status-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.deployment-active { background: rgba(46, 204, 113, 0.15); color: #2ecc71; }
+.deployment-standby { background: rgba(241, 196, 15, 0.15); color: #f1c40f; }
+.deployment-completed { background: rgba(127, 140, 141, 0.15); color: #7f8c8d; }
+
+/* HQ state row in map table */
+.map-state-hq {
+  background: rgba(155, 89, 182, 0.04);
+}
+
+.map-state-hq:hover {
+  background: rgba(155, 89, 182, 0.08);
+}
+
+.map-site-hq {
+  opacity: 0.7;
+}
+
+/* Date input styling for Settings */
+.jobsite-mgmt-date {
+  min-width: 110px;
+}
+
+.date-input {
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 3px 6px;
+  border-radius: 4px;
+  width: 110px;
+  cursor: pointer;
+}
+
+.date-input:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.date-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 /* ========== Maintenance Page ========== */
 
 .maint-tabs {

@@ -139,6 +139,10 @@ export async function fetchFleetCombined() {
     return apiFetch(`${API_BASE}/fleet/combined`);
 }
 
+export async function fetchDeploymentSummary() {
+    return apiFetch(`${API_BASE}/fleet/deployment`);
+}
+
 export async function fetchPepwaveHistory(name, start, end) {
     return apiFetch(`${API_BASE}/fleet/network/${encodeURIComponent(name)}/history?start=${start}&end=${end}`);
 }

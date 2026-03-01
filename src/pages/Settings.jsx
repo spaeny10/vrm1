@@ -263,6 +263,24 @@ function Settings() {
         }
     }
 
+    const handleDateChange = async (siteId, field, value) => {
+        try {
+            await updateJobSite(siteId, { [field]: value || null })
+            refetchJobSites()
+        } catch (err) {
+            toast.error('Error updating date: ' + err.message)
+        }
+    }
+
+    const handleToggleHq = async (siteId, currentValue) => {
+        try {
+            await updateJobSite(siteId, { is_headquarters: !currentValue })
+            refetchJobSites()
+        } catch (err) {
+            toast.error('Error updating HQ status: ' + err.message)
+        }
+    }
+
     const handleReassignTrailer = async (trailerId, newJobSiteId) => {
         try {
             await assignTrailer(newJobSiteId, trailerId)
@@ -525,6 +543,10 @@ function Settings() {
                                             <th>Name</th>
                                             <th>Trailers</th>
                                             <th>Status</th>
+                                            <th>Delivery</th>
+                                            <th>Active</th>
+                                            <th>Call-off</th>
+                                            <th>Pickup</th>
                                             <th>Address</th>
                                         </tr>
                                     </thead>
@@ -561,6 +583,25 @@ function Settings() {
                                                                     {js.name}
                                                                 </span>
                                                             )}
+                                                            {js.is_headquarters && <span className="hq-badge">HQ</span>}
+                                                            {!js.is_headquarters && user?.role === 'admin' && (
+                                                                <button
+                                                                    className="btn-hq-toggle"
+                                                                    onClick={() => handleToggleHq(js.id, js.is_headquarters)}
+                                                                    title="Mark as headquarters"
+                                                                >
+                                                                    set HQ
+                                                                </button>
+                                                            )}
+                                                            {js.is_headquarters && user?.role === 'admin' && (
+                                                                <button
+                                                                    className="btn-hq-toggle"
+                                                                    onClick={() => handleToggleHq(js.id, js.is_headquarters)}
+                                                                    title="Remove headquarters flag"
+                                                                >
+                                                                    unset
+                                                                </button>
+                                                            )}
                                                         </td>
                                                         <td className="jobsite-mgmt-trailers">
                                                             <span
@@ -582,6 +623,38 @@ function Settings() {
                                                                 <option value="completed">Completed</option>
                                                             </select>
                                                         </td>
+                                                        <td className="jobsite-mgmt-date">
+                                                            <input
+                                                                type="date"
+                                                                className="date-input"
+                                                                value={js.delivery_date ? js.delivery_date.split('T')[0] : ''}
+                                                                onChange={e => handleDateChange(js.id, 'delivery_date', e.target.value)}
+                                                            />
+                                                        </td>
+                                                        <td className="jobsite-mgmt-date">
+                                                            <input
+                                                                type="date"
+                                                                className="date-input"
+                                                                value={js.active_date ? js.active_date.split('T')[0] : ''}
+                                                                onChange={e => handleDateChange(js.id, 'active_date', e.target.value)}
+                                                            />
+                                                        </td>
+                                                        <td className="jobsite-mgmt-date">
+                                                            <input
+                                                                type="date"
+                                                                className="date-input"
+                                                                value={js.calloff_date ? js.calloff_date.split('T')[0] : ''}
+                                                                onChange={e => handleDateChange(js.id, 'calloff_date', e.target.value)}
+                                                            />
+                                                        </td>
+                                                        <td className="jobsite-mgmt-date">
+                                                            <input
+                                                                type="date"
+                                                                className="date-input"
+                                                                value={js.pickup_date ? js.pickup_date.split('T')[0] : ''}
+                                                                onChange={e => handleDateChange(js.id, 'pickup_date', e.target.value)}
+                                                            />
+                                                        </td>
                                                         <td className="jobsite-mgmt-address">
                                                             {js.address || '—'}
                                                         </td>
@@ -589,7 +662,7 @@ function Settings() {
                                                     {isExpanded && trailers.map(t => (
                                                         <DraggableTrailerRow key={t.site_id} trailer={t} jobSite={js}>
                                                             <td className="trailer-assign-name">⠿ {t.site_name}</td>
-                                                            <td colSpan={3}>
+                                                            <td colSpan={7}>
                                                                 <select
                                                                     className="reassign-select"
                                                                     value={js.id}

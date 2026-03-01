@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades } from '../api/vrm'
+import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchDeploymentSummary } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
@@ -68,6 +68,10 @@ function FleetOverview() {
     const { data: jobSitesData, loading: jobSitesLoading, lastUpdated, refetch } = useApiPolling(fetchJobSitesFn, 30000)
     const jobSites = jobSitesData?.job_sites || []
 
+    // Deployment summary data
+    const fetchDeploymentFn = useCallback(() => fetchDeploymentSummary(), [])
+    const { data: deploymentData } = useApiPolling(fetchDeploymentFn, 30000)
+
     // Trailer-level data (for "All Trailers" view)
     const fetchSitesFn = useCallback(() => fetchSites(), [])
     const fetchLatestFn = useCallback(() => fetchFleetLatest(), [])
@@ -100,9 +104,10 @@ function FleetOverview() {
     }, [jobSites])
 
     // KPIs — computed from job sites when in sites view, trailers when in trailers view
+    // Exclude HQ from health KPIs
     const kpis = useMemo(() => {
         if (viewMode === 'sites') {
-            const activeSites = jobSites.filter(js => js.status === 'active')
+            const activeSites = jobSites.filter(js => js.status === 'active' && !js.is_headquarters)
             const atRisk = activeSites.filter(js => js.worst_status === 'critical').length
             const totalTrailers = activeSites.reduce((s, js) => s + js.trailer_count, 0)
             const trailersOnline = activeSites.reduce((s, js) => s + js.trailers_online, 0)
@@ -139,7 +144,7 @@ function FleetOverview() {
         })
 
         return {
-            jobSiteCount: jobSites.length,
+            jobSiteCount: jobSites.filter(js => !js.is_headquarters).length,
             totalTrailers: total,
             trailersOnline: online,
             atRisk: alarmCount,
@@ -148,9 +153,12 @@ function FleetOverview() {
         }
     }, [viewMode, jobSites, sites, snapshotMap])
 
-    // Filter + sort job sites
+    // Deployment KPIs from backend
+    const deployment = deploymentData || {}
+
+    // Filter + sort job sites (exclude completed from dashboard view)
     const filteredJobSites = useMemo(() => {
-        let result = [...jobSites]
+        let result = jobSites.filter(js => js.status !== 'completed')
 
         if (searchTerm) {
             const term = searchTerm.toLowerCase()
@@ -282,6 +290,39 @@ function FleetOverview() {
                 <KpiCard title="Fleet Avg SOC" value={kpis.avgSoc} unit="%" color="teal" />
                 <KpiCard title="Total Yield" value={kpis.totalYield} unit="kWh" color="yellow" />
             </div>
+
+            {/* Deployment KPIs */}
+            {deployment.active_billing && (
+                <div className="deployment-kpi-section">
+                    <h3 className="deployment-kpi-label">Deployment Status</h3>
+                    <div className="kpi-row">
+                        <KpiCard
+                            title="Actively Billing"
+                            value={`${deployment.active_billing.sites} sites`}
+                            unit={`${deployment.active_billing.trailers} trailers`}
+                            color="green"
+                        />
+                        <KpiCard
+                            title="Standby"
+                            value={`${deployment.standby?.sites || 0} sites`}
+                            unit={`${deployment.standby?.trailers || 0} trailers`}
+                            color="yellow"
+                        />
+                        <KpiCard
+                            title="Available at HQ"
+                            value={deployment.available_at_hq?.trailers || 0}
+                            unit="trailers"
+                            color="blue"
+                        />
+                        <KpiCard
+                            title="Awaiting Pickup"
+                            value={`${deployment.awaiting_pickup?.sites || 0} sites`}
+                            unit={`${deployment.awaiting_pickup?.trailers || 0} trailers`}
+                            color="red"
+                        />
+                    </div>
+                </div>
+            )}
 
             {/* Action Queue Section */}
             {actionItems.length > 0 && (

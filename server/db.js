@@ -139,6 +139,16 @@ export async function initDb() {
 
         console.log('  ✓ Job sites and trailer assignments tables ready');
 
+        // Add deployment management columns to job_sites
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS is_headquarters BOOLEAN DEFAULT FALSE`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS delivery_date DATE`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS active_date DATE`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS calloff_date DATE`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS pickup_date DATE`);
+        // Auto-flag Big View HQ as headquarters
+        await client.query(`UPDATE job_sites SET is_headquarters = TRUE WHERE name ILIKE '%big view hq%' AND (is_headquarters IS NULL OR is_headquarters = FALSE)`);
+        console.log('  ✓ Deployment management columns ready');
+
         // Add soc_start_of_day column for persistent consumption estimation
         await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS soc_start_of_day REAL`);
 
@@ -702,7 +712,8 @@ export async function getAllContentForEmbedding() {
 export async function getJobSites() {
     if (!pool) return [];
     const result = await pool.query(
-        `SELECT * FROM job_sites WHERE status != 'completed' ORDER BY name`
+        `SELECT * FROM job_sites ORDER BY
+            CASE WHEN status = 'active' THEN 0 WHEN status = 'standby' THEN 1 ELSE 2 END, name`
     );
     return result.rows;
 }
@@ -731,7 +742,7 @@ export async function updateJobSite(id, updates) {
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-        if (['name', 'latitude', 'longitude', 'address', 'status', 'notes'].includes(key)) {
+        if (['name', 'latitude', 'longitude', 'address', 'status', 'notes', 'is_headquarters', 'delivery_date', 'active_date', 'calloff_date', 'pickup_date'].includes(key)) {
             fields.push(`${key} = $${idx}`);
             values.push(value);
             idx++;
