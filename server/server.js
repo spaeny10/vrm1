@@ -95,7 +95,7 @@ app.use(express.static(distPath));
 
 // Apply auth to all /api routes except login
 app.use('/api', (req, res, next) => {
-    if (req.path === '/auth/login' || req.path === '/auth/google') return next();
+    if (req.path === '/auth/login' || req.path === '/auth/google' || req.path === '/debug/energy') return next();
     authMiddleware(req, res, next);
 });
 
