@@ -2566,6 +2566,112 @@ body {
   color: var(--text-primary);
 }
 
+.view-toggle-btn svg {
+  vertical-align: middle;
+}
+
+/* ============================================================
+   Fleet List / Table View
+   ============================================================ */
+.fleet-list {
+  overflow-x: auto;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.fleet-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.fleet-table thead th {
+  background: rgba(255, 255, 255, 0.04);
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.fleet-table thead th:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.fleet-table thead th.sorted {
+  color: var(--accent);
+}
+
+.fleet-table-row {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.fleet-table-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.fleet-table-row td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+
+.fleet-table-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fleet-table-muted {
+  color: var(--text-muted);
+}
+
+.fleet-table-soc {
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.fleet-table-soc.soc-good {
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+}
+
+.fleet-table-soc.soc-warning {
+  background: rgba(241, 196, 15, 0.15);
+  color: #f1c40f;
+}
+
+.fleet-table-soc.soc-critical {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+}
+
+.fleet-table-net {
+  font-weight: 500;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.fleet-table-net.net-online {
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+}
+
+.fleet-table-net.net-offline {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+}
+
 /* ============================================================
    Job Site Card extras
    ============================================================ */
@@ -5894,10 +6000,15 @@ tr:hover .btn-hq-toggle {
   }
 
   /* Tables horizontal scroll */
+  .fleet-list,
   .jobsite-mgmt-table-wrapper,
   .maint-table-wrapper {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .fleet-table {
+    min-width: 700px;
   }
 
   /* Touch-friendly buttons and controls */

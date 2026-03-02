@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchDeploymentSummary } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
@@ -12,9 +13,11 @@ import { fetchFleetReportData } from '../api/vrm'
 import { useAuth } from '../components/AuthProvider'
 
 function FleetOverview() {
+    const navigate = useNavigate()
     const { user } = useAuth()
     const canEdit = user?.role === 'admin' || user?.role === 'technician'
     const [viewMode, setViewMode] = useState('sites') // 'sites' or 'trailers'
+    const [displayMode, setDisplayMode] = useState('grid') // 'grid' or 'list'
     const [sortBy, setSortBy] = useState('name')
     const [filterAlarm, setFilterAlarm] = useState('all')
     const [searchTerm, setSearchTerm] = useState('')
@@ -509,6 +512,31 @@ function FleetOverview() {
                     </button>
                 </div>
 
+                {/* Display Mode Toggle (Grid / List) */}
+                <div className="view-toggle">
+                    <button
+                        className={`view-toggle-btn ${displayMode === 'grid' ? 'active' : ''}`}
+                        onClick={() => setDisplayMode('grid')}
+                        title="Grid view"
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+                            <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+                        </svg>
+                    </button>
+                    <button
+                        className={`view-toggle-btn ${displayMode === 'list' ? 'active' : ''}`}
+                        onClick={() => setDisplayMode('list')}
+                        title="List view"
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" />
+                            <line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" />
+                            <line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
+                        </svg>
+                    </button>
+                </div>
+
                 <div className="control-group">
                     <label>Sort:</label>
                     <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
@@ -533,38 +561,115 @@ function FleetOverview() {
                 </div>
             </div>
 
-            <div className="site-grid">
-                {viewMode === 'sites' ? (
-                    <>
-                        {filteredJobSites.map(js => (
-                            <JobSiteCard key={js.id} jobSite={js} healthGrades={healthGradesMap} />
-                        ))}
-                        {filteredJobSites.length === 0 && (
-                            <div className="no-results">
-                                <p>No job sites found. GPS data needed for automatic clustering.</p>
-                            </div>
-                        )}
-                    </>
-                ) : (
-                    <>
-                        {filteredSites.map(site => (
-                            <TrailerCard
-                                key={site.idSite}
-                                site={site}
-                                snapshot={snapshotMap[site.idSite]}
-                                pepwave={pepwaveMap[site.name]}
-                                jobSiteName={trailerJobSiteMap[site.idSite]}
-                                healthGrade={healthGradesMap[site.idSite]}
-                            />
-                        ))}
-                        {filteredSites.length === 0 && (
-                            <div className="no-results">
-                                <p>No trailers match your filters</p>
-                            </div>
-                        )}
-                    </>
-                )}
-            </div>
+            {displayMode === 'list' ? (
+                <div className="fleet-list">
+                    <table className="fleet-table">
+                        <thead>
+                            <tr>
+                                <th onClick={() => setSortBy('name')} className={sortBy === 'name' ? 'sorted' : ''}>Trailer</th>
+                                <th>Job Site</th>
+                                <th onClick={() => setSortBy(sortBy === 'soc-desc' ? 'soc' : 'soc-desc')} className={sortBy.startsWith('soc') ? 'sorted' : ''}>SOC</th>
+                                <th>Voltage</th>
+                                <th onClick={() => setSortBy('solar')} className={sortBy === 'solar' ? 'sorted' : ''}>Solar</th>
+                                <th>Yield</th>
+                                <th>Charge</th>
+                                <th>Network</th>
+                                <th onClick={() => setSortBy('signal')} className={sortBy === 'signal' ? 'sorted' : ''}>Signal</th>
+                                <th>Grade</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {(viewMode === 'sites'
+                                ? filteredJobSites.flatMap(js => (js.trailers || []).map(t => {
+                                    const site = sites.find(s => s.idSite === t.site_id) || { idSite: t.site_id, name: t.site_name }
+                                    return { site, jobSiteName: js.name }
+                                }))
+                                : filteredSites.map(site => ({ site, jobSiteName: trailerJobSiteMap[site.idSite] }))
+                            ).map(({ site, jobSiteName }) => {
+                                const snap = snapshotMap[site.idSite]
+                                const pw = pepwaveMap[site.name]
+                                const grade = healthGradesMap[site.idSite]
+                                const soc = snap?.battery_soc
+                                const hasVrm = snap && (snap.battery_voltage != null || snap.solar_watts != null || (snap.battery_soc != null && snap.battery_soc > 0))
+                                return (
+                                    <tr key={site.idSite} onClick={() => navigate(`/trailer/${site.idSite}`)} className="fleet-table-row">
+                                        <td className="fleet-table-name">{site.name}</td>
+                                        <td className="fleet-table-muted">{jobSiteName || '—'}</td>
+                                        <td>
+                                            {soc != null ? (
+                                                <span className={`fleet-table-soc ${soc < 20 ? 'soc-critical' : soc < 50 ? 'soc-warning' : 'soc-good'}`}>
+                                                    {soc.toFixed(0)}%
+                                                </span>
+                                            ) : <span className="fleet-table-muted">—</span>}
+                                        </td>
+                                        <td>{snap?.battery_voltage != null ? `${Number(snap.battery_voltage).toFixed(1)}V` : '—'}</td>
+                                        <td>{snap?.solar_watts != null ? `${Math.round(snap.solar_watts)}W` : '—'}</td>
+                                        <td>{snap?.solar_yield_today != null ? `${Number(snap.solar_yield_today).toFixed(2)}` : '—'}</td>
+                                        <td className="fleet-table-muted">{snap?.charge_state || '—'}</td>
+                                        <td>
+                                            {pw ? (
+                                                <span className={`fleet-table-net ${pw.online ? 'net-online' : 'net-offline'}`}>
+                                                    {pw.online ? 'Online' : 'Offline'}
+                                                </span>
+                                            ) : hasVrm ? <span className="fleet-table-muted">—</span> : <span className="fleet-table-net net-online">Conn. Only</span>}
+                                        </td>
+                                        <td>
+                                            {pw?.rsrp ? (
+                                                <span className={pw.rsrp >= -90 ? 'netrow-good' : pw.rsrp >= -100 ? 'netrow-fair' : 'netrow-poor'}>
+                                                    {pw.rsrp} dBm
+                                                </span>
+                                            ) : '—'}
+                                        </td>
+                                        <td>
+                                            {grade ? (
+                                                <span className="health-grade-badge" style={{ backgroundColor: grade.color }}>
+                                                    {grade.grade}
+                                                </span>
+                                            ) : '—'}
+                                        </td>
+                                    </tr>
+                                )
+                            })}
+                        </tbody>
+                    </table>
+                    {((viewMode === 'sites' && filteredJobSites.length === 0) || (viewMode === 'trailers' && filteredSites.length === 0)) && (
+                        <div className="no-results"><p>No results match your filters</p></div>
+                    )}
+                </div>
+            ) : (
+                <div className="site-grid">
+                    {viewMode === 'sites' ? (
+                        <>
+                            {filteredJobSites.map(js => (
+                                <JobSiteCard key={js.id} jobSite={js} healthGrades={healthGradesMap} />
+                            ))}
+                            {filteredJobSites.length === 0 && (
+                                <div className="no-results">
+                                    <p>No job sites found. GPS data needed for automatic clustering.</p>
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            {filteredSites.map(site => (
+                                <TrailerCard
+                                    key={site.idSite}
+                                    site={site}
+                                    snapshot={snapshotMap[site.idSite]}
+                                    pepwave={pepwaveMap[site.name]}
+                                    jobSiteName={trailerJobSiteMap[site.idSite]}
+                                    healthGrade={healthGradesMap[site.idSite]}
+                                />
+                            ))}
+                            {filteredSites.length === 0 && (
+                                <div className="no-results">
+                                    <p>No trailers match your filters</p>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            )}
         </div>
     )
 }

@@ -216,6 +216,15 @@ const socStartOfDay = new Map();
 const consumptionAccumulator = new Map();
 
 // ============================================================
+// Helper: does this trailer have actual VRM/Victron data?
+// Trailers with only Peplink (no Victron) show 0%/null for everything and should be
+// excluded from energy/solar/battery KPIs.
+function hasVrmData(snapshot) {
+    if (!snapshot) return false;
+    return snapshot.battery_voltage != null || snapshot.solar_watts != null
+        || (snapshot.battery_soc != null && snapshot.battery_soc > 0);
+}
+
 // Trailer Hardware Specifications
 // ============================================================
 const TRAILER_SPECS = {
@@ -1486,7 +1495,7 @@ app.get('/api/job-sites', async (req, res) => {
                 if (isIc2Only) {
                     // IC2-only trailer — count as online if Pepwave is online
                     if (pw?.online) trailersOnline++;
-                } else if (snap) {
+                } else if (snap && hasVrmData(snap)) {
                     trailersOnline++;
                     if (snap.battery_soc != null) {
                         totalSoc += snap.battery_soc;
@@ -1627,7 +1636,7 @@ app.get('/api/map/sites', async (req, res) => {
 
                 for (const t of trailers) {
                     const snap = snapshotCache.get(t.site_id);
-                    if (snap) {
+                    if (snap && hasVrmData(snap)) {
                         trailersOnline++;
                         if (snap.battery_soc != null) {
                             totalSoc += snap.battery_soc;
@@ -1635,7 +1644,7 @@ app.get('/api/map/sites', async (req, res) => {
                             if (snap.battery_soc < 20) worstStatus = 'critical';
                             else if (snap.battery_soc < 50 && worstStatus !== 'critical') worstStatus = 'warning';
                         }
-                    } else {
+                    } else if (!snap) {
                         worstStatus = 'critical';
                     }
                 }
@@ -2010,12 +2019,13 @@ app.post('/api/analytics/backfill', requireRole('admin'), async (req, res) => {
 // ============================================================
 app.get('/api/fleet/dashboard', (req, res) => {
     const snapshots = Array.from(snapshotCache.values());
+    const vrmSnapshots = snapshots.filter(hasVrmData);
     const devices = Array.from(pepwaveCache.values());
 
     let totalSoc = 0, socCount = 0, totalSolar = 0;
     let onlineTrailers = 0, offlineTrailers = 0;
 
-    for (const s of snapshots) {
+    for (const s of vrmSnapshots) {
         if (s.battery_soc != null) {
             totalSoc += s.battery_soc;
             socCount++;
@@ -2133,8 +2143,9 @@ app.get('/api/fleet/intelligence', async (req, res) => {
         const locationEntries = Array.from(uniqueLocations.values()).slice(0, 10);
         await Promise.allSettled(locationEntries.map(loc => fetchSolarIrradiance(loc.lat, loc.lon)));
 
-        // Now compute intelligence for all trailers (weather is cached)
-        for (const [siteId] of snapshotCache) {
+        // Now compute intelligence for VRM-connected trailers only (weather is cached)
+        for (const [siteId, snap] of snapshotCache) {
+            if (!hasVrmData(snap)) continue;
             const intel = await computeTrailerIntelligence(siteId);
             if (intel) results.push(intel);
         }
@@ -3005,12 +3016,14 @@ app.post('/api/query', async (req, res) => {
         }
         const snapshotSummary = [];
         for (const [siteId, snap] of snapshotCache.entries()) {
+            if (!hasVrmData(snap)) continue;
             snapshotSummary.push(`${snap.site_name || 'Site ' + siteId}: SOC=${snap.battery_soc}%, ${snap.battery_voltage}V, solar=${snap.solar_watts}W, charge=${snap.charge_state}`);
         }
 
         // Build intelligence summary from computed metrics
         const intelSummary = [];
-        for (const [siteId] of snapshotCache) {
+        for (const [siteId, snap] of snapshotCache) {
+            if (!hasVrmData(snap)) continue;
             try {
                 const intel = await computeTrailerIntelligence(siteId);
                 if (intel) {
@@ -3327,8 +3340,9 @@ app.get('/api/action-queue', async (req, res) => {
             });
         }
 
-        // Source 2: Intelligence flags
+        // Source 2: Intelligence flags (VRM-connected trailers only)
         for (const [siteId, snapshot] of snapshotCache) {
+            if (!hasVrmData(snapshot)) continue;
             // Battery temp critical
             if (snapshot.battery_temp !== null && snapshot.battery_temp > 45) {
                 actions.push({
@@ -3405,8 +3419,9 @@ app.get('/api/action-queue', async (req, res) => {
             } catch {}
         }
 
-        // Source: Predictive SOC depletion
+        // Source: Predictive SOC depletion (VRM-connected trailers only)
         for (const [siteId, snapshot] of snapshotCache) {
+            if (!hasVrmData(snapshot)) continue;
             const siteEnergy = dailyEnergy.get(siteId) || {};
             const today = todayStr();
             const pastDays = Object.entries(siteEnergy)
@@ -3504,7 +3519,8 @@ app.delete('/api/action-queue/:key/acknowledge', requireRole('admin', 'technicia
 
 app.get('/api/fleet/health-grades', (req, res) => {
     const grades = {};
-    for (const [siteId] of snapshotCache) {
+    for (const [siteId, snap] of snapshotCache) {
+        if (!hasVrmData(snap)) continue;
         grades[siteId] = computeHealthGrade(siteId);
     }
     res.json({ success: true, grades });
@@ -3702,6 +3718,7 @@ app.get('/api/reports/fleet', async (req, res) => {
     try {
         const trailers = [];
         for (const [siteId, snapshot] of snapshotCache) {
+            if (!hasVrmData(snapshot)) continue; // skip connectivity-only trailers
             const intel = await computeTrailerIntelligence(siteId);
             trailers.push({
                 site_id: siteId,
@@ -3793,9 +3810,9 @@ app.get('/api/portal/sites', async (req, res) => {
             .filter(js => siteIds.includes(js.id))
             .map(js => {
                 const trailers = [];
-                // Find trailers assigned to this job site via trailer_assignments
+                // Find VRM-connected trailers assigned to this job site
                 for (const [siteId, snap] of snapshotCache) {
-                    if (trailerToJobSite.get(siteId) === js.id) {
+                    if (trailerToJobSite.get(siteId) === js.id && hasVrmData(snap)) {
                         trailers.push({
                             site_id: siteId,
                             site_name: snap.site_name,
@@ -3842,16 +3859,18 @@ app.get('/api/portal/site/:id', async (req, res) => {
         if (!js) return res.status(404).json({ error: 'Site not found' });
 
         const siteAssignments = await getTrailersByJobSite(siteId);
-        const trailers = siteAssignments.map(a => {
-            const snap = snapshotCache.get(a.site_id);
-            return {
-                site_id: a.site_id,
-                site_name: a.site_name,
-                battery_soc: snap?.battery_soc ?? null,
-                solar_watts: snap?.solar_watts ?? null,
-                solar_yield_today: snap?.solar_yield_today ?? null,
-            };
-        });
+        const trailers = siteAssignments
+            .filter(a => hasVrmData(snapshotCache.get(a.site_id)))
+            .map(a => {
+                const snap = snapshotCache.get(a.site_id);
+                return {
+                    site_id: a.site_id,
+                    site_name: a.site_name,
+                    battery_soc: snap?.battery_soc ?? null,
+                    solar_watts: snap?.solar_watts ?? null,
+                    solar_yield_today: snap?.solar_yield_today ?? null,
+                };
+            });
         const onlineTrailers = trailers.filter(t => t.battery_soc != null);
         const avgSoc = onlineTrailers.length > 0
             ? Math.round(onlineTrailers.reduce((s, t) => s + t.battery_soc, 0) / onlineTrailers.length)
@@ -3906,6 +3925,7 @@ app.get('/api/reports/digest-preview', requireRole('admin'), async (req, res) =>
 async function buildDigestData() {
     const trailers = [];
     for (const [siteId, snapshot] of snapshotCache) {
+        if (!hasVrmData(snapshot)) continue; // skip connectivity-only trailers
         trailers.push({
             site_id: siteId,
             site_name: snapshot.site_name,
@@ -3924,6 +3944,7 @@ async function buildDigestData() {
     // Predictive warnings
     const predictive = [];
     for (const [siteId, snap] of snapshotCache) {
+        if (!hasVrmData(snap)) continue;
         const intel = await computeTrailerIntelligence(siteId);
         if (intel?.predictive?.days_to_critical != null && intel.predictive.days_to_critical <= 3) {
             predictive.push({
