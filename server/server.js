@@ -30,12 +30,18 @@ import {
     getCompletedChecklists, insertCompletedChecklist,
     getIssueTemplates, insertIssueTemplate, updateIssueTemplate,
     getMaintenanceCalendar,
+    getCustomerSiteAccess, upsertCustomerSiteAccess,
 } from './db.js';
 import {
     generateQueryEmbedding, embedSiteSnapshots, embedPepwaveDevices,
     embedAlerts, isConfigured as isEmbeddingsConfigured
 } from './embeddings.js';
-import { runClustering } from './clustering.js';
+import { runClustering, haversineMeters } from './clustering.js';
+import {
+    isEmailConfigured, sendAlertEmail, sendAlertResolvedEmail,
+    sendGeofenceEmail, sendDigestEmail, checkRateLimit, markNotified
+} from './email.js';
+import cron from 'node-cron';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -232,7 +238,10 @@ async function fetchSolarIrradiance(latitude, longitude) {
     }
 
     try {
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&daily=shortwave_radiation_sum,sunshine_duration&current=cloud_cover&timezone=auto&forecast_days=1`;
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}`
+            + `&daily=shortwave_radiation_sum,sunshine_duration,temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code`
+            + `&current=cloud_cover,temperature_2m,weather_code,wind_speed_10m`
+            + `&timezone=auto&forecast_days=3`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Open-Meteo ${res.status}`);
         const json = await res.json();
@@ -246,6 +255,18 @@ async function fetchSolarIrradiance(latitude, longitude) {
             sunshine_hours: sunshineSec !== null ? Math.round((sunshineSec / 3600) * 10) / 10 : null,
             cloud_cover_pct: cloudCover,
             data_source: 'open-meteo',
+            temperature_current: json.current?.temperature_2m ?? null,
+            weather_code: json.current?.weather_code ?? null,
+            wind_speed_kmh: json.current?.wind_speed_10m ?? null,
+            precipitation_mm: json.daily?.precipitation_sum?.[0] ?? null,
+            forecast_3d: json.daily ? {
+                dates: json.daily.time,
+                weather_codes: json.daily.weather_code,
+                temp_max: json.daily.temperature_2m_max,
+                temp_min: json.daily.temperature_2m_min,
+                radiation: json.daily.shortwave_radiation_sum,
+                precipitation: json.daily.precipitation_sum,
+            } : null,
         };
 
         weatherCache.set(cacheKey, { data, fetchedAt: Date.now() });
@@ -353,6 +374,15 @@ async function computeTrailerIntelligence(siteId) {
         ? Math.round((currentStoredWh / avgDailyConsumptionWh) * 10) / 10
         : null;
 
+    // --- Predictive: days until SOC hits critical threshold ---
+    const criticalSocPct = specs.battery.min_soc_threshold; // 20%
+    const usableAboveCriticalWh = snapshot.battery_soc !== null && avgDailyConsumptionWh !== null && avgDailyConsumptionWh > 0
+        ? Math.max(0, (snapshot.battery_soc - criticalSocPct) * specs.battery.total_wh / 100)
+        : null;
+    const predictedDaysToCritical = usableAboveCriticalWh !== null && avgDailyConsumptionWh > 0
+        ? Math.round((usableAboveCriticalWh / avgDailyConsumptionWh) * 10) / 10
+        : null;
+
     // --- Charge time estimate ---
     const remainingToFullWh = snapshot.battery_soc !== null ? Math.round(specs.battery.total_wh * (1 - snapshot.battery_soc / 100)) : null;
     const currentSolarW = snapshot.solar_watts || 0;
@@ -413,6 +443,14 @@ async function computeTrailerIntelligence(siteId) {
             today_consumed_wh: todayConsumedWh !== null ? Math.round(todayConsumedWh) : null,
             today_balance_wh: energyBalanceWh,
             avg_daily_consumption_wh: avgDailyConsumptionWh,
+        },
+        predictive: {
+            days_to_critical: predictedDaysToCritical,
+            critical_soc_pct: criticalSocPct,
+            warning_threshold_days: 3,
+            status: predictedDaysToCritical !== null
+                ? (predictedDaysToCritical <= 1 ? 'critical' : predictedDaysToCritical <= 3 ? 'warning' : 'ok')
+                : null,
         },
     };
 }
@@ -626,6 +664,11 @@ async function persistAlertHistory(currentAlerts) {
             if (!dbSiteIds.has(alert.site_id)) {
                 const totalDeficit = alert.deficit_days?.reduce((s, d) => s + (d.deficit_wh || 0), 0) || 0;
                 await insertAlertHistory(alert.site_id, alert.site_name, alert.severity, alert.streak_days, totalDeficit);
+                // Send email notification (rate-limited, fire-and-forget)
+                if (isEmailConfigured() && !checkRateLimit(alert.site_id)) {
+                    markNotified(alert.site_id);
+                    sendAlertEmail(alert).catch(err => console.error('  Alert email error:', err.message));
+                }
             }
         }
 
@@ -633,6 +676,10 @@ async function persistAlertHistory(currentAlerts) {
         for (const dbAlert of activeDbAlerts) {
             if (!activeSiteIds.has(dbAlert.site_id)) {
                 await resolveAlert(dbAlert.site_id);
+                // Send resolution email (fire-and-forget)
+                if (isEmailConfigured()) {
+                    sendAlertResolvedEmail(dbAlert).catch(err => console.error('  Resolution email error:', err.message));
+                }
             }
         }
     } catch (err) {
@@ -1467,6 +1514,13 @@ app.get('/api/map/sites', async (req, res) => {
                     }
                 }
 
+                // Check for geofence breaches on any trailer at this site
+                const geofenceBreached = trailers.some(t => geofenceAlerts.has(t.site_id));
+
+                // Attach cached weather data if available
+                const cacheKey = `${js.latitude.toFixed(2)},${js.longitude.toFixed(2)}`;
+                const weather = weatherCache.get(cacheKey);
+
                 return {
                     id: js.id,
                     name: js.name,
@@ -1483,6 +1537,16 @@ app.get('/api/map/sites', async (req, res) => {
                     trailers_online: trailersOnline,
                     avg_soc: socCount > 0 ? +(totalSoc / socCount).toFixed(1) : null,
                     worst_status: trailers.length === 0 ? 'unknown' : worstStatus,
+                    geofence_radius_m: js.geofence_radius_m || 500,
+                    geofence_breached: geofenceBreached,
+                    weather: weather ? {
+                        temperature: weather.temperature_current ?? null,
+                        weather_code: weather.weather_code ?? null,
+                        cloud_cover_pct: weather.cloud_cover_pct ?? null,
+                        wind_speed_kmh: weather.wind_speed_kmh ?? null,
+                        sunshine_hours: weather.sunshine_hours ?? null,
+                        peak_sun_hours: weather.peak_sun_hours ?? null,
+                    } : null,
                 };
             });
 
@@ -2563,6 +2627,11 @@ async function pollIc2Devices() {
             );
         }
 
+        // Check geofences after GPS update (async, don't block)
+        if (gpsCache.size > 0) {
+            checkGeofences().catch(err => console.error('  Geofence check failed:', err.message));
+        }
+
         lastIc2Poll = Date.now();
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         console.log(`  IC2 poll complete: ${devices.length} devices (${onlineCount} online, ${offlineCount} offline) in ${elapsed}s`);
@@ -2570,6 +2639,57 @@ async function pollIc2Devices() {
         console.error('  IC2 poll error:', err.message);
     } finally {
         isPollingIc2 = false;
+    }
+}
+
+// ============================================================
+// Geofence Checking
+// ============================================================
+const geofenceAlerts = new Map(); // siteId -> { breached, distance_m, lastAlertedAt, site_name, job_site_name }
+
+async function checkGeofences() {
+    if (!dbAvailable) return;
+    try {
+        const jobSites = await getJobSites();
+        const assignments = await getTrailerAssignments();
+
+        for (const assignment of assignments) {
+            if (!assignment.job_site_id) continue;
+            const gps = gpsCache.get(assignment.site_id);
+            if (!gps) continue;
+
+            const jobSite = jobSites.find(js => js.id === assignment.job_site_id);
+            if (!jobSite || !jobSite.latitude || !jobSite.longitude) continue;
+
+            const distance = haversineMeters(gps.latitude, gps.longitude, jobSite.latitude, jobSite.longitude);
+            const radius = jobSite.geofence_radius_m || 500;
+
+            if (distance > radius) {
+                const existing = geofenceAlerts.get(assignment.site_id);
+                const cooldown = 24 * 60 * 60 * 1000;
+                if (!existing || Date.now() - existing.lastAlertedAt > cooldown) {
+                    geofenceAlerts.set(assignment.site_id, {
+                        breached: true,
+                        distance_m: Math.round(distance),
+                        lastAlertedAt: Date.now(),
+                        site_name: assignment.site_name,
+                        job_site_name: jobSite.name,
+                    });
+                    if (isEmailConfigured()) {
+                        sendGeofenceEmail({
+                            site_name: assignment.site_name,
+                            job_site_name: jobSite.name,
+                            distance_m: Math.round(distance),
+                            geofence_radius_m: radius,
+                        }).catch(err => console.error('  Geofence email error:', err.message));
+                    }
+                }
+            } else {
+                geofenceAlerts.delete(assignment.site_id);
+            }
+        }
+    } catch (err) {
+        console.error('  Geofence check error:', err.message);
     }
 }
 
@@ -3112,6 +3232,52 @@ app.get('/api/action-queue', async (req, res) => {
             } catch {}
         }
 
+        // Source: Predictive SOC depletion
+        for (const [siteId, snapshot] of snapshotCache) {
+            const siteEnergy = dailyEnergy.get(siteId) || {};
+            const today = todayStr();
+            const pastDays = Object.entries(siteEnergy)
+                .filter(([d]) => d < today)
+                .sort(([a], [b]) => b.localeCompare(a))
+                .slice(0, 7);
+            const consumptionValues = pastDays.map(([, i]) => i.consumed_wh).filter(v => v !== null && v > 0);
+            let avgConsumption = consumptionValues.length > 0
+                ? consumptionValues.reduce((s, v) => s + v, 0) / consumptionValues.length
+                : null;
+            if (avgConsumption === null) {
+                const todayData = siteEnergy[today];
+                if (todayData?.consumed_wh > 0) avgConsumption = todayData.consumed_wh;
+            }
+            if (avgConsumption && avgConsumption > 0 && snapshot.battery_soc !== null) {
+                const usableWh = Math.max(0, (snapshot.battery_soc - 20) * 11040 / 100);
+                const daysToCritical = Math.round((usableWh / avgConsumption) * 10) / 10;
+                if (daysToCritical <= 3) {
+                    actions.push({
+                        key: `predictive:soc:${siteId}`,
+                        priority: daysToCritical <= 1 ? 1 : 2,
+                        category: 'battery',
+                        title: `SOC critical in ~${daysToCritical} days`,
+                        subtitle: snapshot.site_name,
+                        site_id: siteId,
+                        details: `Current SOC: ${snapshot.battery_soc}%, avg consumption: ${Math.round(avgConsumption)}Wh/day`,
+                    });
+                }
+            }
+        }
+
+        // Source: Geofence breaches
+        for (const [siteId, gf] of geofenceAlerts) {
+            actions.push({
+                key: `geofence:${siteId}`,
+                priority: 2,
+                category: 'network',
+                title: `Geofence breach: ${gf.distance_m}m from site`,
+                subtitle: `${gf.site_name} — ${gf.job_site_name}`,
+                site_id: siteId,
+                details: `Trailer is ${gf.distance_m}m from assigned job site (radius: 500m)`,
+            });
+        }
+
         // Get acknowledged actions
         const acks = dbAvailable ? await getAcknowledgedActions() : [];
         const ackMap = new Map(acks.map(a => [a.action_key, a]));
@@ -3363,20 +3529,46 @@ app.get('/api/reports/fleet', async (req, res) => {
     try {
         const trailers = [];
         for (const [siteId, snapshot] of snapshotCache) {
+            const intel = await computeTrailerIntelligence(siteId);
             trailers.push({
                 site_id: siteId,
                 site_name: snapshot.site_name,
                 health_grade: computeHealthGrade(siteId),
                 battery_soc: snapshot.battery_soc,
+                battery_voltage: snapshot.battery_voltage,
                 solar_watts: snapshot.solar_watts,
                 yield_today: snapshot.solar_yield_today,
+                charge_state: snapshot.charge_state,
+                intelligence: intel,
             });
         }
 
         const alerts = computeAlerts();
         let stats = null;
+        let energyTrends = [];
         if (dbAvailable) {
             try { stats = await getMaintenanceStats(); } catch {}
+            try { energyTrends = await getAllDailyEnergy(14); } catch {}
+        }
+
+        // Aggregate KPIs
+        const onlineTrailers = trailers.filter(t => t.battery_soc != null);
+        const avgSoc = onlineTrailers.length > 0
+            ? onlineTrailers.reduce((s, t) => s + t.battery_soc, 0) / onlineTrailers.length : 0;
+        const totalYieldToday = trailers.reduce((s, t) => s + (t.yield_today || 0), 0);
+        const gradeDistribution = { A: 0, B: 0, C: 0, D: 0, F: 0 };
+        for (const t of trailers) {
+            const g = t.health_grade?.grade;
+            if (g && gradeDistribution[g] !== undefined) gradeDistribution[g]++;
+        }
+
+        // Group energy trends by date for fleet totals
+        const energyByDate = {};
+        for (const e of energyTrends) {
+            const d = e.date;
+            if (!energyByDate[d]) energyByDate[d] = { date: d, yield_wh: 0, consumed_wh: 0 };
+            energyByDate[d].yield_wh += parseFloat(e.yield_wh) || 0;
+            energyByDate[d].consumed_wh += parseFloat(e.consumed_wh) || 0;
         }
 
         res.json({
@@ -3384,9 +3576,17 @@ app.get('/api/reports/fleet', async (req, res) => {
             report: {
                 generated_at: new Date().toISOString(),
                 type: 'fleet',
-                trailer_count: trailers.length,
+                kpis: {
+                    total_trailers: trailers.length,
+                    online: onlineTrailers.length,
+                    avg_soc: Math.round(avgSoc * 10) / 10,
+                    total_yield_today_kwh: Math.round(totalYieldToday) / 1000,
+                    active_alerts: alerts.length,
+                },
+                grade_distribution: gradeDistribution,
                 trailers,
                 alerts,
+                energy_trends: Object.values(energyByDate).sort((a, b) => a.date.localeCompare(b.date)),
                 maintenance_stats: stats,
             },
         });
@@ -3394,6 +3594,232 @@ app.get('/api/reports/fleet', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+// --- Customer Portal ---
+app.get('/api/portal/sites', async (req, res) => {
+    try {
+        if (!req.user || req.user.role !== 'customer') {
+            return res.status(403).json({ error: 'Customer access only' });
+        }
+        const access = await getCustomerSiteAccess(req.user.id);
+        const siteIds = access.map(a => a.job_site_id);
+        if (siteIds.length === 0) return res.json({ sites: [] });
+
+        const jobSites = await getJobSites();
+        const assignments = await getTrailerAssignments();
+
+        // Build a map of site_id -> job_site_id from trailer_assignments
+        const trailerToJobSite = new Map();
+        for (const a of assignments) {
+            if (a.job_site_id != null) {
+                trailerToJobSite.set(a.site_id, a.job_site_id);
+            }
+        }
+
+        const sites = jobSites
+            .filter(js => siteIds.includes(js.id))
+            .map(js => {
+                const trailers = [];
+                // Find trailers assigned to this job site via trailer_assignments
+                for (const [siteId, snap] of snapshotCache) {
+                    if (trailerToJobSite.get(siteId) === js.id) {
+                        trailers.push({
+                            site_id: siteId,
+                            site_name: snap.site_name,
+                            battery_soc: snap.battery_soc,
+                            solar_watts: snap.solar_watts,
+                            solar_yield_today: snap.solar_yield_today,
+                        });
+                    }
+                }
+                const onlineTrailers = trailers.filter(t => t.battery_soc != null);
+                const avgSoc = onlineTrailers.length > 0
+                    ? Math.round(onlineTrailers.reduce((s, t) => s + t.battery_soc, 0) / onlineTrailers.length)
+                    : null;
+                return {
+                    id: js.id,
+                    name: js.name,
+                    status: js.status,
+                    address: js.address,
+                    trailer_count: trailers.length,
+                    trailers_online: onlineTrailers.length,
+                    avg_soc: avgSoc,
+                    trailers,
+                    worst_status: trailers.some(t => t.battery_soc != null && t.battery_soc < 20) ? 'critical'
+                        : trailers.some(t => t.battery_soc != null && t.battery_soc < 50) ? 'warning' : 'ok',
+                };
+            });
+        res.json({ sites });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/portal/site/:id', async (req, res) => {
+    try {
+        if (!req.user || req.user.role !== 'customer') {
+            return res.status(403).json({ error: 'Customer access only' });
+        }
+        const siteId = parseInt(req.params.id);
+        const access = await getCustomerSiteAccess(req.user.id);
+        if (!access.some(a => a.job_site_id === siteId)) {
+            return res.status(403).json({ error: 'No access to this site' });
+        }
+        const js = await getJobSite(siteId);
+        if (!js) return res.status(404).json({ error: 'Site not found' });
+
+        const siteAssignments = await getTrailersByJobSite(siteId);
+        const trailers = siteAssignments.map(a => {
+            const snap = snapshotCache.get(a.site_id);
+            return {
+                site_id: a.site_id,
+                site_name: a.site_name,
+                battery_soc: snap?.battery_soc ?? null,
+                solar_watts: snap?.solar_watts ?? null,
+                solar_yield_today: snap?.solar_yield_today ?? null,
+            };
+        });
+        const onlineTrailers = trailers.filter(t => t.battery_soc != null);
+        const avgSoc = onlineTrailers.length > 0
+            ? Math.round(onlineTrailers.reduce((s, t) => s + t.battery_soc, 0) / onlineTrailers.length)
+            : null;
+
+        res.json({
+            site: {
+                ...js,
+                trailer_count: trailers.length,
+                trailers_online: onlineTrailers.length,
+                avg_soc: avgSoc,
+                trailers,
+            },
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin: manage customer site access
+app.get('/api/customers/:userId/sites', requireRole('admin'), async (req, res) => {
+    try {
+        const access = await getCustomerSiteAccess(parseInt(req.params.userId));
+        res.json({ sites: access.map(a => a.job_site_id) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/customers/:userId/sites', requireRole('admin'), async (req, res) => {
+    try {
+        const { site_ids } = req.body;
+        if (!Array.isArray(site_ids)) return res.status(400).json({ error: 'site_ids must be an array' });
+        await upsertCustomerSiteAccess(parseInt(req.params.userId), site_ids);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- Digest Preview ---
+app.get('/api/reports/digest-preview', requireRole('admin'), async (req, res) => {
+    try {
+        const data = await buildDigestData();
+        res.json({ success: true, digest: data });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- Digest ---
+async function buildDigestData() {
+    const trailers = [];
+    for (const [siteId, snapshot] of snapshotCache) {
+        trailers.push({
+            site_id: siteId,
+            site_name: snapshot.site_name,
+            battery_soc: snapshot.battery_soc,
+            solar_watts: snapshot.solar_watts,
+            solar_yield_today: snapshot.solar_yield_today,
+        });
+    }
+    const onlineTrailers = trailers.filter(t => t.battery_soc != null);
+    const avgSoc = onlineTrailers.length > 0
+        ? onlineTrailers.reduce((s, t) => s + t.battery_soc, 0) / onlineTrailers.length : 0;
+    const totalYieldKwh = trailers.reduce((s, t) => s + (t.solar_yield_today || 0), 0) / 1000;
+    const lowSoc = onlineTrailers.filter(t => t.battery_soc < 50).sort((a, b) => a.battery_soc - b.battery_soc);
+    const alerts = computeAlerts();
+
+    // Predictive warnings
+    const predictive = [];
+    for (const [siteId, snap] of snapshotCache) {
+        const intel = await computeTrailerIntelligence(siteId);
+        if (intel?.predictive?.days_to_critical != null && intel.predictive.days_to_critical <= 3) {
+            predictive.push({
+                site_name: snap.site_name,
+                days_to_critical: intel.predictive.days_to_critical,
+                battery_soc: snap.battery_soc,
+            });
+        }
+    }
+
+    // Overdue maintenance
+    const overdue = [];
+    // Will be filled if db data is available from the scheduled job
+
+    return {
+        fleet_size: trailers.length,
+        avg_soc: avgSoc,
+        total_yield_kwh: totalYieldKwh,
+        trailers_below_50_soc: lowSoc.slice(0, 10),
+        active_alerts: alerts,
+        overdue_maintenance: overdue,
+        predictive_warnings: predictive,
+    };
+}
+
+function scheduleDigest() {
+    const enabled = process.env.DIGEST_ENABLED === 'true';
+    if (!enabled) {
+        console.log('  Digest scheduling disabled (set DIGEST_ENABLED=true)');
+        return;
+    }
+    const time = process.env.DIGEST_TIME || '06:00';
+    const [hour, minute] = time.split(':').map(Number);
+    const tz = process.env.DIGEST_TIMEZONE || 'America/Denver';
+    const recipients = (process.env.DIGEST_RECIPIENTS || '')
+        .split(',').map(e => e.trim()).filter(Boolean);
+
+    if (recipients.length === 0) {
+        console.log('  Digest scheduling skipped: no DIGEST_RECIPIENTS configured');
+        return;
+    }
+
+    const cronExpr = `${minute} ${hour} * * *`;
+    cron.schedule(cronExpr, async () => {
+        console.log('  Running scheduled digest...');
+        try {
+            const data = await buildDigestData();
+            // Fetch overdue maintenance if DB available
+            if (dbAvailable) {
+                try {
+                    const upcoming = await getUpcomingMaintenance(0);
+                    data.overdue_maintenance = upcoming
+                        .filter(m => m.scheduled_date < Date.now())
+                        .map(m => ({
+                            title: m.title,
+                            job_site_name: m.job_site_name || 'Unknown',
+                            scheduled_date: new Date(m.scheduled_date).toISOString().slice(0, 10),
+                        }));
+                } catch {}
+            }
+            await sendDigestEmail(recipients, data);
+            console.log(`  Digest sent to ${recipients.length} recipient(s)`);
+        } catch (err) {
+            console.error('  Digest error:', err.message);
+        }
+    }, { timezone: tz });
+
+    console.log(`  ✓ Digest scheduled at ${time} ${tz} → ${recipients.join(', ')}`);
+}
 
 // --- SPA fallback ---
 app.get('*', (req, res) => {
@@ -3451,6 +3877,9 @@ async function start() {
             console.warn('  ⚠ Could not load IC2 linkages:', linkErr.message);
         }
     }
+
+    // Schedule email digest
+    scheduleDigest();
 
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);

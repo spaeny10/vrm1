@@ -145,6 +145,7 @@ export async function initDb() {
         await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS active_date DATE`);
         await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS calloff_date DATE`);
         await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS pickup_date DATE`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS geofence_radius_m INTEGER DEFAULT 500`);
         // Auto-flag Big View HQ as headquarters
         await client.query(`UPDATE job_sites SET is_headquarters = TRUE WHERE name ILIKE '%big view hq%' AND (is_headquarters IS NULL OR is_headquarters = FALSE)`);
         console.log('  ✓ Deployment management columns ready');
@@ -259,6 +260,7 @@ export async function initDb() {
       )
     `);
 
+        await client.query(`ALTER TABLE alert_history ADD COLUMN IF NOT EXISTS last_notified_at TIMESTAMPTZ`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_alert_history_active ON alert_history(site_id) WHERE resolved_at IS NULL`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_alert_history_created ON alert_history(created_at DESC)`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_daily_energy_date ON daily_energy_summary(date DESC)`);
@@ -326,6 +328,23 @@ export async function initDb() {
         await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL`);
         console.log('  ✓ Users table ready');
+
+        // Extend users role constraint to include 'customer'
+        await client.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check`);
+        await client.query(`ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin','technician','viewer','customer'))`);
+
+        // Customer site access (customer portal)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS customer_site_access (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        job_site_id INTEGER NOT NULL REFERENCES job_sites(id) ON DELETE CASCADE,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        UNIQUE(user_id, job_site_id)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_customer_site_user ON customer_site_access(user_id)`);
+        console.log('  ✓ Customer portal tables ready');
 
         // Action queue acknowledgements
         await client.query(`
@@ -757,7 +776,7 @@ export async function updateJobSite(id, updates) {
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-        if (['name', 'latitude', 'longitude', 'address', 'status', 'notes', 'is_headquarters', 'delivery_date', 'active_date', 'calloff_date', 'pickup_date'].includes(key)) {
+        if (['name', 'latitude', 'longitude', 'address', 'status', 'notes', 'is_headquarters', 'delivery_date', 'active_date', 'calloff_date', 'pickup_date', 'geofence_radius_m'].includes(key)) {
             fields.push(`${key} = $${idx}`);
             values.push(value);
             idx++;
@@ -1610,6 +1629,44 @@ export async function getMaintenanceCalendar(startMs, endMs, technicianId) {
     query += ` ORDER BY COALESCE(m.scheduled_date, m.created_at) ASC`;
     const result = await pool.query(query, params);
     return result.rows;
+}
+
+// ============================================================
+// Customer Site Access (portal)
+// ============================================================
+
+export async function getCustomerSiteAccess(userId) {
+    if (!pool) return [];
+    const result = await pool.query(
+        `SELECT csa.*, js.name as job_site_name, js.status, js.address
+         FROM customer_site_access csa
+         JOIN job_sites js ON csa.job_site_id = js.id
+         WHERE csa.user_id = $1
+         ORDER BY js.name`,
+        [userId]
+    );
+    return result.rows;
+}
+
+export async function upsertCustomerSiteAccess(userId, jobSiteIds) {
+    if (!pool) return;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(`DELETE FROM customer_site_access WHERE user_id = $1`, [userId]);
+        for (const jsId of jobSiteIds) {
+            await client.query(
+                `INSERT INTO customer_site_access (user_id, job_site_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+                [userId, jsId]
+            );
+        }
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 export function getPool() {

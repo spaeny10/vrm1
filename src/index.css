@@ -4518,127 +4518,8 @@ tr:hover .btn-hq-toggle {
   padding: 0;
 }
 
-/* ===== Mobile Responsive (480px) ===== */
-@media (max-width: 480px) {
-  .app-layout {
-    flex-direction: column;
-  }
-  .sidebar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    top: auto;
-    width: 100%;
-    height: auto;
-    flex-direction: row;
-    z-index: 100;
-    border-top: 1px solid rgba(255,255,255,0.08);
-    border-right: none;
-    padding: 0;
-  }
-  .sidebar-brand,
-  .sidebar-footer {
-    display: none;
-  }
-  .sidebar-nav {
-    display: flex;
-    flex-direction: row;
-    overflow-x: auto;
-    padding: 4px 8px;
-    gap: 2px;
-    width: 100%;
-    justify-content: space-around;
-  }
-  .nav-item {
-    flex-direction: column;
-    gap: 2px;
-    padding: 6px 8px;
-    font-size: 10px;
-    min-width: 48px;
-    text-align: center;
-  }
-  .nav-item span:not(.nav-badge) {
-    font-size: 10px;
-  }
-  .nav-badge {
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    font-size: 9px;
-    min-width: 14px;
-    height: 14px;
-    padding: 0 3px;
-  }
-  .main-content {
-    padding: 12px;
-    padding-bottom: 70px;
-    margin-left: 0;
-  }
-  .kpi-row {
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-  .page-header-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .page-header-actions {
-    width: 100%;
-    justify-content: space-between;
-  }
-  .fleet-controls {
-    flex-direction: column;
-    gap: 8px;
-  }
-  .table-wrapper {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .data-table {
-    min-width: 600px;
-  }
-  .rankings-table {
-    min-width: 700px;
-  }
-  .detail-section h2 {
-    font-size: 1rem;
-  }
-  .battery-health-card {
-    flex-direction: column;
-    gap: 1rem;
-  }
-  .trailer-grid {
-    grid-template-columns: 1fr;
-  }
-  .network-card-grid {
-    grid-template-columns: 1fr;
-  }
-  .comparison-site-selector {
-    flex-wrap: wrap;
-  }
-  .breadcrumbs {
-    font-size: 13px;
-  }
-  .intel-metrics-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  .intel-metric-value {
-    font-size: 22px;
-  }
-  .intel-weather-context {
-    font-size: 11px;
-  }
-  .action-queue-list { gap: 6px; }
-  .action-queue-item { flex-direction: column; align-items: flex-start; gap: 6px; }
-  .work-cards-grid { grid-template-columns: 1fr; }
-  .cal-grid { font-size: 11px; }
-  .cal-day { min-height: 50px; padding: 4px; }
-  .report-grid { grid-template-columns: 1fr; }
-  .users-table-wrapper { overflow-x: auto; }
-}
+/* ===== Mobile Extra-Small (480px) ===== */
+/* Handled by the new Mobile Responsive section at the end of this file */
 
 /* ============================================================
    Login Page
@@ -5890,4 +5771,304 @@ tr:hover .btn-hq-toggle {
 }
 .theme-toggle:hover {
   color: var(--text-primary);
+}
+
+/* ========================================
+   Mobile Responsive
+   ======================================== */
+
+/* Mobile header bar */
+.mobile-header {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: sticky;
+  top: 0;
+  z-index: 201;
+}
+
+.mobile-hamburger {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
+}
+
+.mobile-hamburger:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mobile-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobile-logo {
+  height: 24px;
+  width: auto;
+}
+
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 199;
+}
+
+@media (max-width: 768px) {
+  .mobile-header {
+    display: flex;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: -260px;
+    transition: left 0.3s ease;
+    z-index: 200;
+    width: var(--sidebar-width);
+  }
+
+  .sidebar.sidebar-open {
+    left: 0;
+  }
+
+  .sidebar-overlay.visible {
+    display: block;
+  }
+
+  .main-content {
+    margin-left: 0;
+    padding: 16px;
+  }
+
+  /* Page headers */
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .page-header h1 {
+    font-size: 1.4rem;
+  }
+
+  /* KPI cards single column */
+  .kpi-row {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px;
+  }
+
+  .kpi-card {
+    padding: 14px 12px;
+  }
+
+  .kpi-value {
+    font-size: 1.4rem;
+  }
+
+  /* Site/trailer grids */
+  .site-grid,
+  .fleet-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Settings grid */
+  .settings-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .settings-card-wide {
+    grid-column: span 1 !important;
+  }
+
+  /* Tables horizontal scroll */
+  .jobsite-mgmt-table-wrapper,
+  .maint-table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Touch-friendly buttons and controls */
+  .btn {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 10px 16px;
+  }
+
+  .btn-sm {
+    min-height: 36px;
+    min-width: 36px;
+    padding: 6px 12px;
+  }
+
+  .nav-item {
+    min-height: 44px;
+    padding: 12px 16px;
+  }
+
+  /* Filter bars */
+  .filter-controls {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .filter-btn,
+  .view-toggle button {
+    min-height: 38px;
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  /* Action queue panel */
+  .action-queue-panel {
+    width: 100%;
+    right: 0;
+    max-width: 100%;
+  }
+
+  /* Report panel */
+  .report-panel {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    border-radius: 0;
+    height: 100vh;
+  }
+
+  .report-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Map fullscreen */
+  .map-view.map-fullscreen .map-container {
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+    height: 100vh !important;
+  }
+
+  .map-view.map-fullscreen .map-controls {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 151;
+  }
+
+  /* Chart containers */
+  .chart-container {
+    height: 200px !important;
+  }
+
+  /* Maintenance form */
+  .maint-form-panel {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    border-radius: 0;
+    max-height: 100vh;
+  }
+
+  .maint-form-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Data freshness */
+  .data-freshness {
+    font-size: 11px;
+  }
+
+  /* Breadcrumbs */
+  .breadcrumbs {
+    font-size: 12px;
+  }
+
+  /* Customer portal */
+  .portal-sidebar {
+    width: 200px;
+  }
+}
+
+@media (max-width: 480px) {
+  .kpi-row {
+    grid-template-columns: 1fr !important;
+  }
+
+  .main-content {
+    padding: 12px;
+  }
+
+  .page-header h1 {
+    font-size: 1.2rem;
+  }
+
+  .site-card {
+    padding: 12px;
+  }
+
+  .site-card-stats {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+}
+
+/* Map fullscreen toggle button */
+.map-fullscreen-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.map-fullscreen-btn:hover {
+  background: var(--bg-card-hover);
+}
+
+/* Customer role badge */
+.role-badge-customer {
+  background: rgba(155, 89, 182, 0.15);
+  color: #9b59b6;
+}
+
+/* Predictive SOC alert banner */
+.intel-predictive-alert {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+.intel-predictive-warning {
+  background: rgba(243, 156, 18, 0.12);
+  border-left: 3px solid var(--warning);
+  color: var(--warning);
+}
+.intel-predictive-critical {
+  background: rgba(231, 76, 60, 0.12);
+  border-left: 3px solid var(--danger);
+  color: var(--danger);
+}
+
+/* 3-day forecast */
+.intel-forecast-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }

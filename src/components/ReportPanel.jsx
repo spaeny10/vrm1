@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { fetchTrailerReport, fetchSiteReport } from '../api/vrm';
+import { fetchTrailerReport, fetchSiteReport, fetchFleetReportData } from '../api/vrm';
+import { generateFleetPDF } from '../utils/pdfReport';
 
 export default function ReportPanel({ type, id, onClose }) {
     const [report, setReport] = useState(null);
@@ -9,14 +10,18 @@ export default function ReportPanel({ type, id, onClose }) {
     useEffect(() => {
         setLoading(true);
         setError('');
-        const fetchFn = type === 'trailer' ? fetchTrailerReport : fetchSiteReport;
-        fetchFn(id)
+        const fetchFn = type === 'trailer' ? fetchTrailerReport : type === 'fleet' ? fetchFleetReportData : fetchSiteReport;
+        const fetchId = type === 'fleet' ? undefined : id;
+        (fetchId !== undefined ? fetchFn(fetchId) : fetchFn())
             .then(data => setReport(data.report))
             .catch(err => setError(err.message))
             .finally(() => setLoading(false));
     }, [type, id]);
 
     const handlePrint = () => window.print();
+    const handleDownloadPdf = () => {
+        if (report) generateFleetPDF(report);
+    };
 
     const formatDate = (ts) => {
         if (!ts) return '—';
@@ -42,8 +47,9 @@ export default function ReportPanel({ type, id, onClose }) {
         <div className="maint-form-overlay report-overlay" onClick={onClose}>
             <div className="report-panel" onClick={e => e.stopPropagation()}>
                 <div className="report-header no-print">
-                    <h2>Report: {type === 'trailer' ? report?.trailer?.site_name : report?.job_site?.name}</h2>
+                    <h2>Report: {type === 'fleet' ? 'Fleet Overview' : type === 'trailer' ? report?.trailer?.site_name : report?.job_site?.name}</h2>
                     <div className="report-actions">
+                        {type === 'fleet' && <button className="btn btn-secondary btn-sm" onClick={handleDownloadPdf}>Download PDF</button>}
                         <button className="btn btn-primary btn-sm" onClick={handlePrint}>Print / PDF</button>
                         <button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
                     </div>

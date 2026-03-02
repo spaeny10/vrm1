@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, CircleMarker, Popup, useMap, Circle } from 'react-leaflet'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchMapSites } from '../api/vrm'
 import 'leaflet/dist/leaflet.css'
@@ -76,12 +76,25 @@ const DEPLOYMENT_COLORS = {
 
 const HQ_COLOR = '#9b59b6'
 
+const WMO_ICONS = {
+    0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️',
+    45: '🌫️', 48: '🌫️',
+    51: '🌦️', 53: '🌧️', 55: '🌧️',
+    61: '🌧️', 63: '🌧️', 65: '🌧️',
+    71: '🌨️', 73: '🌨️', 75: '🌨️',
+    80: '🌦️', 81: '🌧️', 82: '🌧️',
+    95: '⛈️', 96: '⛈️', 99: '⛈️',
+};
+function weatherIcon(code) { return WMO_ICONS[code] || '🌡️'; }
+
 function MapView() {
     const navigate = useNavigate()
     const [statusFilter, setStatusFilter] = useState('all')
     const [deploymentFilter, setDeploymentFilter] = useState('all')
     const [searchTerm, setSearchTerm] = useState('')
     const [expandedStates, setExpandedStates] = useState({})
+    const [showWeather, setShowWeather] = useState(false)
+    const [showGeofences, setShowGeofences] = useState(true)
 
     const fetchFn = useCallback(() => fetchMapSites(), [])
     const { data, loading } = useApiPolling(fetchFn, 30000)
@@ -218,6 +231,16 @@ function MapView() {
                         </button>
                     ))}
                 </div>
+                <div className="map-toggles" style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <button
+                        className={`filter-btn${showWeather ? ' active' : ''}`}
+                        onClick={() => setShowWeather(w => !w)}
+                    >Weather</button>
+                    <button
+                        className={`filter-btn${showGeofences ? ' active' : ''}`}
+                        onClick={() => setShowGeofences(g => !g)}
+                    >Geofences</button>
+                </div>
             </div>
 
             {/* Map */}
@@ -235,8 +258,8 @@ function MapView() {
                     <FitBounds markers={filtered} />
 
                     {filtered.map(site => (
+                        <React.Fragment key={site.id}>
                         <CircleMarker
-                            key={site.id}
                             center={[site.latitude, site.longitude]}
                             radius={Math.max(12, 8 + site.trailer_count * 3)}
                             fillColor={site.is_headquarters ? HQ_COLOR : STATUS_COLORS[site.worst_status] || STATUS_COLORS.unknown}
@@ -273,9 +296,35 @@ function MapView() {
                                     >
                                         View Site Details
                                     </button>
+                                    {showWeather && site.weather && (
+                                        <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                                            <span style={{ fontSize: 18 }}>{weatherIcon(site.weather.weather_code)}</span>
+                                            {' '}{site.weather.temperature != null ? `${Math.round(site.weather.temperature)}°C` : ''}
+                                            {site.weather.cloud_cover_pct != null && <span style={{ color: '#95a5a6', marginLeft: 8 }}>☁ {site.weather.cloud_cover_pct}%</span>}
+                                            {site.weather.wind_speed_kmh != null && <span style={{ color: '#95a5a6', marginLeft: 8 }}>💨 {Math.round(site.weather.wind_speed_kmh)} km/h</span>}
+                                        </div>
+                                    )}
+                                    {site.geofence_breached && (
+                                        <div style={{ marginTop: 4, color: '#e74c3c', fontWeight: 600, fontSize: 12 }}>
+                                            ⚠ GEOFENCE BREACH
+                                        </div>
+                                    )}
                                 </div>
                             </Popup>
                         </CircleMarker>
+                        {showGeofences && site.geofence_radius_m && (
+                            <Circle
+                                center={[site.latitude, site.longitude]}
+                                radius={site.geofence_radius_m}
+                                pathOptions={{
+                                    color: site.geofence_breached ? '#e74c3c' : 'rgba(255,255,255,0.2)',
+                                    fillColor: site.geofence_breached ? 'rgba(231,76,60,0.1)' : 'rgba(255,255,255,0.03)',
+                                    weight: site.geofence_breached ? 2 : 1,
+                                    dashArray: site.geofence_breached ? null : '5,5',
+                                }}
+                            />
+                        )}
+                        </React.Fragment>
                     ))}
                 </MapContainer>
             </div>

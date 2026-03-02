@@ -7,6 +7,8 @@ import JobSiteCard from '../components/JobSiteCard'
 import QueryBar from '../components/QueryBar'
 import DataFreshness from '../components/DataFreshness'
 import { generateCSV, downloadCSV } from '../utils/csv'
+import { generateFleetPDF } from '../utils/pdfReport'
+import { fetchFleetReportData } from '../api/vrm'
 import { useAuth } from '../components/AuthProvider'
 
 function FleetOverview() {
@@ -18,6 +20,7 @@ function FleetOverview() {
     const [searchTerm, setSearchTerm] = useState('')
     const [actionQueueOpen, setActionQueueOpen] = useState(false)
     const [deploymentFilter, setDeploymentFilter] = useState(null) // null | 'billing' | 'standby' | 'hq' | 'pickup'
+    const [generatingPdf, setGeneratingPdf] = useState(false)
 
     // Action queue data
     const fetchActionQueueFn = useCallback(() => fetchActionQueue(), [])
@@ -275,6 +278,17 @@ function FleetOverview() {
         }
     }
 
+    const handleFleetReport = async () => {
+        setGeneratingPdf(true)
+        try {
+            const data = await fetchFleetReportData()
+            if (data?.report) generateFleetPDF(data.report)
+        } catch (err) {
+            console.error('PDF generation error:', err)
+        }
+        setGeneratingPdf(false)
+    }
+
     if (isLoading) {
         return (
             <div className="fleet-overview">
@@ -307,6 +321,15 @@ function FleetOverview() {
                 <div className="page-header-row">
                     <h1>Fleet Overview</h1>
                     <div className="page-header-actions">
+                        <button className="btn btn-sm btn-secondary" onClick={handleFleetReport} disabled={generatingPdf} title="Generate Fleet PDF Report">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                                <line x1="16" y1="13" x2="8" y2="13" />
+                                <line x1="16" y1="17" x2="8" y2="17" />
+                            </svg>
+                            {generatingPdf ? 'Generating...' : 'Fleet Report'}
+                        </button>
                         <button className="btn btn-sm btn-ghost" onClick={handleExport} title="Export CSV">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />

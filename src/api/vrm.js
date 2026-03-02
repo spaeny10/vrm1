@@ -480,3 +480,46 @@ export async function fetchSiteReport(jobSiteId) {
 export async function fetchFleetReport() {
     return apiFetch(`${API_BASE}/reports/fleet`);
 }
+
+// ============================================================
+// Portal (customer-facing)
+// ============================================================
+
+export async function fetchPortalSites() {
+    return apiFetch(`${API_BASE}/portal/sites`);
+}
+
+export async function fetchPortalSiteDetail(id) {
+    return apiFetch(`${API_BASE}/portal/site/${id}`);
+}
+
+// ============================================================
+// Customer site access (admin)
+// ============================================================
+
+export async function fetchCustomerSiteAccess(userId) {
+    return apiFetch(`${API_BASE}/customers/${userId}/sites`);
+}
+
+export async function updateCustomerSiteAccess(userId, siteIds) {
+    return apiFetch(`${API_BASE}/customers/${userId}/sites`, {
+        method: 'PUT',
+        body: JSON.stringify({ site_ids: siteIds }),
+    });
+}
+
+// ============================================================
+// Digest preview (admin)
+// ============================================================
+
+export async function fetchDigestPreview() {
+    return apiFetch(`${API_BASE}/reports/digest-preview`);
+}
+
+// ============================================================
+// Fleet report (enhanced)
+// ============================================================
+
+export async function fetchFleetReportData() {
+    return apiFetch(`${API_BASE}/reports/fleet`);
+}

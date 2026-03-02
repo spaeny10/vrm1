@@ -664,13 +664,46 @@ function TrailerDetail() {
                             </div>
                         </div>
 
+                        {/* Predictive SOC Alert */}
+                        {intel.predictive && intel.predictive.days_to_critical !== null && intel.predictive.days_to_critical <= 5 && (
+                            <div className={`intel-predictive-alert ${intel.predictive.status === 'critical' ? 'intel-predictive-critical' : 'intel-predictive-warning'}`}>
+                                <strong>Predicted SOC Depletion:</strong> {intel.predictive.days_to_critical} day{intel.predictive.days_to_critical !== 1 ? 's' : ''} to critical ({intel.predictive.critical_soc_pct}% SOC)
+                            </div>
+                        )}
+
                         {/* Weather context */}
                         {intel.location.data_source !== 'default' && (
                             <div className="intel-weather-context">
                                 PSH: {intel.location.peak_sun_hours}h
                                 {intel.location.cloud_cover_pct !== null && <> | Cloud cover: {intel.location.cloud_cover_pct}%</>}
                                 {intel.location.sunshine_hours !== null && <> | Sunshine: {intel.location.sunshine_hours}h</>}
+                                {intel.location.temperature_current != null && <> | Temp: {intel.location.temperature_current}°C</>}
                                 <span className="intel-source-tag">{intel.location.data_source === 'open-meteo' ? 'Open-Meteo' : 'Astronomical'}</span>
+                            </div>
+                        )}
+
+                        {/* 3-Day Forecast */}
+                        {intel.location.forecast_3d && intel.location.forecast_3d.length > 0 && (
+                            <div className="intel-forecast-section">
+                                <h4 style={{ margin: '0 0 8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>3-Day Forecast</h4>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    {intel.location.forecast_3d.map((day, i) => {
+                                        const WMO_ICONS = { 0: '\u2600\uFE0F', 1: '\uD83C\uDF24\uFE0F', 2: '\u26C5', 3: '\u2601\uFE0F', 45: '\uD83C\uDF2B\uFE0F', 48: '\uD83C\uDF2B\uFE0F', 51: '\uD83C\uDF27\uFE0F', 53: '\uD83C\uDF27\uFE0F', 55: '\uD83C\uDF27\uFE0F', 61: '\uD83C\uDF27\uFE0F', 63: '\uD83C\uDF27\uFE0F', 65: '\uD83C\uDF27\uFE0F', 71: '\uD83C\uDF28\uFE0F', 73: '\uD83C\uDF28\uFE0F', 75: '\uD83C\uDF28\uFE0F', 80: '\uD83C\uDF27\uFE0F', 81: '\uD83C\uDF27\uFE0F', 82: '\uD83C\uDF27\uFE0F', 95: '\u26C8\uFE0F', 96: '\u26C8\uFE0F', 99: '\u26C8\uFE0F' }
+                                        const icon = WMO_ICONS[day.weather_code] || '\u2600\uFE0F'
+                                        return (
+                                            <div key={i} className="intel-metric-card" style={{ flex: 1, textAlign: 'center', padding: '10px 6px' }}>
+                                                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{day.date}</div>
+                                                <div style={{ fontSize: 22, margin: '4px 0' }}>{icon}</div>
+                                                <div style={{ fontSize: 12, color: 'var(--text-primary)' }}>
+                                                    {day.temp_max != null ? `${Math.round(day.temp_max)}°` : '--'} / {day.temp_min != null ? `${Math.round(day.temp_min)}°` : '--'}
+                                                </div>
+                                                {day.precipitation_mm != null && day.precipitation_mm > 0 && (
+                                                    <div style={{ fontSize: 10, color: 'var(--accent)' }}>{day.precipitation_mm.toFixed(1)}mm</div>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
                             </div>
                         )}
 

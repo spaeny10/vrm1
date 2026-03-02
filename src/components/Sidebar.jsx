@@ -1,11 +1,12 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { useCallback, useState, useEffect } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchFleetAlerts } from '../api/vrm'
 import { useAuth } from './AuthProvider'
 
-function Sidebar() {
+function Sidebar({ mobileOpen, onCloseMobile }) {
     const { user, logout } = useAuth()
+    const location = useLocation()
     const fetchAlertsFn = useCallback(() => fetchFleetAlerts(), [])
     const { data: alertsData } = useApiPolling(fetchAlertsFn, 60000)
     const alertCount = alertsData?.alerts?.length || 0
@@ -17,10 +18,15 @@ function Sidebar() {
         localStorage.setItem('vrm_theme', theme)
     }, [theme])
 
+    // Close mobile sidebar on navigation
+    useEffect(() => {
+        if (onCloseMobile) onCloseMobile()
+    }, [location.pathname])
+
     const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
     return (
-        <aside className="sidebar">
+        <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
             <div className="sidebar-brand">
                 <img src="/logo.webp" alt="BIGView" className="brand-logo" />
                 <span className="brand-omni">OMNI</span>

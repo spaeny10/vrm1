@@ -1,7 +1,7 @@
 import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview } from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
 import { useAuth } from '../components/AuthProvider'
 
@@ -32,6 +32,250 @@ function DroppableJobSiteRow({ jobSiteId, isOver, children }) {
         >
             {children}
         </tr>
+    )
+}
+
+function CustomerAccountsSection({ jobSites, toast, loadUsers }) {
+    const [customers, setCustomers] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [showCreate, setShowCreate] = useState(false)
+    const [newCustomer, setNewCustomer] = useState({ username: '', password: '', display_name: '', email: '' })
+    const [creating, setCreating] = useState(false)
+    const [editingSites, setEditingSites] = useState(null) // userId
+    const [selectedSites, setSelectedSites] = useState([])
+
+    const loadCustomers = useCallback(async () => {
+        setLoading(true)
+        try {
+            const data = await fetchUsers()
+            setCustomers((data.users || []).filter(u => u.role === 'customer'))
+        } catch (err) {
+            toast.error('Error loading customers: ' + err.message)
+        }
+        setLoading(false)
+    }, [toast])
+
+    useEffect(() => { loadCustomers() }, [loadCustomers])
+
+    const handleCreate = async (e) => {
+        e.preventDefault()
+        if (!newCustomer.username.trim() || !newCustomer.password.trim()) return
+        setCreating(true)
+        try {
+            await createUserAccount({
+                username: newCustomer.username.trim(),
+                password: newCustomer.password,
+                display_name: newCustomer.display_name.trim() || null,
+                role: 'customer',
+            })
+            toast.success(`Customer "${newCustomer.username}" created`)
+            setNewCustomer({ username: '', password: '', display_name: '', email: '' })
+            setShowCreate(false)
+            loadCustomers()
+            loadUsers()
+        } catch (err) {
+            toast.error('Error creating customer: ' + err.message)
+        }
+        setCreating(false)
+    }
+
+    const handleEditSites = async (userId) => {
+        try {
+            const data = await fetchCustomerSiteAccess(userId)
+            setSelectedSites(data.sites || [])
+            setEditingSites(userId)
+        } catch (err) {
+            toast.error('Error loading site access: ' + err.message)
+        }
+    }
+
+    const handleSaveSites = async () => {
+        try {
+            await updateCustomerSiteAccess(editingSites, selectedSites)
+            toast.success('Site access updated')
+            setEditingSites(null)
+        } catch (err) {
+            toast.error('Error updating site access: ' + err.message)
+        }
+    }
+
+    const toggleSite = (siteId) => {
+        setSelectedSites(prev =>
+            prev.includes(siteId) ? prev.filter(id => id !== siteId) : [...prev, siteId]
+        )
+    }
+
+    return (
+        <div className="settings-card settings-card-wide">
+            <div className="settings-card-header">
+                <h2>Customer Portal</h2>
+                <button className="btn btn-primary" onClick={() => setShowCreate(true)}>+ Add Customer</button>
+            </div>
+            <p className="settings-desc">
+                Customer accounts have read-only access to their assigned job sites. Create customer users and assign which sites they can see.
+            </p>
+
+            {showCreate && (
+                <div className="maint-form-overlay" onClick={() => setShowCreate(false)}>
+                    <div className="maint-form-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+                        <div className="maint-form-header">
+                            <h2>Create Customer</h2>
+                            <button className="detail-close" onClick={() => setShowCreate(false)}>✕</button>
+                        </div>
+                        <form onSubmit={handleCreate} className="maint-form">
+                            <div className="maint-form-grid">
+                                <div className="form-group">
+                                    <label>Username *</label>
+                                    <input type="text" value={newCustomer.username} onChange={e => setNewCustomer(p => ({ ...p, username: e.target.value }))} placeholder="customer-username" required autoFocus />
+                                </div>
+                                <div className="form-group">
+                                    <label>Password *</label>
+                                    <input type="password" value={newCustomer.password} onChange={e => setNewCustomer(p => ({ ...p, password: e.target.value }))} placeholder="password" required />
+                                </div>
+                                <div className="form-group">
+                                    <label>Display Name</label>
+                                    <input type="text" value={newCustomer.display_name} onChange={e => setNewCustomer(p => ({ ...p, display_name: e.target.value }))} placeholder="Company Name" />
+                                </div>
+                            </div>
+                            <div className="maint-form-actions">
+                                <button type="button" className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
+                                <button type="submit" className="btn btn-primary" disabled={creating}>{creating ? 'Creating...' : 'Create Customer'}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {editingSites && (
+                <div className="maint-form-overlay" onClick={() => setEditingSites(null)}>
+                    <div className="maint-form-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
+                        <div className="maint-form-header">
+                            <h2>Assign Sites</h2>
+                            <button className="detail-close" onClick={() => setEditingSites(null)}>✕</button>
+                        </div>
+                        <div style={{ padding: '16px 24px', maxHeight: 400, overflowY: 'auto' }}>
+                            {jobSites.filter(js => js.status === 'active').map(js => (
+                                <label key={js.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
+                                    <input type="checkbox" checked={selectedSites.includes(js.id)} onChange={() => toggleSite(js.id)} />
+                                    <span>{js.name}</span>
+                                    {js.address && <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 'auto' }}>{js.address}</span>}
+                                </label>
+                            ))}
+                        </div>
+                        <div className="maint-form-actions">
+                            <button className="btn btn-ghost" onClick={() => setEditingSites(null)}>Cancel</button>
+                            <button className="btn btn-primary" onClick={handleSaveSites}>Save ({selectedSites.length} sites)</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {loading ? (
+                <div className="empty-section"><p>Loading customers...</p></div>
+            ) : customers.length === 0 ? (
+                <div className="empty-section"><p>No customer accounts yet. Click "Add Customer" to create one.</p></div>
+            ) : (
+                <div className="jobsite-mgmt-table-wrapper">
+                    <table className="maint-table">
+                        <thead><tr><th>Username</th><th>Display Name</th><th>Sites</th><th>Actions</th></tr></thead>
+                        <tbody>
+                            {customers.map(c => (
+                                <tr key={c.id} className="maint-row">
+                                    <td className="maint-title">{c.username}</td>
+                                    <td>{c.display_name || '—'}</td>
+                                    <td>
+                                        <button className="btn btn-sm btn-secondary" onClick={() => handleEditSites(c.id)}>
+                                            Manage Sites
+                                        </button>
+                                    </td>
+                                    <td>
+                                        <button className="btn btn-sm btn-ghost" onClick={() => { deleteUserAccount(c.id).then(() => { loadCustomers(); loadUsers() }).catch(err => toast.error(err.message)) }}>
+                                            Remove
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+    )
+}
+
+function DigestSettingsSection({ toast }) {
+    const [preview, setPreview] = useState(null)
+    const [loadingPreview, setLoadingPreview] = useState(false)
+
+    const handlePreview = async () => {
+        setLoadingPreview(true)
+        try {
+            const data = await fetchDigestPreview()
+            setPreview(data.digest)
+        } catch (err) {
+            toast.error('Error loading preview: ' + err.message)
+        }
+        setLoadingPreview(false)
+    }
+
+    return (
+        <div className="settings-card">
+            <h2>Email Digest</h2>
+            <p className="settings-desc">
+                Automated daily fleet digests are configured via environment variables on the server.
+                Set <code>DIGEST_ENABLED=true</code>, <code>DIGEST_TIME=06:00</code>, <code>DIGEST_RECIPIENTS=email@example.com</code>, and <code>DIGEST_TIMEZONE=America/Denver</code>.
+            </p>
+            <div className="settings-actions">
+                <button className="btn btn-secondary" onClick={handlePreview} disabled={loadingPreview}>
+                    {loadingPreview ? 'Loading...' : 'Preview Digest Data'}
+                </button>
+            </div>
+            {preview && (
+                <div style={{ marginTop: 16, padding: 16, background: 'var(--bg-primary)', borderRadius: 'var(--radius)', fontSize: '0.85rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+                        <div><span style={{ color: 'var(--text-muted)' }}>Fleet Size</span><br /><strong>{preview.fleet_size}</strong></div>
+                        <div><span style={{ color: 'var(--text-muted)' }}>Avg SOC</span><br /><strong>{preview.avg_soc?.toFixed(1)}%</strong></div>
+                        <div><span style={{ color: 'var(--text-muted)' }}>Total Yield</span><br /><strong>{preview.total_yield_kwh?.toFixed(1)} kWh</strong></div>
+                    </div>
+                    {preview.trailers_below_50_soc?.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                            <strong style={{ color: 'var(--warning)' }}>Low SOC Trailers ({preview.trailers_below_50_soc.length}):</strong>
+                            <div style={{ marginTop: 4 }}>
+                                {preview.trailers_below_50_soc.map((t, i) => (
+                                    <span key={i} style={{ display: 'inline-block', padding: '2px 8px', margin: '2px 4px 2px 0', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', fontSize: '12px' }}>
+                                        {t.site_name}: {t.battery_soc?.toFixed(1)}%
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {preview.active_alerts?.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                            <strong style={{ color: 'var(--danger)' }}>Active Alerts ({preview.active_alerts.length}):</strong>
+                            <div style={{ marginTop: 4 }}>
+                                {preview.active_alerts.map((a, i) => (
+                                    <span key={i} style={{ display: 'inline-block', padding: '2px 8px', margin: '2px 4px 2px 0', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', fontSize: '12px' }}>
+                                        {a.site_name}: {a.severity} ({a.streak_days}d)
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {preview.predictive_warnings?.length > 0 && (
+                        <div>
+                            <strong style={{ color: 'var(--warning)' }}>Predictive Warnings ({preview.predictive_warnings.length}):</strong>
+                            <div style={{ marginTop: 4 }}>
+                                {preview.predictive_warnings.map((p, i) => (
+                                    <span key={i} style={{ display: 'inline-block', padding: '2px 8px', margin: '2px 4px 2px 0', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', fontSize: '12px' }}>
+                                        {p.site_name}: {p.days_to_critical}d to critical
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
     )
 }
 
@@ -482,6 +726,7 @@ function Settings() {
                                                     <option value="admin">Admin</option>
                                                     <option value="technician">Technician</option>
                                                     <option value="viewer">Viewer</option>
+                                                    <option value="customer">Customer</option>
                                                 </select>
                                             </div>
                                         </div>
@@ -534,6 +779,7 @@ function Settings() {
                                                             <option value="admin">Admin</option>
                                                             <option value="technician">Technician</option>
                                                             <option value="viewer">Viewer</option>
+                                                            <option value="customer">Customer</option>
                                                         </select>
                                                     </td>
                                                     <td>
@@ -595,6 +841,16 @@ function Settings() {
                     </div>
                 )}
 
+                {/* Customer Accounts */}
+                {isAdmin && (
+                    <CustomerAccountsSection jobSites={jobSites} toast={toast} loadUsers={loadUsers} />
+                )}
+
+                {/* Email Digest Settings */}
+                {isAdmin && (
+                    <DigestSettingsSection toast={toast} />
+                )}
+
                 {/* Job Sites Management */}
                 <div className="settings-card settings-card-wide">
                     <div className="settings-card-header">
@@ -631,6 +887,7 @@ function Settings() {
                                             <th>Active</th>
                                             <th>Call-off</th>
                                             <th>Pickup</th>
+                                            <th>Geofence</th>
                                             <th>Address</th>
                                         </tr>
                                     </thead>
@@ -740,6 +997,26 @@ function Settings() {
                                                                 onChange={e => handleDateChange(js.id, 'pickup_date', e.target.value)}
                                                             />
                                                         </td>
+                                                        <td className="jobsite-mgmt-date">
+                                                            <input
+                                                                type="number"
+                                                                className="date-input"
+                                                                style={{ width: 80 }}
+                                                                disabled={!canEdit}
+                                                                min={100}
+                                                                max={5000}
+                                                                step={100}
+                                                                value={js.geofence_radius_m || 500}
+                                                                onChange={e => {
+                                                                    const val = parseInt(e.target.value)
+                                                                    if (!isNaN(val) && val >= 100) {
+                                                                        updateJobSite(js.id, { geofence_radius_m: val })
+                                                                            .then(() => refetchJobSites())
+                                                                    }
+                                                                }}
+                                                            />
+                                                            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>m</span>
+                                                        </td>
                                                         <td className="jobsite-mgmt-address">
                                                             {js.address || '—'}
                                                         </td>
@@ -747,7 +1024,7 @@ function Settings() {
                                                     {isExpanded && trailers.map(t => (
                                                         <DraggableTrailerRow key={t.site_id} trailer={t} jobSite={js}>
                                                             <td className="trailer-assign-name">⠿ {t.site_name}</td>
-                                                            <td colSpan={7}>
+                                                            <td colSpan={8}>
                                                                 <select
                                                                     className="reassign-select"
                                                                     value={js.id}
