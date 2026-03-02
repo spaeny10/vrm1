@@ -400,7 +400,7 @@ function AnalyticsPage({ embedded }) {
                                 <tr>
                                     {[
                                         { key: 'name', label: 'Trailer', tip: 'Trailer name or identifier' },
-                                        { key: 'score', label: 'Solar Score', tip: 'Actual yield as a percentage of expected yield — measures how well panels are performing' },
+                                        { key: 'score', label: "Yesterday's Score", tip: "Yesterday's actual yield as a percentage of expected yield — a stable, completed-day measurement" },
                                         { key: 'avg7d', label: '7d Avg', tip: 'Average solar score over the last 7 days' },
                                         { key: 'performance', label: 'Panel Output', tip: 'Current panel wattage as a percentage of rated capacity' },
                                         { key: 'autonomy', label: 'Autonomy', tip: 'Estimated days the battery can last without solar input based on current consumption' },
