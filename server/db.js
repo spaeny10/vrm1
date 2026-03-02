@@ -412,6 +412,11 @@ export async function initDb() {
     `);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_maintenance_technician ON maintenance_logs(assigned_technician_id)`);
 
+        // Recurring maintenance support
+        await client.query(`ALTER TABLE maintenance_logs ADD COLUMN IF NOT EXISTS recurrence_rule TEXT`);
+        await client.query(`ALTER TABLE maintenance_logs ADD COLUMN IF NOT EXISTS recurrence_end_date BIGINT`);
+        await client.query(`ALTER TABLE maintenance_logs ADD COLUMN IF NOT EXISTS parent_log_id INTEGER REFERENCES maintenance_logs(id) ON DELETE SET NULL`);
+
         // Seed default checklist templates
         const checklistCount = await client.query(`SELECT count(*) FROM checklist_templates`);
         if (parseInt(checklistCount.rows[0].count) === 0) {
@@ -952,8 +957,9 @@ export async function insertMaintenanceLog(log) {
         `INSERT INTO maintenance_logs
          (job_site_id, site_id, visit_type, status, title, description, technician, assigned_technician_id,
           scheduled_date, completed_date, labor_hours, labor_cost_cents, parts_cost_cents, parts_used,
+          recurrence_rule, recurrence_end_date, parent_log_id,
           created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $18)
          RETURNING *`,
         [
             log.job_site_id || null, log.site_id || null, log.visit_type, log.status || 'scheduled',
@@ -961,6 +967,7 @@ export async function insertMaintenanceLog(log) {
             log.scheduled_date || null, log.completed_date || null,
             log.labor_hours || null, log.labor_cost_cents || 0, log.parts_cost_cents || 0,
             log.parts_used ? JSON.stringify(log.parts_used) : null,
+            log.recurrence_rule || null, log.recurrence_end_date || null, log.parent_log_id || null,
             now
         ]
     );
@@ -972,7 +979,8 @@ export async function updateMaintenanceLog(id, updates) {
     const allowedFields = [
         'job_site_id', 'site_id', 'visit_type', 'status', 'title', 'description',
         'technician', 'assigned_technician_id', 'scheduled_date', 'completed_date',
-        'labor_hours', 'labor_cost_cents', 'parts_cost_cents', 'parts_used'
+        'labor_hours', 'labor_cost_cents', 'parts_cost_cents', 'parts_used',
+        'recurrence_rule', 'recurrence_end_date', 'parent_log_id'
     ];
     const fields = [];
     const values = [];

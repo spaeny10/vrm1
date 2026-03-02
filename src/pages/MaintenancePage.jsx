@@ -24,6 +24,7 @@ const STATUS_TABS = [
     { key: 'scheduled', label: 'Scheduled' },
     { key: 'in_progress', label: 'In Progress' },
     { key: 'completed', label: 'Completed' },
+    { key: 'cancelled', label: 'Cancelled' },
 ]
 
 const TYPE_LABELS = {

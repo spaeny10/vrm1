@@ -13,7 +13,19 @@ const STATUSES = [
     { value: 'scheduled', label: 'Scheduled' },
     { value: 'in_progress', label: 'In Progress' },
     { value: 'completed', label: 'Completed' },
+    { value: 'cancelled', label: 'Cancelled' },
 ]
+
+const RECURRENCE_OPTIONS = [
+    { value: '', label: 'None (one-time)' },
+    { value: 'weekly', label: 'Weekly' },
+    { value: 'biweekly', label: 'Every 2 Weeks' },
+    { value: 'monthly', label: 'Monthly' },
+    { value: 'quarterly', label: 'Quarterly' },
+    { value: 'yearly', label: 'Yearly' },
+]
+
+const todayStr = () => new Date().toISOString().slice(0, 10)
 
 function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], onSave, onClose }) {
     const isEdit = !!log
@@ -31,11 +43,13 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
         completed_date: log?.completed_date ? new Date(Number(log.completed_date)).toISOString().slice(0, 10) : '',
         labor_hours: log?.labor_hours || '',
         labor_cost_cents: log?.labor_cost_cents ? (log.labor_cost_cents / 100).toFixed(2) : '',
-        parts_cost_cents: log?.parts_cost_cents ? (log.parts_cost_cents / 100).toFixed(2) : '',
         parts_used: log?.parts_used || [],
+        recurrence_rule: log?.recurrence_rule || '',
+        recurrence_end_date: log?.recurrence_end_date ? new Date(Number(log.recurrence_end_date)).toISOString().slice(0, 10) : '',
     })
 
     const [saving, setSaving] = useState(false)
+    const [error, setError] = useState(null)
 
     // Get trailers for selected job site
     const selectedSiteTrailers = useMemo(() => {
@@ -45,7 +59,24 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
     }, [formData.job_site_id, jobSites])
 
     const update = (field, value) => {
-        setFormData(prev => ({ ...prev, [field]: value }))
+        setFormData(prev => {
+            const next = { ...prev, [field]: value }
+
+            // Auto-fill completed_date when status changes to 'completed'
+            if (field === 'status' && value === 'completed' && !prev.completed_date) {
+                next.completed_date = todayStr()
+            }
+            // Auto-set status to 'completed' when completed_date is filled
+            if (field === 'completed_date' && value && prev.status !== 'completed' && prev.status !== 'cancelled') {
+                next.status = 'completed'
+            }
+            // Clear completed_date when changing away from completed
+            if (field === 'status' && value !== 'completed' && prev.status === 'completed') {
+                next.completed_date = ''
+            }
+
+            return next
+        })
     }
 
     // Handle issue template selection
@@ -68,7 +99,7 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
     // Handle technician user selection
     const handleTechUserSelect = (userId) => {
         if (!userId) {
-            update('assigned_technician_id', '')
+            setFormData(prev => ({ ...prev, assigned_technician_id: '', technician: '' }))
             return
         }
         const u = techUsers.find(u => String(u.id) === String(userId))
@@ -102,7 +133,12 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
         }))
     }
 
-    const [error, setError] = useState(null)
+    // Auto-calculate parts cost from individual items
+    const partsTotal = useMemo(() => {
+        return formData.parts_used.reduce((sum, p) => sum + ((p.cost_cents || 0) * (p.quantity || 1)), 0)
+    }, [formData.parts_used])
+
+    const partsTotalDollars = (partsTotal / 100).toFixed(2)
 
     const handleSubmit = async (e) => {
         e.preventDefault()
@@ -115,8 +151,19 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
             return
         }
 
+        // Validate recurrence requires scheduled_date
+        if (formData.recurrence_rule && !formData.scheduled_date) {
+            setError('Recurring tasks require a scheduled date')
+            return
+        }
+
         setSaving(true)
         try {
+            // Use auto-calculated parts cost if parts have individual costs, else use manual input
+            const computedPartsCents = partsTotal > 0 ? partsTotal : (formData.labor_cost_cents ? 0 : 0)
+            const manualPartsCents = formData.parts_cost_override ? Math.round(parseFloat(formData.parts_cost_override) * 100) : 0
+            const finalPartsCents = partsTotal > 0 ? partsTotal : manualPartsCents
+
             const payload = {
                 job_site_id: formData.job_site_id ? parseInt(formData.job_site_id) : null,
                 site_id: formData.site_id ? parseInt(formData.site_id) : null,
@@ -130,8 +177,10 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
                 completed_date: formData.completed_date ? new Date(formData.completed_date + 'T12:00:00').getTime() : null,
                 labor_hours: formData.labor_hours ? parseFloat(formData.labor_hours) : null,
                 labor_cost_cents: formData.labor_cost_cents ? Math.round(parseFloat(formData.labor_cost_cents) * 100) : 0,
-                parts_cost_cents: formData.parts_cost_cents ? Math.round(parseFloat(formData.parts_cost_cents) * 100) : 0,
+                parts_cost_cents: finalPartsCents,
                 parts_used: formData.parts_used.length > 0 ? formData.parts_used : null,
+                recurrence_rule: formData.recurrence_rule || null,
+                recurrence_end_date: formData.recurrence_end_date ? new Date(formData.recurrence_end_date + 'T12:00:00').getTime() : null,
             }
             await onSave(payload)
         } catch (err) {
@@ -143,9 +192,9 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
     // Calculate total cost
     const totalCost = useMemo(() => {
         const labor = formData.labor_cost_cents ? parseFloat(formData.labor_cost_cents) : 0
-        const parts = formData.parts_cost_cents ? parseFloat(formData.parts_cost_cents) : 0
+        const parts = partsTotal > 0 ? partsTotal / 100 : 0
         return (labor + parts).toFixed(2)
-    }, [formData.labor_cost_cents, formData.parts_cost_cents])
+    }, [formData.labor_cost_cents, partsTotal])
 
     return (
         <div className="maint-form-overlay" onClick={onClose}>
@@ -157,9 +206,9 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
 
                 <form onSubmit={handleSubmit} className="maint-form">
                     {/* Issue Template Selector */}
-                    {issueTemplates.length > 0 && !isEdit && (
+                    {issueTemplates.length > 0 && (
                         <div className="form-group form-group-wide" style={{ marginBottom: 16 }}>
-                            <label>Use Template</label>
+                            <label>{isEdit ? 'Apply Template' : 'Use Template'}</label>
                             <select
                                 defaultValue=""
                                 onChange={e => handleTemplateSelect(e.target.value)}
@@ -245,7 +294,7 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
                             />
                         </div>
 
-                        {/* Assigned Technician (user dropdown) */}
+                        {/* Assigned Technician */}
                         <div className="form-group">
                             <label>Assigned Technician</label>
                             {techUsers.length > 0 ? (
@@ -265,23 +314,10 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
                                     type="text"
                                     value={formData.technician}
                                     onChange={e => update('technician', e.target.value)}
-                                    placeholder="Name"
+                                    placeholder="Technician name"
                                 />
                             )}
                         </div>
-
-                        {/* Technician label fallback (shown when user dropdown is used) */}
-                        {techUsers.length > 0 && (
-                            <div className="form-group">
-                                <label>Technician Label</label>
-                                <input
-                                    type="text"
-                                    value={formData.technician}
-                                    onChange={e => update('technician', e.target.value)}
-                                    placeholder="Display name override"
-                                />
-                            </div>
-                        )}
 
                         {/* Scheduled Date */}
                         <div className="form-group">
@@ -302,6 +338,31 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
                                 onChange={e => update('completed_date', e.target.value)}
                             />
                         </div>
+
+                        {/* Recurrence */}
+                        {!isEdit && (
+                            <div className="form-group">
+                                <label>Recurrence</label>
+                                <select value={formData.recurrence_rule} onChange={e => update('recurrence_rule', e.target.value)}>
+                                    {RECURRENCE_OPTIONS.map(r => (
+                                        <option key={r.value} value={r.value}>{r.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {/* Recurrence End Date */}
+                        {!isEdit && formData.recurrence_rule && (
+                            <div className="form-group">
+                                <label>Repeat Until</label>
+                                <input
+                                    type="date"
+                                    value={formData.recurrence_end_date}
+                                    onChange={e => update('recurrence_end_date', e.target.value)}
+                                    placeholder="Leave blank for indefinite"
+                                />
+                            </div>
+                        )}
 
                         {/* Labor Hours */}
                         <div className="form-group">
@@ -328,19 +389,6 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
                                 placeholder="0.00"
                             />
                         </div>
-
-                        {/* Parts Cost */}
-                        <div className="form-group">
-                            <label>Parts Cost ($)</label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={formData.parts_cost_cents}
-                                onChange={e => update('parts_cost_cents', e.target.value)}
-                                placeholder="0.00"
-                            />
-                        </div>
                     </div>
 
                     {/* Parts Used */}
@@ -349,6 +397,14 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
                             <h4>Parts Used</h4>
                             <button type="button" className="btn btn-sm" onClick={addPart}>+ Add Part</button>
                         </div>
+                        {formData.parts_used.length > 0 && (
+                            <div className="maint-part-labels">
+                                <span className="part-label-name">Name</span>
+                                <span className="part-label-qty">Qty</span>
+                                <span className="part-label-cost">Unit Cost ($)</span>
+                                <span className="part-label-remove"></span>
+                            </div>
+                        )}
                         {formData.parts_used.map((part, i) => (
                             <div key={i} className="maint-part-row">
                                 <input
@@ -365,9 +421,21 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
                                     onChange={e => updatePart(i, 'quantity', parseInt(e.target.value) || 0)}
                                     className="part-qty"
                                 />
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    placeholder="0.00"
+                                    value={part.cost_cents ? (part.cost_cents / 100).toFixed(2) : ''}
+                                    onChange={e => updatePart(i, 'cost_cents', Math.round((parseFloat(e.target.value) || 0) * 100))}
+                                    className="part-cost"
+                                />
                                 <button type="button" className="maint-part-remove" onClick={() => removePart(i)}>✕</button>
                             </div>
                         ))}
+                        {partsTotal > 0 && (
+                            <div className="maint-parts-total">Parts Total: ${partsTotalDollars}</div>
+                        )}
                     </div>
 
                     {/* Total */}

@@ -3494,6 +3494,31 @@ tr:hover .btn-hq-toggle {
   width: 70px;
   flex: none;
 }
+.maint-part-row .part-cost {
+  width: 90px;
+  flex: none;
+}
+.maint-part-labels {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.maint-part-labels .part-label-name { flex: 1; }
+.maint-part-labels .part-label-qty { width: 70px; flex: none; }
+.maint-part-labels .part-label-cost { width: 90px; flex: none; }
+.maint-part-labels .part-label-remove { width: 26px; flex: none; }
+.maint-parts-total {
+  text-align: right;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
 .maint-part-remove {
   background: none;
   border: none;
