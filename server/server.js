@@ -470,13 +470,17 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
         }
     }
 
-    // Tier 3: SOC delta estimation (yield + SOC change × battery capacity)
+    // Tier 3: SOC delta estimation
+    // Energy balance: yield = battery_charge_change + consumption
+    // So: consumption = yield - battery_charge_change
+    // battery_charge_change = (currentSOC - startSOC) * battery_capacity / 100
+    // Positive change = battery gained energy, negative = battery lost energy
     if (consumedWh === null && yieldWh !== null && batterySoc !== null) {
         const socEntry = socStartOfDay.get(siteId);
         if (socEntry && socEntry.date === date && socEntry.soc !== null) {
-            const socDeltaWh = (socEntry.soc - batterySoc) * TRAILER_SPECS.battery.total_wh / 100;
-            const estimated = yieldWh + socDeltaWh;
-            if (estimated > 0) {
+            const batteryChargeChangeWh = (batterySoc - socEntry.soc) * TRAILER_SPECS.battery.total_wh / 100;
+            const estimated = yieldWh - batteryChargeChangeWh;
+            if (estimated >= 0) {
                 consumedWh = Math.round(estimated);
                 consumptionSource = 'SOC delta estimate';
             }
@@ -1049,11 +1053,42 @@ app.get('/api/fleet/energy', (req, res) => {
                 date,
                 yield_wh: info.yield_wh,
                 consumed_wh: info.consumed_wh,
+                consumption_source: info.consumption_source || null,
             }));
         result.push({ site_id: siteId, site_name: siteName, days: dailyData });
     }
     result.sort((a, b) => a.site_name.localeCompare(b.site_name, undefined, { numeric: true }));
     res.json({ success: true, records: result });
+});
+
+// Debug: energy consumption diagnostics
+app.get('/api/debug/energy', (req, res) => {
+    const date = todayStr();
+    const result = [];
+    for (const [siteId, snapshot] of snapshotCache.entries()) {
+        const socEntry = socStartOfDay.get(siteId);
+        const acc = consumptionAccumulator.get(siteId);
+        const energy = dailyEnergy.get(siteId)?.[date];
+        result.push({
+            site_id: siteId,
+            site_name: snapshot.site_name,
+            has_CE: snapshot.consumed_ah !== null && snapshot.consumed_ah !== undefined,
+            consumed_ah: snapshot.consumed_ah,
+            has_dc_load: snapshot.dc_load_watts !== null && snapshot.dc_load_watts !== undefined,
+            dc_load_watts: snapshot.dc_load_watts,
+            has_load_current: snapshot.load_current !== null && snapshot.load_current !== undefined,
+            load_current: snapshot.load_current,
+            battery_soc: snapshot.battery_soc,
+            battery_voltage: snapshot.battery_voltage,
+            soc_start_of_day: socEntry?.date === date ? socEntry.soc : null,
+            yield_today_kwh: snapshot.solar_yield_today,
+            accumulator_wh: acc?.date === date ? Math.round(acc.wh) : null,
+            energy_consumed_wh: energy?.consumed_wh ?? null,
+            consumption_source: energy?.consumption_source ?? null,
+        });
+    }
+    result.sort((a, b) => (a.site_name || '').localeCompare(b.site_name || '', undefined, { numeric: true }));
+    res.json({ date, trailer_count: result.length, trailers: result });
 });
 
 // Fleet alerts
