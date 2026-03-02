@@ -1146,6 +1146,14 @@ app.get('/api/fleet/network', (req, res) => {
 });
 
 
+// Debug: check bandwidth data source for a specific device
+app.get('/api/debug/bandwidth', (req, res) => {
+    const sample = Array.from(pepwaveCache.values()).slice(0, 3).map(r => ({
+        name: r.name, id: r.id, usage_mb: r.usage_mb, tx_mb: r.tx_mb, rx_mb: r.rx_mb,
+    }));
+    res.json({ sample, cache_size: pepwaveCache.size });
+});
+
 app.get('/api/fleet/network/:name', (req, res) => {
     const name = decodeURIComponent(req.params.name);
     const device = pepwaveCache.get(name);
@@ -2490,9 +2498,9 @@ async function pollIc2Devices() {
             console.log(`  IC2 bandwidth fetch failed: ${bwErr.message}`);
         }
 
-        // If bandwidth endpoint returned nothing, fall back to latest DB snapshots
+        // Always load latest non-zero usage from DB as fallback
         let dbUsageFallback = {};
-        if (Object.keys(bandwidthMap).length === 0 && dbAvailable) {
+        if (dbAvailable) {
             try {
                 const pool = (await import('./db.js')).getPool();
                 const fbResult = await pool.query(`
@@ -2503,16 +2511,17 @@ async function pollIc2Devices() {
                 `);
                 for (const row of fbResult.rows) {
                     dbUsageFallback[row.device_name] = {
-                        usage_mb: row.usage_mb || 0,
-                        tx_mb: row.tx_mb || 0,
-                        rx_mb: row.rx_mb || 0,
+                        usage_mb: parseFloat(row.usage_mb) || 0,
+                        tx_mb: parseFloat(row.tx_mb) || 0,
+                        rx_mb: parseFloat(row.rx_mb) || 0,
                     };
-                }
-                if (Object.keys(dbUsageFallback).length > 0) {
-                    console.log(`  IC2 bandwidth: using DB fallback for ${Object.keys(dbUsageFallback).length} devices`);
                 }
             } catch { /* ignore */ }
         }
+
+        const bwMapSize = Object.keys(bandwidthMap).length;
+        const dbFbSize = Object.keys(dbUsageFallback).length;
+        console.log(`  IC2 bandwidth: API=${bwMapSize} devices, DB fallback=${dbFbSize} devices`);
 
         for (const dev of devices) {
             const cellular = extractCellularInfo(dev);
@@ -2521,9 +2530,13 @@ async function pollIc2Devices() {
             // Get bandwidth: dedicated endpoint → device fields → DB fallback → 0
             const bw = bandwidthMap[dev.id] || bandwidthMap[dev.name] || {};
             const dbFb = dbUsageFallback[dev.name] || {};
-            const usageMb = bw.total_bytes ? bw.total_bytes / (1024 * 1024) : (dev.usage || dbFb.usage_mb || 0);
-            const txMb = bw.upload_bytes ? bw.upload_bytes / (1024 * 1024) : (dev.tx || dbFb.tx_mb || 0);
-            const rxMb = bw.download_bytes ? bw.download_bytes / (1024 * 1024) : (dev.rx || dbFb.rx_mb || 0);
+            let usageMb = bw.total_bytes ? bw.total_bytes / (1024 * 1024) : (dev.usage || 0);
+            let txMb = bw.upload_bytes ? bw.upload_bytes / (1024 * 1024) : (dev.tx || 0);
+            let rxMb = bw.download_bytes ? bw.download_bytes / (1024 * 1024) : (dev.rx || 0);
+            // If still 0 after API, use DB fallback
+            if (!usageMb && dbFb.usage_mb) usageMb = dbFb.usage_mb;
+            if (!txMb && dbFb.tx_mb) txMb = dbFb.tx_mb;
+            if (!rxMb && dbFb.rx_mb) rxMb = dbFb.rx_mb;
 
             const record = {
                 id: dev.id,
