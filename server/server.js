@@ -2487,18 +2487,43 @@ async function pollIc2Devices() {
                 console.log(`  IC2 bandwidth: fetched usage for ${Object.keys(bandwidthMap).length} devices`);
             }
         } catch (bwErr) {
-            console.log(`  IC2 bandwidth fetch: ${bwErr.message}`);
+            console.log(`  IC2 bandwidth fetch failed: ${bwErr.message}`);
+        }
+
+        // If bandwidth endpoint returned nothing, fall back to latest DB snapshots
+        let dbUsageFallback = {};
+        if (Object.keys(bandwidthMap).length === 0 && dbAvailable) {
+            try {
+                const pool = (await import('./db.js')).getPool();
+                const fbResult = await pool.query(`
+                    SELECT DISTINCT ON (device_name) device_name, usage_mb, tx_mb, rx_mb
+                    FROM pepwave_snapshots
+                    WHERE usage_mb > 0
+                    ORDER BY device_name, timestamp DESC
+                `);
+                for (const row of fbResult.rows) {
+                    dbUsageFallback[row.device_name] = {
+                        usage_mb: row.usage_mb || 0,
+                        tx_mb: row.tx_mb || 0,
+                        rx_mb: row.rx_mb || 0,
+                    };
+                }
+                if (Object.keys(dbUsageFallback).length > 0) {
+                    console.log(`  IC2 bandwidth: using DB fallback for ${Object.keys(dbUsageFallback).length} devices`);
+                }
+            } catch { /* ignore */ }
         }
 
         for (const dev of devices) {
             const cellular = extractCellularInfo(dev);
             const wanInterfaces = extractWanInterfaces(dev);
 
-            // Get bandwidth from dedicated endpoint, fallback to device-level fields
+            // Get bandwidth: dedicated endpoint → device fields → DB fallback → 0
             const bw = bandwidthMap[dev.id] || bandwidthMap[dev.name] || {};
-            const usageMb = bw.total_bytes ? bw.total_bytes / (1024 * 1024) : (dev.usage || 0);
-            const txMb = bw.upload_bytes ? bw.upload_bytes / (1024 * 1024) : (dev.tx || 0);
-            const rxMb = bw.download_bytes ? bw.download_bytes / (1024 * 1024) : (dev.rx || 0);
+            const dbFb = dbUsageFallback[dev.name] || {};
+            const usageMb = bw.total_bytes ? bw.total_bytes / (1024 * 1024) : (dev.usage || dbFb.usage_mb || 0);
+            const txMb = bw.upload_bytes ? bw.upload_bytes / (1024 * 1024) : (dev.tx || dbFb.tx_mb || 0);
+            const rxMb = bw.download_bytes ? bw.download_bytes / (1024 * 1024) : (dev.rx || dbFb.rx_mb || 0);
 
             const record = {
                 id: dev.id,

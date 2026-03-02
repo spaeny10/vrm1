@@ -24,7 +24,21 @@ In the service settings → **Variables**, add:
 | `ANTHROPIC_API_KEY` | Your Anthropic API key |
 | `JWT_SECRET` | A random secret string for JWT signing |
 
-### 4. Configure Build & Start
+### 4. Email & Digest Variables (Optional)
+
+These enable email alerts, geofence notifications, and daily digest emails. The app runs fine without them — email features are simply disabled.
+
+| Variable | Required? | Default | Description |
+|----------|-----------|---------|-------------|
+| `SENDGRID_API_KEY` | Yes (for any email) | — | Get from [SendGrid dashboard](https://app.sendgrid.com/settings/api_keys) (free tier: 100 emails/day) |
+| `ALERT_EMAIL_RECIPIENTS` | Yes (for alerts) | — | Comma-separated emails, e.g. `you@company.com,boss@company.com` |
+| `ALERT_FROM_EMAIL` | No | `noreply@bigview.ai` | Sender address (must be verified in SendGrid) |
+| `DIGEST_ENABLED` | No | `false` | Set to `true` to enable daily fleet digest emails |
+| `DIGEST_TIME` | No | `06:00` | Time to send digest (24h format) |
+| `DIGEST_RECIPIENTS` | Only if digest enabled | — | Comma-separated emails for digest |
+| `DIGEST_TIMEZONE` | No | `America/Denver` | Timezone for digest scheduling |
+
+### 5. Configure Build & Start
 Railway should auto-detect these, but verify in settings:
 
 | Setting | Value |
