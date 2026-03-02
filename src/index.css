@@ -3522,6 +3522,16 @@ tr:hover .btn-hq-toggle {
   color: var(--text-primary);
 }
 
+.maint-form-error {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: rgba(231, 76, 60, 0.12);
+  border: 1px solid rgba(231, 76, 60, 0.3);
+  border-radius: var(--radius);
+  color: #e74c3c;
+  font-size: 13px;
+}
+
 .maint-form-actions {
   display: flex;
   justify-content: flex-end;
@@ -5424,6 +5434,10 @@ tr:hover .btn-hq-toggle {
 .work-card:hover {
   background: var(--bg-card-hover);
   transform: translateY(-1px);
+}
+
+.work-card-overdue {
+  border-left: 3px solid #e74c3c;
 }
 
 .work-card-header {

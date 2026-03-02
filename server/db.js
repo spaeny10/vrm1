@@ -893,10 +893,12 @@ export async function getTrailersWithGps() {
 
 export async function getMaintenanceLogs(filters = {}) {
     if (!pool) return [];
-    let query = `SELECT ml.*, js.name as job_site_name, ta.site_name as trailer_name
+    let query = `SELECT ml.*, js.name as job_site_name, ta.site_name as trailer_name,
+                        u.display_name as assigned_technician_name
                  FROM maintenance_logs ml
                  LEFT JOIN job_sites js ON ml.job_site_id = js.id
                  LEFT JOIN trailer_assignments ta ON ml.site_id = ta.site_id
+                 LEFT JOIN users u ON ml.assigned_technician_id = u.id
                  WHERE 1=1`;
     const params = [];
     let idx = 1;
@@ -931,10 +933,12 @@ export async function getMaintenanceLogs(filters = {}) {
 export async function getMaintenanceLog(id) {
     if (!pool) return null;
     const result = await pool.query(
-        `SELECT ml.*, js.name as job_site_name, ta.site_name as trailer_name
+        `SELECT ml.*, js.name as job_site_name, ta.site_name as trailer_name,
+                u.display_name as assigned_technician_name
          FROM maintenance_logs ml
          LEFT JOIN job_sites js ON ml.job_site_id = js.id
          LEFT JOIN trailer_assignments ta ON ml.site_id = ta.site_id
+         LEFT JOIN users u ON ml.assigned_technician_id = u.id
          WHERE ml.id = $1`,
         [id]
     );
@@ -946,14 +950,14 @@ export async function insertMaintenanceLog(log) {
     const now = Date.now();
     const result = await pool.query(
         `INSERT INTO maintenance_logs
-         (job_site_id, site_id, visit_type, status, title, description, technician,
+         (job_site_id, site_id, visit_type, status, title, description, technician, assigned_technician_id,
           scheduled_date, completed_date, labor_hours, labor_cost_cents, parts_cost_cents, parts_used,
           created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
          RETURNING *`,
         [
             log.job_site_id || null, log.site_id || null, log.visit_type, log.status || 'scheduled',
-            log.title, log.description || null, log.technician || null,
+            log.title, log.description || null, log.technician || null, log.assigned_technician_id || null,
             log.scheduled_date || null, log.completed_date || null,
             log.labor_hours || null, log.labor_cost_cents || 0, log.parts_cost_cents || 0,
             log.parts_used ? JSON.stringify(log.parts_used) : null,
@@ -967,8 +971,8 @@ export async function updateMaintenanceLog(id, updates) {
     if (!pool) return null;
     const allowedFields = [
         'job_site_id', 'site_id', 'visit_type', 'status', 'title', 'description',
-        'technician', 'scheduled_date', 'completed_date', 'labor_hours',
-        'labor_cost_cents', 'parts_cost_cents', 'parts_used'
+        'technician', 'assigned_technician_id', 'scheduled_date', 'completed_date',
+        'labor_hours', 'labor_cost_cents', 'parts_cost_cents', 'parts_used'
     ];
     const fields = [];
     const values = [];

@@ -119,14 +119,14 @@ function MaintenancePage() {
     useEffect(() => {
         fetchIssueTemplates()
             .then(data => setIssueTemplates(data.templates || []))
-            .catch(() => {})
+            .catch(err => toast.error(`Failed to load templates: ${err.message}`))
     }, [])
 
     // Load users on mount (for technician dropdown)
     useEffect(() => {
         fetchUsers()
             .then(data => setTechUsers(data.users || []))
-            .catch(() => {})
+            .catch(err => toast.error(`Failed to load users: ${err.message}`))
     }, [])
 
     // Load calendar data when month changes or view switches to calendar
@@ -136,7 +136,7 @@ function MaintenancePage() {
         const end = new Date(calYear, calMonth + 1, 0).toISOString().slice(0, 10)
         fetchMaintenanceCalendar(start, end)
             .then(data => setCalendarItems(data.items || data.logs || []))
-            .catch(() => setCalendarItems([]))
+            .catch(err => { setCalendarItems([]); toast.error(`Calendar load failed: ${err.message}`) })
     }, [viewMode, calYear, calMonth])
 
     // My Tasks data
@@ -153,7 +153,14 @@ function MaintenancePage() {
         const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
         const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999)
         const now = Date.now()
+        const term = searchTerm.toLowerCase()
         for (const log of myWorkLogs) {
+            if (term && !(
+                log.title.toLowerCase().includes(term) ||
+                (log.job_site_name || '').toLowerCase().includes(term) ||
+                (log.trailer_name || '').toLowerCase().includes(term) ||
+                (log.technician || '').toLowerCase().includes(term)
+            )) continue
             if (log.status === 'completed') {
                 if (toMs(log.completed_date) > now - 7 * 86400000) recentCompleted.push(log)
                 continue
@@ -169,7 +176,7 @@ function MaintenancePage() {
         }
         upcoming.sort((a, b) => (toMs(a.scheduled_date) || Infinity) - (toMs(b.scheduled_date) || Infinity))
         return { overdue, inProgress, dueToday, upcoming, recentCompleted }
-    }, [myWorkLogs])
+    }, [myWorkLogs, searchTerm])
 
     const handleMyTaskStatus = async (id, newStatus) => {
         setUpdatingId(id)
@@ -188,10 +195,7 @@ function MaintenancePage() {
         }
     }
 
-    const visitTypeLabel = (type) => {
-        const labels = { inspection: 'Inspection', repair: 'Repair', scheduled: 'Scheduled', emergency: 'Emergency', installation: 'Install', decommission: 'Decom' }
-        return labels[type] || type
-    }
+    const visitTypeLabel = (type) => TYPE_LABELS[type] || type
 
     const formatShortDate = (ts) => {
         const ms = toMs(ts)
@@ -317,22 +321,36 @@ function MaintenancePage() {
     }, [filteredLogs])
 
     const handleSave = async (formData) => {
-        if (editingLog) {
-            await updateMaintenanceLog(editingLog.id, formData)
-        } else {
-            await createMaintenanceLog(formData)
+        try {
+            if (editingLog) {
+                await updateMaintenanceLog(editingLog.id, formData)
+                toast.success('Maintenance log updated')
+            } else {
+                await createMaintenanceLog(formData)
+                toast.success('Maintenance log created')
+            }
+            setShowForm(false)
+            setEditingLog(null)
+            refetchLogs()
+            refetchStats()
+            refetchMyWork()
+        } catch (err) {
+            toast.error(`Save failed: ${err.message}`)
+            throw err // re-throw so the form stays open
         }
-        setShowForm(false)
-        setEditingLog(null)
-        refetchLogs()
-        refetchStats()
     }
 
     const handleDelete = async (id) => {
         if (!confirm('Cancel this maintenance log?')) return
-        await deleteMaintenanceLog(id)
-        refetchLogs()
-        refetchStats()
+        try {
+            await deleteMaintenanceLog(id)
+            toast.success('Maintenance log cancelled')
+            refetchLogs()
+            refetchStats()
+            refetchMyWork()
+        } catch (err) {
+            toast.error(`Delete failed: ${err.message}`)
+        }
     }
 
     const handleEdit = (log) => {
@@ -355,9 +373,11 @@ function MaintenancePage() {
     }
 
     const handleExportCSV = () => {
-        const headers = ['Date', 'Job Site', 'Trailer', 'Title', 'Type', 'Status', 'Technician', 'Labor Hours', 'Labor Cost', 'Parts Cost', 'Total Cost', 'Description']
+        const headers = ['Scheduled Date', 'Completed Date', 'Created', 'Job Site', 'Trailer', 'Title', 'Type', 'Status', 'Technician', 'Labor Hours', 'Labor Cost', 'Parts Cost', 'Total Cost', 'Description']
         const rows = filteredLogs.map(log => [
-            formatDate(log.scheduled_date || log.created_at),
+            formatDate(log.scheduled_date),
+            formatDate(log.completed_date),
+            formatDate(log.created_at),
             log.job_site_name || '',
             log.trailer_name || '',
             log.title,
@@ -435,20 +455,18 @@ function MaintenancePage() {
 
             {/* Controls */}
             <div className="fleet-controls">
-                {statusFilter !== 'my_tasks' && (
-                    <div className="search-box">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <circle cx="11" cy="11" r="8" />
-                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                        </svg>
-                        <input
-                            type="text"
-                            placeholder="Search logs..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-                )}
+                <div className="search-box">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    <input
+                        type="text"
+                        placeholder={statusFilter === 'my_tasks' ? 'Search my tasks...' : 'Search logs...'}
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
 
                 {statusFilter !== 'my_tasks' && (
                     <div className="view-toggle">
@@ -519,19 +537,21 @@ function MaintenancePage() {
                             <h3 className="work-section-title work-section-red">Overdue</h3>
                             <div className="work-cards-grid">
                                 {myTasksCategorized.overdue.map(log => (
-                                    <div key={log.id} className="work-card">
+                                    <div key={log.id} className="work-card work-card-overdue">
                                         <div className="work-card-header">
                                             <span className={`maint-status-badge maint-status-${log.status === 'in_progress' ? 'yellow' : 'blue'}`}>{visitTypeLabel(log.visit_type)}</span>
                                             <span className="work-overdue-tag">OVERDUE</span>
                                         </div>
                                         <h4 className="work-card-title">{log.title}</h4>
+                                        {log.description && <p className="work-card-desc">{log.description.length > 120 ? log.description.slice(0, 120) + '...' : log.description}</p>}
                                         <div className="work-card-meta">
                                             {log.job_site_name && <span>{log.job_site_name}</span>}
                                             {log.scheduled_date && <span>{formatShortDate(log.scheduled_date)}</span>}
+                                            {log.labor_hours && <span>{log.labor_hours}h est.</span>}
                                         </div>
                                         <div className="work-card-actions">
                                             <button className="btn btn-sm btn-primary" onClick={() => handleMyTaskStatus(log.id, 'in_progress')} disabled={updatingId === log.id}>Start Work</button>
-                                            <button className="btn btn-sm btn-ghost" onClick={() => handleEdit(log)}>Details</button>
+                                            <button className="btn btn-sm btn-ghost" onClick={() => handleEdit(log)}>Edit</button>
                                         </div>
                                     </div>
                                 ))}
@@ -549,13 +569,15 @@ function MaintenancePage() {
                                             <span className="maint-status-badge maint-status-yellow">{visitTypeLabel(log.visit_type)}</span>
                                         </div>
                                         <h4 className="work-card-title">{log.title}</h4>
+                                        {log.description && <p className="work-card-desc">{log.description.length > 120 ? log.description.slice(0, 120) + '...' : log.description}</p>}
                                         <div className="work-card-meta">
                                             {log.job_site_name && <span>{log.job_site_name}</span>}
                                             {log.scheduled_date && <span>{formatShortDate(log.scheduled_date)}</span>}
+                                            {log.labor_hours && <span>{log.labor_hours}h est.</span>}
                                         </div>
                                         <div className="work-card-actions">
                                             <button className="btn btn-sm btn-success" onClick={() => handleMyTaskStatus(log.id, 'completed')} disabled={updatingId === log.id}>Mark Complete</button>
-                                            <button className="btn btn-sm btn-ghost" onClick={() => handleEdit(log)}>Details</button>
+                                            <button className="btn btn-sm btn-ghost" onClick={() => handleEdit(log)}>Edit</button>
                                         </div>
                                     </div>
                                 ))}
@@ -573,12 +595,14 @@ function MaintenancePage() {
                                             <span className="maint-status-badge maint-status-blue">{visitTypeLabel(log.visit_type)}</span>
                                         </div>
                                         <h4 className="work-card-title">{log.title}</h4>
+                                        {log.description && <p className="work-card-desc">{log.description.length > 120 ? log.description.slice(0, 120) + '...' : log.description}</p>}
                                         <div className="work-card-meta">
                                             {log.job_site_name && <span>{log.job_site_name}</span>}
+                                            {log.labor_hours && <span>{log.labor_hours}h est.</span>}
                                         </div>
                                         <div className="work-card-actions">
                                             <button className="btn btn-sm btn-primary" onClick={() => handleMyTaskStatus(log.id, 'in_progress')} disabled={updatingId === log.id}>Start Work</button>
-                                            <button className="btn btn-sm btn-ghost" onClick={() => handleEdit(log)}>Details</button>
+                                            <button className="btn btn-sm btn-ghost" onClick={() => handleEdit(log)}>Edit</button>
                                         </div>
                                     </div>
                                 ))}
@@ -596,12 +620,14 @@ function MaintenancePage() {
                                             <span className="maint-status-badge maint-status-blue">{visitTypeLabel(log.visit_type)}</span>
                                         </div>
                                         <h4 className="work-card-title">{log.title}</h4>
+                                        {log.description && <p className="work-card-desc">{log.description.length > 120 ? log.description.slice(0, 120) + '...' : log.description}</p>}
                                         <div className="work-card-meta">
                                             {log.job_site_name && <span>{log.job_site_name}</span>}
                                             {log.scheduled_date && <span>{formatShortDate(log.scheduled_date)}</span>}
+                                            {log.labor_hours && <span>{log.labor_hours}h est.</span>}
                                         </div>
                                         <div className="work-card-actions">
-                                            <button className="btn btn-sm btn-ghost" onClick={() => handleEdit(log)}>Details</button>
+                                            <button className="btn btn-sm btn-ghost" onClick={() => handleEdit(log)}>Edit</button>
                                         </div>
                                     </div>
                                 ))}
@@ -609,10 +635,18 @@ function MaintenancePage() {
                         </section>
                     )}
 
-                    {myWorkLogs.length === 0 && (
+                    {myWorkLogs.length === 0 && !searchTerm && (
                         <div className="work-empty">
                             <p>No tasks assigned to you yet.</p>
                             <p className="text-muted">Tasks will appear here when maintenance is assigned to your account.</p>
+                        </div>
+                    )}
+                    {searchTerm && myWorkLogs.length > 0 &&
+                        !myTasksCategorized.overdue.length && !myTasksCategorized.inProgress.length &&
+                        !myTasksCategorized.dueToday.length && !myTasksCategorized.upcoming.length &&
+                        !myTasksCategorized.recentCompleted.length && (
+                        <div className="work-empty">
+                            <p>No tasks match "{searchTerm}"</p>
                         </div>
                     )}
                 </div>
@@ -682,7 +716,7 @@ function MaintenancePage() {
                                                 <td className="maint-title">{item.title}</td>
                                                 <td><span className="maint-type-badge">{TYPE_LABELS[item.visit_type] || item.visit_type}</span></td>
                                                 <td>{item.job_site_name || '—'}</td>
-                                                <td className="maint-tech">{item.technician || '—'}</td>
+                                                <td className="maint-tech">{item.assigned_technician_name || item.technician || '—'}</td>
                                                 <td>{statusBadge(item.status)}</td>
                                             </tr>
                                         ))}
@@ -731,7 +765,7 @@ function MaintenancePage() {
                                                     <td className="maint-title">{log.title}</td>
                                                     <td><span className="maint-type-badge">{TYPE_LABELS[log.visit_type] || log.visit_type}</span></td>
                                                     <td className="maint-trailer">{log.trailer_name || '—'}</td>
-                                                    <td className="maint-tech">{log.technician || '—'}</td>
+                                                    <td className="maint-tech">{log.assigned_technician_name || log.technician || '—'}</td>
                                                     <td className="maint-cost">{formatCost(log.labor_cost_cents + log.parts_cost_cents)}</td>
                                                     <td>{statusBadge(log.status)}</td>
                                                     {canEdit && (
@@ -776,7 +810,7 @@ function MaintenancePage() {
                                                     <td className="maint-date">{formatDate(log.scheduled_date || log.created_at)}</td>
                                                     <td className="maint-title">{log.title}</td>
                                                     <td><span className="maint-type-badge">{TYPE_LABELS[log.visit_type] || log.visit_type}</span></td>
-                                                    <td className="maint-tech">{log.technician || '—'}</td>
+                                                    <td className="maint-tech">{log.assigned_technician_name || log.technician || '—'}</td>
                                                     <td className="maint-cost">{formatCost(log.labor_cost_cents + log.parts_cost_cents)}</td>
                                                     <td>{statusBadge(log.status)}</td>
                                                     {canEdit && (

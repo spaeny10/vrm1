@@ -102,9 +102,18 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
         }))
     }
 
+    const [error, setError] = useState(null)
+
     const handleSubmit = async (e) => {
         e.preventDefault()
+        setError(null)
         if (!formData.title.trim() || !formData.visit_type) return
+
+        // Validate completed date is not before scheduled date
+        if (formData.scheduled_date && formData.completed_date && formData.completed_date < formData.scheduled_date) {
+            setError('Completed date cannot be before the scheduled date')
+            return
+        }
 
         setSaving(true)
         try {
@@ -126,7 +135,7 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
             }
             await onSave(payload)
         } catch (err) {
-            console.error('Failed to save:', err)
+            setError(err.message || 'Failed to save')
         }
         setSaving(false)
     }
@@ -366,6 +375,11 @@ function MaintenanceForm({ log, jobSites, issueTemplates = [], techUsers = [], o
                         <span>Total Cost:</span>
                         <strong>${totalCost}</strong>
                     </div>
+
+                    {/* Error */}
+                    {error && (
+                        <div className="maint-form-error">{error}</div>
+                    )}
 
                     {/* Actions */}
                     <div className="maint-form-actions">
