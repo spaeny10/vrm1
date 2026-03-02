@@ -187,6 +187,7 @@ const SITES_CACHE_TTL = 5 * 60 * 1000;
 // In-memory snapshot cache: siteId -> latest snapshot data
 const snapshotCache = new Map();
 let dbAvailable = false;
+let pgvectorAvailable = false;
 
 // Pepwave device cache: deviceName -> device data
 const pepwaveCache = new Map();
@@ -2327,7 +2328,7 @@ async function pollAllSites() {
         }
 
         // Auto-generate embeddings for new data (async, don't block)
-        if (dbAvailable && isEmbeddingsConfigured() && snapshotCache.size > 0) {
+        if (dbAvailable && pgvectorAvailable && isEmbeddingsConfigured() && snapshotCache.size > 0) {
             generateEmbeddingsAsync().catch(err =>
                 console.error('  Background embedding generation failed:', err.message)
             );
@@ -2576,7 +2577,7 @@ async function pollIc2Devices() {
 // Background Embedding Generation
 // ============================================================
 async function generateEmbeddingsAsync() {
-    if (!isEmbeddingsConfigured() || !dbAvailable) return;
+    if (!isEmbeddingsConfigured() || !dbAvailable || !pgvectorAvailable) return;
 
     try {
         // Get current sites from snapshot cache
@@ -2804,8 +2805,8 @@ app.post('/api/search/semantic', async (req, res) => {
         return res.status(501).json({ error: 'Voyage API key not configured' });
     }
 
-    if (!dbAvailable) {
-        return res.status(503).json({ error: 'Database not available' });
+    if (!dbAvailable || !pgvectorAvailable) {
+        return res.status(503).json({ error: 'Semantic search not available (pgvector required)' });
     }
 
     const { query, contentTypes, limit } = req.body;
@@ -2880,7 +2881,7 @@ app.post('/api/search/semantic', async (req, res) => {
 // Get embedding stats
 app.get('/api/embeddings/stats', async (req, res) => {
     try {
-        if (!dbAvailable) {
+        if (!dbAvailable || !pgvectorAvailable) {
             return res.json({ success: true, stats: [] });
         }
         const stats = await getEmbeddingStats();
@@ -2896,8 +2897,8 @@ app.post('/api/embeddings/generate', requireRole('admin'), async (req, res) => {
         return res.status(501).json({ error: 'Voyage API key not configured' });
     }
 
-    if (!dbAvailable) {
-        return res.status(503).json({ error: 'Database not available' });
+    if (!dbAvailable || !pgvectorAvailable) {
+        return res.status(503).json({ error: 'Semantic search not available (pgvector required)' });
     }
 
     try {
@@ -3407,6 +3408,13 @@ async function start() {
         dbPool = await initDb();
         dbAvailable = true;
         console.log('PostgreSQL database connected');
+        // Check if pgvector / fleet_embeddings table exists
+        try {
+            await dbPool.query(`SELECT 1 FROM fleet_embeddings LIMIT 0`);
+            pgvectorAvailable = true;
+        } catch {
+            pgvectorAvailable = false;
+        }
     } catch (err) {
         dbAvailable = false;
         console.warn('PostgreSQL not available — using in-memory cache only');
