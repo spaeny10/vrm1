@@ -2254,9 +2254,12 @@ app.post('/api/analyze/trailer/:id', async (req, res) => {
             `Firmware: ${fmt(snapshot.firmware_version)}`,
             '',
             '=== COMPUTED INTELLIGENCE ===',
-            `Solar Score: ${fmt(intel.solar.score, '%')} (${intel.solar.score_label ?? 'N/A'}) — location+weather adjusted`,
+            `Yesterday's Solar Score: ${fmt(intel.solar.score, '%')} (${intel.solar.score_label ?? 'N/A'}) — completed day, location+weather adjusted`,
+            `${intel.solar.throttled ? '  ⚡ MPPT was throttled (battery full) — score adjusted for idle/float curtailment' : ''}`,
+            `${intel.solar.raw_score !== null && intel.solar.raw_score !== intel.solar.score ? `  Raw score before adjustment: ${intel.solar.raw_score}%` : ''}`,
+            `7-Day Avg Score: ${fmt(intel.solar.avg_7d_score, '%')} — use this alongside yesterday's score for trend analysis`,
+            `Today's Live Score (partial day): ${fmt(intel.solar.today_live_score, '%')} — still accumulating, do NOT use for performance evaluation`,
             `Panel Performance (now): ${fmt(intel.solar.panel_performance_pct, '%')} of ${TRAILER_SPECS.solar.total_watts}W rated`,
-            `7-Day Avg Score: ${fmt(intel.solar.avg_7d_score, '%')}`,
             `Days of Autonomy: ${fmt(intel.battery.days_of_autonomy)}`,
             `Est. Charge Time to Full: ${intel.battery.charge_time_hours ? intel.battery.charge_time_hours + 'h' : 'N/A'}`,
             `Battery Temp Status: ${fmt(intel.battery.temp_status)}`,
@@ -2302,9 +2305,10 @@ Analyze the trailer data and provide:
 4. RISK ASSESSMENT (low/medium/high with brief explanation)
 
 Consider:
-- Is the Solar Score reasonable for the location and weather conditions?
+- Evaluate solar performance using YESTERDAY'S SCORE (completed day) and the 7-DAY AVERAGE — do NOT use today's live score as it's a partial day still accumulating
+- If the MPPT was throttled (idle/float due to full battery), note that reduced yield is expected behavior, not a problem
 - Is the battery being drawn down faster than it charges?
-- Are there signs of panel degradation or underperformance?
+- Are there signs of panel degradation or underperformance based on yesterday and the 7-day trend?
 - How many days can this trailer run without sunlight?
 - Any temperature or voltage concerns?
 - Are there active alarms or error codes that need attention?
