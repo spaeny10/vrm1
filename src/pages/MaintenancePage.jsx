@@ -37,9 +37,17 @@ const TYPE_LABELS = {
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+// PostgreSQL BIGINT comes back as a string — normalize to number
+function toMs(ts) {
+    if (!ts) return null
+    const n = Number(ts)
+    return !isNaN(n) && n > 1e9 ? n : new Date(ts).getTime() || null
+}
+
 function formatDate(ts) {
-    if (!ts) return '—'
-    return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+    const ms = toMs(ts)
+    if (!ms) return '—'
+    return new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function formatCost(cents) {
@@ -62,8 +70,9 @@ function getCalendarDays(year, month) {
 }
 
 function dateToDayKey(ts) {
-    if (!ts) return null
-    const d = new Date(ts)
+    const ms = toMs(ts)
+    if (!ms) return null
+    const d = new Date(ms)
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
@@ -146,18 +155,19 @@ function MaintenancePage() {
         const now = Date.now()
         for (const log of myWorkLogs) {
             if (log.status === 'completed') {
-                if (log.completed_date && log.completed_date > now - 7 * 86400000) recentCompleted.push(log)
+                if (toMs(log.completed_date) > now - 7 * 86400000) recentCompleted.push(log)
                 continue
             }
             if (log.status === 'cancelled') continue
             if (log.status === 'in_progress') { inProgress.push(log); continue }
-            if (log.scheduled_date) {
-                if (log.scheduled_date < todayStart.getTime()) overdue.push(log)
-                else if (log.scheduled_date <= todayEnd.getTime()) dueToday.push(log)
+            const sd = toMs(log.scheduled_date)
+            if (sd) {
+                if (sd < todayStart.getTime()) overdue.push(log)
+                else if (sd <= todayEnd.getTime()) dueToday.push(log)
                 else upcoming.push(log)
             } else { upcoming.push(log) }
         }
-        upcoming.sort((a, b) => (a.scheduled_date || Infinity) - (b.scheduled_date || Infinity))
+        upcoming.sort((a, b) => (toMs(a.scheduled_date) || Infinity) - (toMs(b.scheduled_date) || Infinity))
         return { overdue, inProgress, dueToday, upcoming, recentCompleted }
     }, [myWorkLogs])
 
@@ -183,7 +193,8 @@ function MaintenancePage() {
         return labels[type] || type
     }
 
-    const formatShortDate = (ms) => {
+    const formatShortDate = (ts) => {
+        const ms = toMs(ts)
         if (!ms) return '—'
         return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     }
