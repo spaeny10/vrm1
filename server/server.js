@@ -439,7 +439,9 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
     let consumptionSource = null;
 
     // Tier 1: CE diagnostic (consumed Ah × voltage) — most accurate
-    if (consumedAh !== null && voltage !== null) {
+    // CE resets to 0 when the battery synchronizes at 100% SOC, so CE=0
+    // is unreliable — skip to lower tiers for a better estimate
+    if (consumedAh !== null && consumedAh !== 0 && voltage !== null) {
         consumedWh = Math.abs(consumedAh) * voltage;
         consumptionSource = 'CE diagnostic';
     }
