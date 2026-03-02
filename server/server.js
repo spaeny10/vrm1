@@ -219,7 +219,7 @@ const consumptionAccumulator = new Map();
 // Trailer Hardware Specifications
 // ============================================================
 const TRAILER_SPECS = {
-    solar: { panels: 3, panel_watts: 435, total_watts: 1305, system_efficiency: 0.80 },
+    solar: { panels: 3, panel_watts: 435, total_watts: 1305, system_efficiency: 0.70 },
     battery: { chemistry: 'LiFePO4', count: 2, config: 'parallel', ah_per_battery: 230, voltage: 25.6, total_ah: 460, total_wh: 11776, min_soc_threshold: 20, usable_wh: 9421 },
 };
 
@@ -229,11 +229,11 @@ const TRAILER_SPECS = {
 const SOLAR_SCORE_DEFAULTS = {
     throttle_soc_threshold: 95,    // SOC % above which throttling is detected
     throttle_floor_soc: 98,        // SOC % above which minimum score floor applies
-    throttle_floor_score: 90,      // Minimum score when floor condition met
+    throttle_floor_score: 80,      // Minimum score when floor condition met
     throttle_panel_min_pct: 10,    // Panel output % threshold to confirm system health
-    score_excellent: 90,           // Score threshold for "Excellent"
-    score_good: 70,                // Score threshold for "Good"
-    score_fair: 50,                // Score threshold for "Fair"
+    score_excellent: 80,           // Score threshold for "Excellent"
+    score_good: 60,                // Score threshold for "Good"
+    score_fair: 40,                // Score threshold for "Fair"
 };
 let solarScoreConfig = { ...SOLAR_SCORE_DEFAULTS };
 
@@ -391,15 +391,28 @@ async function computeTrailerIntelligence(siteId) {
             avgDailyYieldWh = Math.round(yieldValues.reduce((s, v) => s + v, 0) / yieldValues.length);
         }
     }
-    const avg7dScore = (avgDailyYieldWh !== null && expectedDailyYieldWh > 0)
-        ? Math.round((avgDailyYieldWh / expectedDailyYieldWh) * 1000) / 10
-        : null;
 
-    // --- Yesterday's score (primary — completed day, stable number) ---
+    // --- 7-day average score: per-day scores using each day's stored expected yield ---
+    let avg7dScore = null;
+    if (pastDays.length > 0) {
+        const dayScores = pastDays
+            .filter(([, d]) => d.yield_wh != null && d.yield_wh > 0)
+            .map(([, d]) => {
+                const exp = d.expected_yield_wh || expectedDailyYieldWh;
+                return exp > 0 ? (d.yield_wh / exp) * 100 : null;
+            })
+            .filter(v => v !== null);
+        if (dayScores.length > 0) {
+            avg7dScore = Math.round(dayScores.reduce((s, v) => s + v, 0) / dayScores.length * 10) / 10;
+        }
+    }
+
+    // --- Yesterday's score (primary — uses yesterday's stored expected yield) ---
     const yesterdayEntry = pastDays.length > 0 ? pastDays[0] : null; // pastDays sorted newest-first
     const yesterdayYieldWh = yesterdayEntry ? yesterdayEntry[1].yield_wh : null;
-    const solarScore = (yesterdayYieldWh !== null && expectedDailyYieldWh > 0)
-        ? Math.round((yesterdayYieldWh / expectedDailyYieldWh) * 1000) / 10
+    const yesterdayExpectedWh = yesterdayEntry?.[1]?.expected_yield_wh || expectedDailyYieldWh;
+    const solarScore = (yesterdayYieldWh !== null && yesterdayExpectedWh > 0)
+        ? Math.round((yesterdayYieldWh / yesterdayExpectedWh) * 1000) / 10
         : todayLiveScore; // fallback to today's live score if no yesterday data
 
     // --- Throttle-aware solar score adjustment ---
@@ -501,6 +514,7 @@ async function computeTrailerIntelligence(siteId) {
             current_watts: snapshot.solar_watts,
             yield_today_wh: actualYieldTodayWh !== null ? Math.round(actualYieldTodayWh) : null,
             yield_yesterday_wh: yesterdayYieldWh !== null ? Math.round(yesterdayYieldWh) : null,
+            expected_yesterday_wh: Math.round(yesterdayExpectedWh),
             avg_7d_yield_wh: avgDailyYieldWh,
             avg_7d_score: avg7dScore,
         },
@@ -540,7 +554,7 @@ function todayStr() {
     return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, batterySoc, dcLoadW = null, loadCurrent = null) {
+function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, batterySoc, dcLoadW = null, loadCurrent = null, expectedYieldWh = null) {
     const date = todayStr();
     const now = Date.now();
     if (!dailyEnergy.has(siteId)) {
@@ -616,6 +630,7 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
         yield_wh: yieldWh,
         consumed_wh: consumedWh,
         consumption_source: consumptionSource,
+        expected_yield_wh: expectedYieldWh ?? siteData[date]?.expected_yield_wh ?? null,
         updated: now,
     };
 
@@ -623,7 +638,7 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
     if (dbAvailable) {
         const socVal = socStartOfDay.get(siteId);
         const socForDb = (socVal && socVal.date === date) ? socVal.soc : null;
-        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socForDb).catch(() => {});
+        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socForDb, siteData[date].expected_yield_wh).catch(() => {});
     }
 
     // Prune entries older than 14 days
@@ -653,6 +668,7 @@ async function seedDailyEnergyFromDb() {
                     site_name: row.site_name || `Site ${siteId}`,
                     yield_wh: row.yield_wh != null ? Number(row.yield_wh) : null,
                     consumed_wh: row.consumed_wh != null ? Number(row.consumed_wh) : null,
+                    expected_yield_wh: row.expected_yield_wh != null ? Number(row.expected_yield_wh) : null,
                     updated: Date.now(),
                 };
             }
@@ -2434,7 +2450,19 @@ async function pollAllSites() {
                     };
 
                     snapshotCache.set(site.idSite, snapshot);
-                    updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage, snapshot.battery_soc, dcLoadW, loadCurrent);
+
+                    // Compute today's expected yield (weather-based) and store with daily energy
+                    let expectedYieldWh = null;
+                    const gpsForYield = gpsCache.get(site.idSite);
+                    if (gpsForYield) {
+                        try {
+                            const wx = await fetchSolarIrradiance(gpsForYield.latitude, gpsForYield.longitude);
+                            const psh = wx?.peak_sun_hours ?? 5;
+                            expectedYieldWh = Math.round(TRAILER_SPECS.solar.total_watts * psh * TRAILER_SPECS.solar.system_efficiency);
+                        } catch {}
+                    }
+
+                    updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage, snapshot.battery_soc, dcLoadW, loadCurrent, expectedYieldWh);
 
                     if (yieldYesterday !== null) {
                         const yesterday = new Date();
@@ -2447,6 +2475,7 @@ async function pollAllSites() {
                                 site_name: site.name,
                                 yield_wh: yieldYesterday * 1000,
                                 consumed_wh: null,
+                                expected_yield_wh: expectedYieldWh, // approximate — today's weather as proxy
                                 updated: Date.now(),
                             };
                         }
