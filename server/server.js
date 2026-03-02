@@ -350,9 +350,9 @@ async function computeTrailerIntelligence(siteId) {
     // --- Location-adjusted expected yield ---
     const expectedDailyYieldWh = specs.solar.total_watts * peakSunHours * specs.solar.system_efficiency;
 
-    // --- Solar Score (location+weather adjusted) ---
+    // --- Solar Score (yesterday's completed day, not today's moving target) ---
     const actualYieldTodayWh = snapshot.solar_yield_today !== null ? snapshot.solar_yield_today * 1000 : null;
-    const solarScore = (actualYieldTodayWh !== null && expectedDailyYieldWh > 0)
+    const todayLiveScore = (actualYieldTodayWh !== null && expectedDailyYieldWh > 0)
         ? Math.round((actualYieldTodayWh / expectedDailyYieldWh) * 1000) / 10
         : null;
 
@@ -394,6 +394,13 @@ async function computeTrailerIntelligence(siteId) {
     const avg7dScore = (avgDailyYieldWh !== null && expectedDailyYieldWh > 0)
         ? Math.round((avgDailyYieldWh / expectedDailyYieldWh) * 1000) / 10
         : null;
+
+    // --- Yesterday's score (primary — completed day, stable number) ---
+    const yesterdayEntry = pastDays.length > 0 ? pastDays[0] : null; // pastDays sorted newest-first
+    const yesterdayYieldWh = yesterdayEntry ? yesterdayEntry[1].yield_wh : null;
+    const solarScore = (yesterdayYieldWh !== null && expectedDailyYieldWh > 0)
+        ? Math.round((yesterdayYieldWh / expectedDailyYieldWh) * 1000) / 10
+        : todayLiveScore; // fallback to today's live score if no yesterday data
 
     // --- Throttle-aware solar score adjustment ---
     // Victron MPPT charge states: 0=Off, 1=Low power, 2=Fault, 3=Bulk, 4=Absorption,
@@ -489,9 +496,11 @@ async function computeTrailerIntelligence(siteId) {
                 : null,
             throttled: isThrottled,
             score_adjustment_reason: scoreAdjustmentReason,
+            today_live_score: todayLiveScore,
             panel_performance_pct: panelPerformance,
             current_watts: snapshot.solar_watts,
             yield_today_wh: actualYieldTodayWh !== null ? Math.round(actualYieldTodayWh) : null,
+            yield_yesterday_wh: yesterdayYieldWh !== null ? Math.round(yesterdayYieldWh) : null,
             avg_7d_yield_wh: avgDailyYieldWh,
             avg_7d_score: avg7dScore,
         },
