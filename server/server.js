@@ -95,7 +95,7 @@ app.use(express.static(distPath));
 
 // Apply auth to all /api routes except login
 app.use('/api', (req, res, next) => {
-    if (req.path === '/auth/login' || req.path === '/auth/google' || req.path === '/debug/energy') return next();
+    if (req.path === '/auth/login' || req.path === '/auth/google') return next();
     authMiddleware(req, res, next);
 });
 
@@ -1061,36 +1061,6 @@ app.get('/api/fleet/energy', (req, res) => {
     }
     result.sort((a, b) => a.site_name.localeCompare(b.site_name, undefined, { numeric: true }));
     res.json({ success: true, records: result });
-});
-
-// Debug: energy consumption diagnostics
-app.get('/api/debug/energy', (req, res) => {
-    const date = todayStr();
-    const result = [];
-    for (const [siteId, snapshot] of snapshotCache.entries()) {
-        const socEntry = socStartOfDay.get(siteId);
-        const acc = consumptionAccumulator.get(siteId);
-        const energy = dailyEnergy.get(siteId)?.[date];
-        result.push({
-            site_id: siteId,
-            site_name: snapshot.site_name,
-            has_CE: snapshot.consumed_ah !== null && snapshot.consumed_ah !== undefined,
-            consumed_ah: snapshot.consumed_ah,
-            has_dc_load: snapshot.dc_load_watts !== null && snapshot.dc_load_watts !== undefined,
-            dc_load_watts: snapshot.dc_load_watts,
-            has_load_current: snapshot.load_current !== null && snapshot.load_current !== undefined,
-            load_current: snapshot.load_current,
-            battery_soc: snapshot.battery_soc,
-            battery_voltage: snapshot.battery_voltage,
-            soc_start_of_day: socEntry?.date === date ? socEntry.soc : null,
-            yield_today_kwh: snapshot.solar_yield_today,
-            accumulator_wh: acc?.date === date ? Math.round(acc.wh) : null,
-            energy_consumed_wh: energy?.consumed_wh ?? null,
-            consumption_source: energy?.consumption_source ?? null,
-        });
-    }
-    result.sort((a, b) => (a.site_name || '').localeCompare(b.site_name || '', undefined, { numeric: true }));
-    res.json({ date, trailer_count: result.length, trailers: result });
 });
 
 // Fleet alerts

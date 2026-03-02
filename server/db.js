@@ -263,6 +263,16 @@ export async function initDb() {
         await client.query(`CREATE INDEX IF NOT EXISTS idx_alert_history_created ON alert_history(created_at DESC)`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_daily_energy_date ON daily_energy_summary(date DESC)`);
 
+        // One-time fix: CE diagnostic resets to 0 at battery sync, causing bogus
+        // consumed_wh = 0 entries.  Null them out so Tier 3 (SOC delta) can
+        // replace them with real estimates on the next polling cycle.
+        const fixResult = await client.query(
+            `UPDATE daily_energy_summary SET consumed_wh = NULL WHERE consumed_wh = 0`
+        );
+        if (fixResult.rowCount > 0) {
+            console.log(`  ✓ Cleaned ${fixResult.rowCount} bogus consumed_wh=0 entries`);
+        }
+
         console.log('  ✓ Energy summary, alert history tables ready');
 
         // Embeddings table for semantic search (1024 dimensions for Voyage AI)
