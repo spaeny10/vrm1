@@ -616,6 +616,21 @@ export async function setRetentionDays(days) {
     );
 }
 
+export async function getSetting(key, defaultValue = null) {
+    if (!pool) return defaultValue;
+    const result = await pool.query("SELECT value FROM settings WHERE key=$1", [key]);
+    if (result.rows.length === 0) return defaultValue;
+    return result.rows[0].value;
+}
+
+export async function setSetting(key, value) {
+    if (!pool) return;
+    await pool.query(
+        "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2",
+        [key, String(value)]
+    );
+}
+
 export async function pruneOldData() {
     if (!pool) return;
     const days = await getRetentionDays();

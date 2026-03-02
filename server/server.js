@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import {
     initDb, insertSnapshot, getHistory, getLatestSnapshots,
-    getRetentionDays, setRetentionDays, pruneOldData, getDbStats,
+    getRetentionDays, setRetentionDays, getSetting, setSetting, pruneOldData, getDbStats,
     insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
     upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding,
     getJobSites, getJobSite, insertJobSite, updateJobSite,
@@ -220,8 +220,35 @@ const consumptionAccumulator = new Map();
 // ============================================================
 const TRAILER_SPECS = {
     solar: { panels: 3, panel_watts: 435, total_watts: 1305, system_efficiency: 0.80 },
-    battery: { count: 2, ah_per_battery: 230, voltage: 24, total_ah: 460, total_wh: 11040, min_soc_threshold: 20, usable_wh: 8832 },
+    battery: { chemistry: 'LiFePO4', count: 2, config: 'parallel', ah_per_battery: 230, voltage: 25.6, total_ah: 460, total_wh: 11776, min_soc_threshold: 20, usable_wh: 9421 },
 };
+
+// ============================================================
+// Solar Score Configuration (configurable from Settings page)
+// ============================================================
+const SOLAR_SCORE_DEFAULTS = {
+    throttle_soc_threshold: 95,    // SOC % above which throttling is detected
+    throttle_floor_soc: 98,        // SOC % above which minimum score floor applies
+    throttle_floor_score: 90,      // Minimum score when floor condition met
+    throttle_panel_min_pct: 10,    // Panel output % threshold to confirm system health
+    score_excellent: 90,           // Score threshold for "Excellent"
+    score_good: 70,                // Score threshold for "Good"
+    score_fair: 50,                // Score threshold for "Fair"
+};
+let solarScoreConfig = { ...SOLAR_SCORE_DEFAULTS };
+
+async function loadSolarScoreConfig() {
+    if (!dbAvailable) return;
+    try {
+        for (const key of Object.keys(SOLAR_SCORE_DEFAULTS)) {
+            const val = await getSetting(`solar_${key}`, null);
+            if (val !== null) solarScoreConfig[key] = parseFloat(val);
+        }
+        console.log('Solar score config loaded:', solarScoreConfig);
+    } catch (err) {
+        console.log('Solar score config: using defaults', err.message);
+    }
+}
 
 // ============================================================
 // Weather / Solar Irradiance Cache (Open-Meteo, free, no API key)
@@ -368,6 +395,38 @@ async function computeTrailerIntelligence(siteId) {
         ? Math.round((avgDailyYieldWh / expectedDailyYieldWh) * 1000) / 10
         : null;
 
+    // --- Throttle-aware solar score adjustment ---
+    // Victron MPPT charge states: 0=Off, 1=Low power, 2=Fault, 3=Bulk, 4=Absorption,
+    // 5=Float, 6=Storage, 7=Equalize, 252=External control
+    // When in Float/Storage/Idle, the MPPT throttles production — yield is artificially low.
+    const cfg = solarScoreConfig;
+    const chargeState = snapshot.charge_state;
+    const csNum = typeof chargeState === 'string' ? parseInt(chargeState, 10) : chargeState;
+    const isThrottled = (typeof csNum === 'number' && !isNaN(csNum) && (csNum === 5 || csNum === 6))
+        || (typeof chargeState === 'string' && /float|idle|storage|external/i.test(chargeState));
+    const isHighSoc = snapshot.battery_soc !== null && snapshot.battery_soc >= cfg.throttle_soc_threshold;
+
+    let adjustedSolarScore = solarScore;
+    let scoreAdjustmentReason = null;
+
+    if (isThrottled && isHighSoc && solarScore !== null && solarScore < cfg.score_excellent) {
+        // Use best estimate: raw score, 7-day average, or panel-health indicator
+        const panelHealthScore = (panelPerformance !== null && panelPerformance > cfg.throttle_panel_min_pct)
+            ? cfg.score_excellent : 0;
+        const bestEstimate = Math.max(solarScore, avg7dScore ?? 0, panelHealthScore);
+
+        if (bestEstimate > solarScore) {
+            adjustedSolarScore = Math.min(Math.round(bestEstimate * 10) / 10, 100);
+            scoreAdjustmentReason = 'throttled_full_battery';
+        }
+
+        // Floor: if SOC >= floor threshold and still below floor score
+        if (snapshot.battery_soc >= cfg.throttle_floor_soc && adjustedSolarScore < cfg.throttle_floor_score) {
+            adjustedSolarScore = cfg.throttle_floor_score;
+            scoreAdjustmentReason = 'full_battery_floor';
+        }
+    }
+
     // --- Days of autonomy ---
     const currentStoredWh = snapshot.battery_soc !== null ? Math.round(specs.battery.total_wh * snapshot.battery_soc / 100) : null;
     const daysOfAutonomy = (currentStoredWh !== null && avgDailyConsumptionWh !== null && avgDailyConsumptionWh > 0)
@@ -421,8 +480,15 @@ async function computeTrailerIntelligence(siteId) {
             expected_daily_yield_wh: Math.round(expectedDailyYieldWh),
         },
         solar: {
-            score: solarScore,
-            score_label: solarScore !== null ? (solarScore >= 90 ? 'Excellent' : solarScore >= 70 ? 'Good' : solarScore >= 50 ? 'Fair' : 'Poor') : null,
+            score: adjustedSolarScore,
+            raw_score: solarScore,
+            score_label: adjustedSolarScore !== null
+                ? (adjustedSolarScore >= cfg.score_excellent ? 'Excellent'
+                    : adjustedSolarScore >= cfg.score_good ? 'Good'
+                    : adjustedSolarScore >= cfg.score_fair ? 'Fair' : 'Poor')
+                : null,
+            throttled: isThrottled,
+            score_adjustment_reason: scoreAdjustmentReason,
             panel_performance_pct: panelPerformance,
             current_watts: snapshot.solar_watts,
             yield_today_wh: actualYieldTodayWh !== null ? Math.round(actualYieldTodayWh) : null,
@@ -1238,7 +1304,34 @@ app.get('/api/settings', async (req, res) => {
             db_size_bytes: stats.size,
             snapshot_count: stats.count,
             db_status: 'connected',
+            solar_score_config: { ...solarScoreConfig },
         });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/settings/solar-score', requireRole('admin'), async (req, res) => {
+    try {
+        if (!dbAvailable) {
+            return res.json({ success: false, error: 'Database not connected' });
+        }
+        const validKeys = Object.keys(SOLAR_SCORE_DEFAULTS);
+        const updates = {};
+        for (const key of validKeys) {
+            if (req.body[key] !== undefined) {
+                const val = parseFloat(req.body[key]);
+                if (isNaN(val) || val < 0 || val > 100) {
+                    return res.status(400).json({ error: `Invalid value for ${key}: must be 0-100` });
+                }
+                updates[key] = val;
+            }
+        }
+        for (const [key, val] of Object.entries(updates)) {
+            await setSetting(`solar_${key}`, val);
+            solarScoreConfig[key] = val;
+        }
+        res.json({ success: true, solar_score_config: { ...solarScoreConfig } });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3884,6 +3977,11 @@ async function start() {
         console.warn('PostgreSQL not available — using in-memory cache only');
         console.warn('Set DATABASE_URL to enable persistent history');
         console.error('Database connection error:', err.message);
+    }
+
+    // Load configurable settings
+    if (dbAvailable) {
+        await loadSolarScoreConfig();
     }
 
     // Seed daily energy from DB before polling starts

@@ -516,6 +516,14 @@ export async function fetchDigestPreview() {
     return apiFetch(`${API_BASE}/reports/digest-preview`);
 }
 
+export async function updateSolarScoreSettings(config) {
+    return apiFetch(`${API_BASE}/settings/solar-score`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+    });
+}
+
 // ============================================================
 // Fleet report (enhanced)
 // ============================================================

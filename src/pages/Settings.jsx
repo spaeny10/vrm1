@@ -1,7 +1,7 @@
 import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, updateSolarScoreSettings } from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
 import { useAuth } from '../components/AuthProvider'
 
@@ -275,6 +275,88 @@ function DigestSettingsSection({ toast }) {
                     )}
                 </div>
             )}
+        </div>
+    )
+}
+
+function SolarScoreTuningSection({ settings, toast, refetchSettings }) {
+    const defaults = {
+        throttle_soc_threshold: 95,
+        throttle_floor_soc: 98,
+        throttle_floor_score: 90,
+        throttle_panel_min_pct: 10,
+        score_excellent: 90,
+        score_good: 70,
+        score_fair: 50,
+    }
+    const initial = settings?.solar_score_config || defaults
+    const [config, setConfig] = useState(initial)
+    const [saving, setSaving] = useState(false)
+
+    useEffect(() => {
+        if (settings?.solar_score_config) setConfig(settings.solar_score_config)
+    }, [settings])
+
+    const handleChange = (key, val) => {
+        setConfig(c => ({ ...c, [key]: parseFloat(val) || 0 }))
+    }
+
+    const handleSave = async () => {
+        setSaving(true)
+        try {
+            await updateSolarScoreSettings(config)
+            toast.success('Solar score settings saved')
+            if (refetchSettings) refetchSettings()
+        } catch (err) {
+            toast.error('Error saving: ' + err.message)
+        }
+        setSaving(false)
+    }
+
+    const hasChanges = JSON.stringify(config) !== JSON.stringify(initial)
+
+    const fields = [
+        { key: 'throttle_soc_threshold', label: 'Throttle Detection SOC', desc: 'SOC % above which idle/float throttling is detected', unit: '%' },
+        { key: 'throttle_floor_soc', label: 'Score Floor SOC', desc: 'SOC % above which minimum score floor applies', unit: '%' },
+        { key: 'throttle_floor_score', label: 'Floor Score', desc: 'Minimum score when battery is full + throttled', unit: '%' },
+        { key: 'throttle_panel_min_pct', label: 'Panel Health Min', desc: 'Panel output % to confirm system is healthy while throttled', unit: '%' },
+        { key: 'score_excellent', label: 'Excellent Threshold', desc: 'Score >= this = "Excellent"', unit: '%' },
+        { key: 'score_good', label: 'Good Threshold', desc: 'Score >= this = "Good"', unit: '%' },
+        { key: 'score_fair', label: 'Fair Threshold', desc: 'Score >= this = "Fair" (below = "Poor")', unit: '%' },
+    ]
+
+    return (
+        <div className="settings-card">
+            <h2>Solar Score Tuning</h2>
+            <p className="settings-desc">
+                When batteries are full, the Victron MPPT throttles solar production (idle/float). These settings adjust how the solar score compensates for that throttling.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, marginTop: 16 }}>
+                {fields.map(f => (
+                    <div key={f.key} style={{ padding: 12, background: 'var(--bg-primary)', borderRadius: 'var(--radius)' }}>
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>{f.label}</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={1}
+                                value={config[f.key] ?? ''}
+                                onChange={e => handleChange(f.key, e.target.value)}
+                                style={{ width: 70, padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.9rem' }}
+                            />
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{f.unit}</span>
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 4 }}>{f.desc}</div>
+                    </div>
+                ))}
+            </div>
+            <div className="settings-actions" style={{ marginTop: 16 }}>
+                <button className="btn btn-primary" onClick={handleSave} disabled={saving || !hasChanges}>
+                    {saving ? 'Saving...' : 'Save Settings'}
+                </button>
+                {hasChanges && <span style={{ fontSize: '0.8rem', color: 'var(--warning)' }}>Unsaved changes</span>}
+            </div>
         </div>
     )
 }
@@ -849,6 +931,11 @@ function Settings() {
                 {/* Email Digest Settings */}
                 {isAdmin && (
                     <DigestSettingsSection toast={toast} />
+                )}
+
+                {/* Solar Score Tuning */}
+                {isAdmin && (
+                    <SolarScoreTuningSection settings={settings} toast={toast} refetchSettings={refetch} />
                 )}
 
                 {/* Job Sites Management */}
