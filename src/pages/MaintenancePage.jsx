@@ -217,7 +217,7 @@ function MaintenancePage() {
 
     const getDotColor = (item) => {
         if (item.status === 'completed') return 'teal'
-        const sd = item.scheduled_date ? new Date(item.scheduled_date) : null
+        const sd = item.scheduled_date ? new Date(toMs(item.scheduled_date)) : null
         if (!sd) return 'green'
         const diff = (sd - new Date()) / (1000 * 60 * 60 * 24)
         if (diff < 0) return 'red'
