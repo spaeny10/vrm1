@@ -214,29 +214,39 @@ function JobSiteDetail() {
                     </button>
                 </div>
                 {maintenanceLogs.length > 0 ? (
-                    <div className="table-wrapper">
-                        <table className="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Type</th>
-                                    <th>Title</th>
-                                    <th>Status</th>
-                                    <th>Technician</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {maintenanceLogs.map(log => (
-                                    <tr key={log.id}>
-                                        <td>{log.scheduled_date ? new Date(Number(log.scheduled_date)).toLocaleDateString() : '—'}</td>
-                                        <td><span className="maintenance-type-badge">{log.visit_type}</span></td>
-                                        <td>{log.title}</td>
-                                        <td><span className={`maintenance-status-badge status-${log.status}`}>{log.status}</span></td>
-                                        <td>{log.assigned_technician_name || log.technician || '—'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                    <div className="site-maint-list">
+                        {maintenanceLogs.map(log => {
+                            const d = log.scheduled_date ? new Date(Number(log.scheduled_date)) : null
+                            const isOverdue = log.status === 'scheduled' && d && d.getTime() < Date.now()
+                            const typeLabels = { inspection: 'Inspection', repair: 'Repair', scheduled: 'Scheduled', emergency: 'Emergency', installation: 'Installation', decommission: 'Decommission' }
+                            return (
+                                <div key={log.id} className={`site-maint-item${isOverdue ? ' site-maint-overdue' : ''}${log.status === 'completed' ? ' site-maint-done' : ''}`} onClick={() => navigate('/maintenance')}>
+                                    <div className="site-maint-date-col">
+                                        {d ? (
+                                            <>
+                                                <span className="site-maint-day">{d.getDate()}</span>
+                                                <span className="site-maint-month">{d.toLocaleDateString('en-US', { month: 'short' })}</span>
+                                            </>
+                                        ) : (
+                                            <span className="site-maint-month">No date</span>
+                                        )}
+                                    </div>
+                                    <div className="site-maint-body">
+                                        <div className="site-maint-title-row">
+                                            <span className="site-maint-title">{log.title}</span>
+                                            {isOverdue && <span className="site-maint-overdue-tag">OVERDUE</span>}
+                                        </div>
+                                        <div className="site-maint-meta">
+                                            <span className={`maintenance-status-badge status-${log.status}`}>{log.status}</span>
+                                            <span className="maintenance-type-badge">{typeLabels[log.visit_type] || log.visit_type}</span>
+                                            {(log.assigned_technician_name || log.technician) && (
+                                                <span className="site-maint-tech">{log.assigned_technician_name || log.technician}</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )
+                        })}
                     </div>
                 ) : (
                     <div className="empty-section">

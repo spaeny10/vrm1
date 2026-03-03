@@ -4353,6 +4353,95 @@ tr:hover .btn-hq-toggle {
   color: #95a5a6;
 }
 
+/* ===== Job Site Maintenance List ===== */
+.site-maint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.site-maint-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.site-maint-item:hover {
+  background: var(--bg-card-hover);
+  border-color: rgba(52, 152, 219, 0.3);
+  transform: translateX(2px);
+}
+.site-maint-overdue {
+  border-left: 3px solid #e74c3c;
+}
+.site-maint-done {
+  opacity: 0.6;
+}
+.site-maint-date-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 48px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+}
+.site-maint-day {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+.site-maint-month {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.site-maint-body {
+  flex: 1;
+  min-width: 0;
+}
+.site-maint-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.site-maint-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.site-maint-overdue-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: #e74c3c;
+  background: rgba(231, 76, 60, 0.12);
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.site-maint-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.site-maint-tech {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 /* ===== Analytics Intelligence Table ===== */
 .analytics-intelligence {
   background: var(--card-bg, #1e272e);
