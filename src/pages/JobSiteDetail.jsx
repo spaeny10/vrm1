@@ -228,11 +228,11 @@ function JobSiteDetail() {
                             <tbody>
                                 {maintenanceLogs.map(log => (
                                     <tr key={log.id}>
-                                        <td>{log.scheduled_date ? new Date(log.scheduled_date).toLocaleDateString() : '—'}</td>
+                                        <td>{log.scheduled_date ? new Date(Number(log.scheduled_date)).toLocaleDateString() : '—'}</td>
                                         <td><span className="maintenance-type-badge">{log.visit_type}</span></td>
                                         <td>{log.title}</td>
                                         <td><span className={`maintenance-status-badge status-${log.status}`}>{log.status}</span></td>
-                                        <td>{log.technician || '—'}</td>
+                                        <td>{log.assigned_technician_name || log.technician || '—'}</td>
                                     </tr>
                                 ))}
                             </tbody>
