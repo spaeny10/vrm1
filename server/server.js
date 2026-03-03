@@ -888,6 +888,7 @@ app.post('/api/auth/login', async (req, res) => {
         if (!valid) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
+        await updateUser(user.id, { last_login: Date.now() });
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role },
             JWT_SECRET,
@@ -995,6 +996,8 @@ app.post('/api/auth/google', async (req, res) => {
         if (!user.active) {
             return res.status(403).json({ error: 'Account is deactivated' });
         }
+
+        await updateUser(user.id, { last_login: Date.now() });
 
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role },

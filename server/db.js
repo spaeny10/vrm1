@@ -330,6 +330,7 @@ export async function initDb() {
         await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`);
         await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL`);
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login BIGINT`);
         console.log('  ✓ Users table ready');
 
         // Extend users role constraint to include 'customer'
@@ -1459,7 +1460,7 @@ export async function updateUser(id, updates) {
     const values = [];
     let idx = 1;
     for (const [key, val] of Object.entries(updates)) {
-        if (['display_name', 'role', 'active', 'password_hash', 'google_id', 'email'].includes(key)) {
+        if (['display_name', 'role', 'active', 'password_hash', 'google_id', 'email', 'last_login'].includes(key)) {
             fields.push(`${key} = $${idx++}`);
             values.push(val);
         }

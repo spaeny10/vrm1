@@ -500,14 +500,17 @@ function Settings() {
         }
     }
 
-    const handleToggleActive = async (u) => {
-        try {
-            await updateUserAccount(u.id, { is_active: !u.is_active })
-            toast.success(u.is_active ? 'User deactivated' : 'User activated')
-            loadUsers()
-        } catch (err) {
-            toast.error('Error updating user: ' + err.message)
-        }
+    const formatLastLogin = (ts) => {
+        if (!ts) return 'Never'
+        const d = new Date(Number(ts))
+        if (isNaN(d.getTime())) return 'Never'
+        const now = Date.now()
+        const diff = now - d.getTime()
+        if (diff < 60000) return 'Just now'
+        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
+        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
+        if (diff < 7 * 86400000) return `${Math.floor(diff / 86400000)}d ago`
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     }
 
     const handleResetPassword = async (userId) => {
@@ -837,7 +840,7 @@ function Settings() {
                                             <th>Display Name</th>
                                             <th>Email</th>
                                             <th>Role</th>
-                                            <th>Active</th>
+                                            <th>Last Login</th>
                                             <th>Actions</th>
                                         </tr>
                                     </thead>
@@ -864,15 +867,8 @@ function Settings() {
                                                             <option value="customer">Customer</option>
                                                         </select>
                                                     </td>
-                                                    <td>
-                                                        <button
-                                                            className={`btn btn-sm ${u.is_active ? 'btn-primary' : 'btn-ghost'}`}
-                                                            onClick={() => handleToggleActive(u)}
-                                                            disabled={u.id === user.id}
-                                                            title={u.is_active ? 'Click to deactivate' : 'Click to activate'}
-                                                        >
-                                                            {u.is_active ? 'Active' : 'Inactive'}
-                                                        </button>
+                                                    <td style={{ fontSize: '0.85em', color: u.last_login ? 'var(--text-secondary)' : 'var(--text-muted)' }} title={u.last_login ? new Date(Number(u.last_login)).toLocaleString() : 'Never logged in'}>
+                                                        {formatLastLogin(u.last_login)}
                                                     </td>
                                                     <td className="maint-actions" style={{ display: 'flex', gap: 6 }}>
                                                         {!u.google_id && (
