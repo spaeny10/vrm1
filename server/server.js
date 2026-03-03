@@ -1908,6 +1908,21 @@ app.get('/api/maintenance/upcoming', async (req, res) => {
     }
 });
 
+// Calendar must be before :id route so Express doesn't match "calendar" as an id
+app.get('/api/maintenance/calendar', async (req, res) => {
+    try {
+        const start = req.query.start ? parseDateParam(req.query.start) : Date.now() - 30 * 86400000;
+        const end = req.query.end ? parseDateParam(req.query.end) : Date.now() + 60 * 86400000;
+        if (start === null || end === null) return res.status(400).json({ error: 'Invalid date range' });
+        const techId = req.query.technician_id ? parseInt(req.query.technician_id) : null;
+        if (req.query.technician_id && isNaN(techId)) return res.status(400).json({ error: 'Invalid technician_id' });
+        const logs = await getMaintenanceCalendar(start, end, techId);
+        res.json({ success: true, logs });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/maintenance/:id', async (req, res) => {
     try {
         const log = await getMaintenanceLog(parseInt(req.params.id));
@@ -1921,6 +1936,15 @@ app.get('/api/maintenance/:id', async (req, res) => {
 const VALID_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'];
 const VALID_VISIT_TYPES = ['inspection', 'repair', 'scheduled', 'emergency', 'installation', 'decommission'];
 const VALID_RECURRENCE = ['weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'];
+
+// Parse date param that may be a ms timestamp or ISO date string
+function parseDateParam(val) {
+    if (!val) return null;
+    const num = Number(val);
+    if (!isNaN(num) && num > 1e10) return num; // ms timestamp
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d.getTime();
+}
 
 function validateMaintenanceInput(body, isCreate = false) {
     const errors = [];
@@ -3683,24 +3707,6 @@ app.put('/api/issue-templates/:id', requireRole('admin'), async (req, res) => {
         const template = await updateIssueTemplate(parseInt(req.params.id), req.body);
         if (!template) return res.status(404).json({ error: 'Template not found' });
         res.json({ success: true, template });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ============================================================
-// Maintenance Calendar
-// ============================================================
-
-app.get('/api/maintenance/calendar', async (req, res) => {
-    try {
-        const start = req.query.start ? parseInt(req.query.start) : Date.now() - 30 * 86400000;
-        const end = req.query.end ? parseInt(req.query.end) : Date.now() + 60 * 86400000;
-        if (isNaN(start) || isNaN(end)) return res.status(400).json({ error: 'Invalid date range' });
-        const techId = req.query.technician_id ? parseInt(req.query.technician_id) : null;
-        if (req.query.technician_id && isNaN(techId)) return res.status(400).json({ error: 'Invalid technician_id' });
-        const logs = await getMaintenanceCalendar(start, end, techId);
-        res.json({ success: true, logs });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

@@ -133,8 +133,8 @@ function MaintenancePage() {
     // Load calendar data when month changes or view switches to calendar
     useEffect(() => {
         if (viewMode !== 'calendar') return
-        const start = new Date(calYear, calMonth, 1).toISOString().slice(0, 10)
-        const end = new Date(calYear, calMonth + 1, 0).toISOString().slice(0, 10)
+        const start = new Date(calYear, calMonth, 1).getTime()
+        const end = new Date(calYear, calMonth + 1, 0, 23, 59, 59, 999).getTime()
         fetchMaintenanceCalendar(start, end)
             .then(data => setCalendarItems(data.items || data.logs || []))
             .catch(err => { setCalendarItems([]); toast.error(`Calendar load failed: ${err.message}`) })
