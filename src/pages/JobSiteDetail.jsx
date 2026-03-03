@@ -238,7 +238,7 @@ function JobSiteDetail() {
                                         </div>
                                         <div className="site-maint-meta">
                                             <span className={`maintenance-status-badge status-${log.status}`}>{log.status}</span>
-                                            <span className="maintenance-type-badge">{typeLabels[log.visit_type] || log.visit_type}</span>
+                                            {log.visit_type !== log.status && <span className="maintenance-type-badge">{typeLabels[log.visit_type] || log.visit_type}</span>}
                                             {(log.assigned_technician_name || log.technician) && (
                                                 <span className="site-maint-tech">{log.assigned_technician_name || log.technician}</span>
                                             )}
