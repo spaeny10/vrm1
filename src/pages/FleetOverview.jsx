@@ -629,19 +629,14 @@ function FleetOverview() {
                     <table className="fleet-table">
                         <thead>
                             <tr>
+                                <th>Status</th>
                                 <th onClick={() => setSortBy('name')} className={sortBy === 'name' ? 'sorted' : ''}>Trailer</th>
                                 <th>Job Site</th>
                                 <th onClick={() => setSortBy(sortBy === 'soc-desc' ? 'soc' : 'soc-desc')} className={sortBy.startsWith('soc') ? 'sorted' : ''}>SOC</th>
-                                <th>Voltage</th>
                                 <th onClick={() => setSortBy('solar')} className={sortBy === 'solar' ? 'sorted' : ''}>Solar</th>
-                                <th>Yield</th>
-                                <th>Charge</th>
                                 <th>Load</th>
-                                <th>Alerts</th>
-                                <th>Network</th>
-                                <th onClick={() => setSortBy('signal')} className={sortBy === 'signal' ? 'sorted' : ''}>Signal</th>
+                                <th onClick={() => setSortBy('signal')} className={sortBy === 'signal' ? 'sorted' : ''}>Network</th>
                                 <th>Grade</th>
-                                <th>Status</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -655,10 +650,16 @@ function FleetOverview() {
                                 const snap = snapshotMap[site.idSite]
                                 const pw = pepwaveMap[site.name]
                                 const grade = healthGradesMap[site.idSite]
+                                const ts = techStatusMap[site.idSite]
                                 const soc = snap?.battery_soc
-                                const hasVrm = snap && (snap.battery_voltage != null || snap.solar_watts != null || (snap.battery_soc != null && snap.battery_soc > 0))
                                 return (
                                     <tr key={site.idSite} onClick={() => navigate(`/trailer/${site.idSite}`)} className="fleet-table-row">
+                                        <td>
+                                            {ts ? (
+                                                <span className="tech-status-dot" style={{ background: { good: '#27ae60', watch: '#f39c12', attention: '#e74c3c' }[ts.status] }}
+                                                    title={`${{ good: 'Good', watch: 'Watch', attention: 'Needs Attention' }[ts.status]}${ts.reason ? ': ' + ts.reason : ''}`} />
+                                            ) : '—'}
+                                        </td>
                                         <td className="fleet-table-name">{site.name}</td>
                                         <td className="fleet-table-muted">{jobSiteName || '—'}</td>
                                         <td>
@@ -668,24 +669,13 @@ function FleetOverview() {
                                                 </span>
                                             ) : <span className="fleet-table-muted">—</span>}
                                         </td>
-                                        <td>{snap?.battery_voltage != null ? `${Number(snap.battery_voltage).toFixed(1)}V` : '—'}</td>
                                         <td>{snap?.solar_watts != null ? `${Math.round(snap.solar_watts)}W` : '—'}</td>
-                                        <td>{snap?.solar_yield_today != null ? `${Number(snap.solar_yield_today).toFixed(2)}` : '—'}</td>
-                                        <td className="fleet-table-muted">{snap?.charge_state || '—'}</td>
                                         <td>{snap?.dc_load_watts != null ? `${Math.round(snap.dc_load_watts)}W` : '—'}</td>
-                                        <td>{(snap?.alarm_reason || snap?.error_code) ?
-                                            <span className="alarm-dot" title={snap.alarm_reason || snap.error_code}>!</span> : '—'}</td>
                                         <td>
                                             {pw ? (
-                                                <span className={`fleet-table-net ${pw.online ? 'net-online' : 'net-offline'}`}>
-                                                    {pw.online ? 'Online' : 'Offline'}
-                                                </span>
-                                            ) : hasVrm ? <span className="fleet-table-muted">—</span> : <span className="fleet-table-net net-online">Conn. Only</span>}
-                                        </td>
-                                        <td>
-                                            {pw?.rsrp ? (
-                                                <span className={pw.rsrp >= -90 ? 'netrow-good' : pw.rsrp >= -100 ? 'netrow-fair' : 'netrow-poor'}>
-                                                    {pw.rsrp} dBm
+                                                <span className={`fleet-table-net ${pw.online ? 'net-online' : 'net-offline'}`}
+                                                    title={pw.rsrp ? `${pw.rsrp} dBm · ${pw.carrier || ''}` : ''}>
+                                                    {pw.online ? (pw.rsrp ? `${pw.rsrp} dBm` : 'Online') : 'Offline'}
                                                 </span>
                                             ) : '—'}
                                         </td>
@@ -695,16 +685,6 @@ function FleetOverview() {
                                                     {grade.grade}
                                                 </span>
                                             ) : '—'}
-                                        </td>
-                                        <td>
-                                            {(() => {
-                                                const ts = techStatusMap[site.idSite]
-                                                if (!ts) return '—'
-                                                const colors = { good: '#27ae60', watch: '#f39c12', attention: '#e74c3c' }
-                                                const labels = { good: 'Good', watch: 'Watch', attention: 'Needs Attention' }
-                                                return <span className="tech-status-dot" style={{ background: colors[ts.status] }}
-                                                    title={`${labels[ts.status]}${ts.reason ? ': ' + ts.reason : ''}`} />
-                                            })()}
                                         </td>
                                     </tr>
                                 )
