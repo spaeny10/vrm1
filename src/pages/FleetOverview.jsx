@@ -17,7 +17,7 @@ function FleetOverview() {
     const canEdit = user?.role === 'admin' || user?.role === 'technician'
     const [viewMode, _setViewMode] = useState(() => localStorage.getItem('fleet_view_mode') || 'sites')
     const setViewMode = (v) => { _setViewMode(v); localStorage.setItem('fleet_view_mode', v); }
-    const [displayMode, setDisplayMode] = useState('grid') // 'grid' or 'list'
+    const [displayMode, setDisplayMode] = useState('list') // 'grid' or 'list'
     const [sortBy, setSortBy] = useState('name')
     const [filterAlarm, setFilterAlarm] = useState('all')
     const [searchTerm, setSearchTerm] = useState('')
