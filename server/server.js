@@ -2566,7 +2566,7 @@ async function pollAllSites() {
                     const batteryVoltage = extractDiagValue(records, 'V') ?? extractDiagValue(records, 'bv');
 
                     // Extended diagnostics for richer AI analysis
-                    const dcLoadW = extractDiagValue(records, 'Pc');  // DC load power (watts)
+                    let dcLoadW = extractDiagValue(records, 'Pc');  // DC load power (watts)
                     const loadCurrent = extractDiagValue(records, 'IL');
                     const loadState = extractDiagValue(records, 'LOAD');
                     const lifetimeYieldKwh = extractDiagValue(records, 'H19');
@@ -2585,6 +2585,23 @@ async function pollAllSites() {
                         const longitude = extractDiagValue(records, 'lg') ?? site.longitude ?? null;
                         if (latitude != null && longitude != null) {
                             gpsCache.set(site.idSite, { latitude, longitude, updatedAt: Date.now() });
+                        }
+                    }
+
+                    // Derive DC load if Pc not available:
+                    // DC load = solar_input - battery_charge_power
+                    // When battery is discharging (negative power), load = solar + |discharge|
+                    // When battery is charging (positive power), load = solar - charge
+                    if (dcLoadW === null) {
+                        const solarW = extractDiagValue(records, 'ScW') ?? extractDiagValue(records, 'Pdc');
+                        const battPower = extractDiagValue(records, 'P');
+                        if (solarW !== null && battPower !== null) {
+                            // battPower: positive = charging, negative = discharging
+                            // DC load = solar - battPower (charge going to battery)
+                            const derived = solarW - battPower;
+                            if (derived >= 0) dcLoadW = Math.round(derived);
+                        } else if (loadCurrent !== null && batteryVoltage !== null) {
+                            dcLoadW = Math.round(Math.abs(loadCurrent) * batteryVoltage);
                         }
                     }
 
