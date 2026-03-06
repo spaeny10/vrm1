@@ -355,6 +355,107 @@ body {
   opacity: 0.6;
 }
 
+/* ========== Slim Stat Bars ========== */
+.fleet-stat-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.fleet-stat strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.fleet-stat-risk {
+  color: #e74c3c;
+}
+
+.fleet-stat-risk strong {
+  color: #e74c3c;
+}
+
+.fleet-stat-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.deploy-stat-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.deploy-stat-label {
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary);
+}
+
+.deploy-stat-sep {
+  width: 1px;
+  height: 12px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.deploy-stat-clickable {
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: background var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.deploy-stat-clickable:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.deploy-stat-active {
+  background: rgba(255, 255, 255, 0.1);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.deploy-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.deploy-dot-green { background: #27ae60; }
+.deploy-dot-yellow { background: #f39c12; }
+.deploy-dot-blue { background: #3498db; }
+.deploy-dot-red { background: #e74c3c; }
+
+.btn-xs {
+  font-size: 11px;
+  padding: 1px 6px;
+}
+
 /* ========== Fleet Controls ========== */
 .fleet-controls {
   display: flex;

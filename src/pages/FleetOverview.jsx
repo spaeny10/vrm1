@@ -2,7 +2,6 @@ import { useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchTechStatus, fetchDeploymentSummary } from '../api/vrm'
-import KpiCard from '../components/KpiCard'
 import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
 import QueryBar from '../components/QueryBar'
@@ -158,6 +157,10 @@ function FleetOverview() {
                 if (snap.battery_soc !== null && snap.battery_soc < 20) alarmCount++
                 if (snap.battery_soc !== null) { totalSoc += snap.battery_soc; socCount++ }
                 if (snap.solar_yield_today !== null) totalYield += snap.solar_yield_today
+            } else if (site.ic2_only) {
+                // IC2-only device — count as online if Pepwave is online
+                const pw = pepwaveMap[site.name]
+                if (pw?.online) online++
             }
         })
 
@@ -377,59 +380,60 @@ function FleetOverview() {
 
             <QueryBar />
 
-            <div className="kpi-row">
-                <KpiCard title="Job Sites" value={kpis.jobSiteCount} color="blue" />
-                <KpiCard title="Trailers Online" value={`${kpis.trailersOnline}/${kpis.totalTrailers}`} color="green" />
-                <KpiCard title="Sites at Risk" value={kpis.atRisk} color={kpis.atRisk > 0 ? 'red' : 'teal'} />
-                <KpiCard title="Fleet Avg SOC" value={kpis.avgSoc} unit="%" color="teal" />
-                <KpiCard title="Total Yield" value={kpis.totalYield} unit="kWh" color="yellow" />
+            <div className="fleet-stat-bar">
+                <span className="fleet-stat"><strong>{kpis.jobSiteCount}</strong> sites</span>
+                <span className="fleet-stat-sep" />
+                <span className="fleet-stat"><strong>{kpis.trailersOnline}</strong>/{kpis.totalTrailers} online</span>
+                <span className="fleet-stat-sep" />
+                <span className="fleet-stat"><strong>{kpis.avgSoc}%</strong> avg SOC</span>
+                <span className="fleet-stat-sep" />
+                <span className="fleet-stat"><strong>{kpis.totalYield}</strong> kWh yield</span>
+                {kpis.atRisk > 0 && (
+                    <>
+                        <span className="fleet-stat-sep" />
+                        <span className="fleet-stat fleet-stat-risk"><strong>{kpis.atRisk}</strong> at risk</span>
+                    </>
+                )}
             </div>
 
-            {/* Deployment KPIs */}
+            {/* Deployment Status */}
             {deployment.active_billing && (
-                <div className="deployment-kpi-section">
-                    <div className="deployment-kpi-header">
-                        <h3 className="deployment-kpi-label">Deployment Status</h3>
-                        {deploymentFilter && (
-                            <button className="btn btn-sm btn-ghost" onClick={() => setDeploymentFilter(null)}>
-                                Clear filter
-                            </button>
-                        )}
-                    </div>
-                    <div className="kpi-row">
-                        <KpiCard
-                            title="Actively Billing"
-                            value={`${deployment.active_billing.sites} sites`}
-                            unit={`${deployment.active_billing.trailers} trailers`}
-                            color="green"
-                            onClick={() => handleDeploymentFilter('billing')}
-                            active={deploymentFilter === 'billing'}
-                        />
-                        <KpiCard
-                            title="Standby"
-                            value={`${deployment.standby?.sites || 0} sites`}
-                            unit={`${deployment.standby?.trailers || 0} trailers`}
-                            color="yellow"
-                            onClick={() => handleDeploymentFilter('standby')}
-                            active={deploymentFilter === 'standby'}
-                        />
-                        <KpiCard
-                            title="Available at HQ"
-                            value={deployment.available_at_hq?.trailers || 0}
-                            unit="trailers"
-                            color="blue"
-                            onClick={() => handleDeploymentFilter('hq')}
-                            active={deploymentFilter === 'hq'}
-                        />
-                        <KpiCard
-                            title="Awaiting Pickup"
-                            value={`${deployment.awaiting_pickup?.sites || 0} sites`}
-                            unit={`${deployment.awaiting_pickup?.trailers || 0} trailers`}
-                            color="red"
+                <div className="deploy-stat-bar">
+                    <span className="deploy-stat-label">Deployment</span>
+                    {deploymentFilter && (
+                        <button className="btn btn-xs btn-ghost" onClick={() => setDeploymentFilter(null)}>clear</button>
+                    )}
+                    <span className="deploy-stat-sep" />
+                    <span
+                        className={`deploy-stat deploy-stat-clickable ${deploymentFilter === 'billing' ? 'deploy-stat-active' : ''}`}
+                        onClick={() => handleDeploymentFilter('billing')}
+                    >
+                        <span className="deploy-dot deploy-dot-green" />
+                        {deployment.active_billing.sites} billing
+                    </span>
+                    <span
+                        className={`deploy-stat deploy-stat-clickable ${deploymentFilter === 'standby' ? 'deploy-stat-active' : ''}`}
+                        onClick={() => handleDeploymentFilter('standby')}
+                    >
+                        <span className="deploy-dot deploy-dot-yellow" />
+                        {deployment.standby?.sites || 0} standby
+                    </span>
+                    <span
+                        className={`deploy-stat deploy-stat-clickable ${deploymentFilter === 'hq' ? 'deploy-stat-active' : ''}`}
+                        onClick={() => handleDeploymentFilter('hq')}
+                    >
+                        <span className="deploy-dot deploy-dot-blue" />
+                        {deployment.available_at_hq?.trailers || 0} at HQ
+                    </span>
+                    {(deployment.awaiting_pickup?.sites || 0) > 0 && (
+                        <span
+                            className={`deploy-stat deploy-stat-clickable ${deploymentFilter === 'pickup' ? 'deploy-stat-active' : ''}`}
                             onClick={() => handleDeploymentFilter('pickup')}
-                            active={deploymentFilter === 'pickup'}
-                        />
-                    </div>
+                        >
+                            <span className="deploy-dot deploy-dot-red" />
+                            {deployment.awaiting_pickup.sites} pickup
+                        </span>
+                    )}
                 </div>
             )}
 
