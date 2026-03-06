@@ -3903,13 +3903,14 @@ app.get('/api/fleet/tech-status', (req, res) => {
         statuses[siteId] = computeTechStatus(siteId, alertsMap);
     }
     // IC2-only trailers (pepwave-only, no VRM snapshot)
+    // Use negative device ID to match /api/sites key format
     for (const [name, dev] of pepwaveCache) {
         let covered = false;
         for (const [, snap] of snapshotCache) {
             if (snap.site_name === name) { covered = true; break; }
         }
         if (!covered) {
-            statuses[`pw:${name}`] = {
+            statuses[-dev.id] = {
                 status: dev.online ? 'good' : 'attention',
                 reason: dev.online ? 'Network-only, Pepwave online' : 'Pepwave offline',
             };
