@@ -1509,8 +1509,12 @@ app.get('/api/job-sites', async (req, res) => {
                         else if (snap.battery_soc < 50 && worstStatus !== 'critical') worstStatus = 'warning';
                     }
                     totalSolar += snap.solar_watts || 0;
-                } else {
-                    worstStatus = 'critical';
+                } else if (pw?.online) {
+                    // No Cerbo/VRM data but Pepwave is online — not critical
+                    trailersOnline++;
+                } else if (!snap) {
+                    // No VRM snapshot AND no Pepwave connectivity — truly offline
+                    if (worstStatus !== 'critical') worstStatus = 'warning';
                 }
 
                 if (pw) {
@@ -1540,7 +1544,7 @@ app.get('/api/job-sites', async (req, res) => {
                         solar_watts: snap?.solar_watts ?? null,
                         solar_yield_today: snap?.solar_yield_today ?? null,
                         charge_state: snap?.charge_state ?? null,
-                        online: isIc2Only ? (pw?.online ?? false) : !!snap,
+                        online: isIc2Only ? (pw?.online ?? false) : (hasVrmData(snap) || pw?.online || false),
                         ic2_only: isIc2Only,
                         network_online: pw?.online ?? false,
                     };
@@ -1640,7 +1644,11 @@ app.get('/api/map/sites', async (req, res) => {
 
                 for (const t of trailers) {
                     const snap = snapshotCache.get(t.site_id);
-                    if (snap && hasVrmData(snap)) {
+                    const pw = pepwaveCache.get(t.site_name);
+                    const isIc2Only = t.site_id < 0;
+                    if (isIc2Only) {
+                        if (pw?.online) trailersOnline++;
+                    } else if (snap && hasVrmData(snap)) {
                         trailersOnline++;
                         if (snap.battery_soc != null) {
                             totalSoc += snap.battery_soc;
@@ -1648,8 +1656,12 @@ app.get('/api/map/sites', async (req, res) => {
                             if (snap.battery_soc < 20) worstStatus = 'critical';
                             else if (snap.battery_soc < 50 && worstStatus !== 'critical') worstStatus = 'warning';
                         }
+                    } else if (pw?.online) {
+                        // No Cerbo/VRM data but Pepwave is online — not critical
+                        trailersOnline++;
                     } else if (!snap) {
-                        worstStatus = 'critical';
+                        // No VRM snapshot AND no Pepwave connectivity — truly offline
+                        if (worstStatus !== 'critical') worstStatus = 'warning';
                     }
                 }
 
