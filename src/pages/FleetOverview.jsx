@@ -409,14 +409,14 @@ function FleetOverview() {
                         onClick={() => handleDeploymentFilter('billing')}
                     >
                         <span className="deploy-dot deploy-dot-green" />
-                        {deployment.active_billing.sites} billing
+                        {deployment.active_billing.trailers} trailers on {deployment.active_billing.sites} sites
                     </span>
                     <span
                         className={`deploy-stat deploy-stat-clickable ${deploymentFilter === 'standby' ? 'deploy-stat-active' : ''}`}
                         onClick={() => handleDeploymentFilter('standby')}
                     >
                         <span className="deploy-dot deploy-dot-yellow" />
-                        {deployment.standby?.sites || 0} standby
+                        {deployment.standby?.trailers || 0} standby
                     </span>
                     <span
                         className={`deploy-stat deploy-stat-clickable ${deploymentFilter === 'hq' ? 'deploy-stat-active' : ''}`}
