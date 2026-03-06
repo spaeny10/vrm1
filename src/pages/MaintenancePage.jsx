@@ -5,6 +5,7 @@ import {
 } from 'chart.js'
 import { Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { useAuth } from '../components/AuthProvider'
 import { useToast } from '../components/ToastProvider'
 import {
@@ -84,6 +85,7 @@ function MaintenancePage() {
     const showMyTasks = user && user.role !== 'viewer'
     const [statusFilter, setStatusFilter] = useState(showMyTasks ? 'my_tasks' : 'all')
     const [searchTerm, setSearchTerm] = useState('')
+    const debouncedSearch = useDebouncedValue(searchTerm, 300)
     const [showForm, setShowForm] = useState(false)
     const [editingLog, setEditingLog] = useState(null)
     const [costDays, setCostDays] = useState(30)
@@ -154,7 +156,7 @@ function MaintenancePage() {
         const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
         const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999)
         const now = Date.now()
-        const term = searchTerm.toLowerCase()
+        const term = debouncedSearch.toLowerCase()
         for (const log of myWorkLogs) {
             if (term && !(
                 log.title.toLowerCase().includes(term) ||
@@ -177,7 +179,7 @@ function MaintenancePage() {
         }
         upcoming.sort((a, b) => (toMs(a.scheduled_date) || Infinity) - (toMs(b.scheduled_date) || Infinity))
         return { overdue, inProgress, dueToday, upcoming, recentCompleted }
-    }, [myWorkLogs, searchTerm])
+    }, [myWorkLogs, debouncedSearch])
 
     const handleMyTaskStatus = async (id, newStatus) => {
         setUpdatingId(id)
@@ -289,8 +291,8 @@ function MaintenancePage() {
         if (statusFilter !== 'all') {
             result = result.filter(l => l.status === statusFilter)
         }
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase()
+        if (debouncedSearch) {
+            const term = debouncedSearch.toLowerCase()
             result = result.filter(l =>
                 l.title.toLowerCase().includes(term) ||
                 (l.job_site_name || '').toLowerCase().includes(term) ||
@@ -299,7 +301,7 @@ function MaintenancePage() {
             )
         }
         return result
-    }, [logs, statusFilter, searchTerm])
+    }, [logs, statusFilter, debouncedSearch])
 
     // Group by job site
     const groupedLogs = useMemo(() => {

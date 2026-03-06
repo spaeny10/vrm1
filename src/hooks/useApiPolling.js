@@ -9,6 +9,7 @@ export function useApiPolling(fetchFn, intervalMs = 30000, deps = [], cacheKey =
     const [error, setError] = useState(null);
     const [lastUpdated, setLastUpdated] = useState(null);
     const mountedRef = useRef(true);
+    const errorCountRef = useRef(0);
 
     const doFetch = useCallback(async () => {
         try {
@@ -29,24 +30,45 @@ export function useApiPolling(fetchFn, intervalMs = 30000, deps = [], cacheKey =
                 setError(null);
                 setLoading(false);
                 setLastUpdated(Date.now());
+                errorCountRef.current = 0;
             }
         } catch (err) {
             if (mountedRef.current) {
                 setError(err.message);
                 setLoading(false);
+                errorCountRef.current = Math.min(errorCountRef.current + 1, 5);
             }
         }
     }, [fetchFn, cacheKey]);
 
+    // Stabilize deps with JSON.stringify to avoid spread issues
+    const depsKey = JSON.stringify(deps);
+
     useEffect(() => {
         mountedRef.current = true;
         doFetch();
-        const interval = setInterval(doFetch, intervalMs);
+
+        // Exponential backoff: double interval on consecutive errors (max 5min)
+        const getInterval = () => {
+            if (errorCountRef.current === 0) return intervalMs;
+            return Math.min(intervalMs * Math.pow(2, errorCountRef.current), 300000);
+        };
+
+        let timer;
+        const scheduleNext = () => {
+            timer = setTimeout(() => {
+                doFetch().then(() => {
+                    if (mountedRef.current) scheduleNext();
+                });
+            }, getInterval());
+        };
+        scheduleNext();
+
         return () => {
             mountedRef.current = false;
-            clearInterval(interval);
+            clearTimeout(timer);
         };
-    }, [doFetch, intervalMs, ...deps]);
+    }, [doFetch, intervalMs, depsKey]);
 
     return { data, loading, error, refetch: doFetch, lastUpdated };
 }

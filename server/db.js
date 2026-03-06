@@ -7,8 +7,15 @@ let pool = null;
 export async function initDb() {
     const connectionString = process.env.DATABASE_URL;
 
+    const poolConfig = {
+        max: 20,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000,
+    };
+
     if (connectionString) {
         pool = new Pool({
+            ...poolConfig,
             connectionString,
             ssl: process.env.NODE_ENV === 'production'
                 ? { rejectUnauthorized: false }
@@ -17,6 +24,7 @@ export async function initDb() {
     } else {
         // Local development fallback
         pool = new Pool({
+            ...poolConfig,
             host: process.env.PGHOST || 'localhost',
             port: parseInt(process.env.PGPORT || '5432'),
             database: process.env.PGDATABASE || 'vrm_dashboard',
@@ -412,6 +420,12 @@ export async function initDb() {
       ALTER TABLE maintenance_logs ADD COLUMN IF NOT EXISTS assigned_technician_id INTEGER REFERENCES users(id)
     `);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_maintenance_technician ON maintenance_logs(assigned_technician_id)`);
+
+        // Additional performance indexes
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON site_snapshots(timestamp DESC)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_maintenance_status ON maintenance_logs(status)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_maintenance_scheduled ON maintenance_logs(scheduled_date)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_daily_energy_site_date ON daily_energy_summary(site_id, date DESC)`);
 
         // Recurring maintenance support
         await client.query(`ALTER TABLE maintenance_logs ADD COLUMN IF NOT EXISTS recurrence_rule TEXT`);

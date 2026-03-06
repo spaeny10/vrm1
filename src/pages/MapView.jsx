@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap, Circle } from 'react-leaflet'
 import { useApiPolling } from '../hooks/useApiPolling'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { fetchMapSites } from '../api/vrm'
 import 'leaflet/dist/leaflet.css'
 
@@ -100,6 +101,7 @@ function MapView() {
     const { data, loading } = useApiPolling(fetchFn, 30000)
 
     const markers = data?.markers || []
+    const debouncedSearch = useDebouncedValue(searchTerm, 300)
 
     const filtered = useMemo(() => {
         let result = markers
@@ -113,12 +115,12 @@ function MapView() {
                 result = result.filter(m => m.status === deploymentFilter && !m.is_headquarters)
             }
         }
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase()
+        if (debouncedSearch) {
+            const term = debouncedSearch.toLowerCase()
             result = result.filter(m => m.name.toLowerCase().includes(term))
         }
         return result
-    }, [markers, statusFilter, deploymentFilter, searchTerm])
+    }, [markers, statusFilter, deploymentFilter, debouncedSearch])
 
     // Group sites by state (exclude HQ from totals)
     const stateGroups = useMemo(() => {

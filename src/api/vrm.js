@@ -16,7 +16,7 @@ async function apiFetch(url, options = {}) {
     if (res.status === 401) {
         localStorage.removeItem('vrm_token');
         localStorage.setItem('vrm_session_expired', '1');
-        window.location.reload();
+        window.location.href = '/';
         throw new Error('Session expired');
     }
     if (!res.ok) throw new Error(`API error: ${res.status}`);

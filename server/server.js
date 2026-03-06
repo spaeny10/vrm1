@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import Anthropic from '@anthropic-ai/sdk';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
 import {
     initDb, insertSnapshot, getHistory, getLatestSnapshots,
     getRetentionDays, setRetentionDays, getSetting, setSetting, pruneOldData, getDbStats,
@@ -64,6 +65,10 @@ const anthropic = process.env.ANTHROPIC_API_KEY
     : null;
 
 // JWT Authentication
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+    console.error('FATAL: JWT_SECRET environment variable is required in production');
+    process.exit(1);
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'vrm-fleet-dev-secret-change-in-production';
 const JWT_EXPIRES_IN = '24h';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -93,17 +98,37 @@ function requireRole(...roles) {
     };
 }
 
-app.use(cors());
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+    : ['http://localhost:5173', 'http://localhost:3000'];
+app.use(cors({
+    origin: process.env.NODE_ENV === 'production' ? allowedOrigins : true,
+    credentials: true,
+}));
 app.use(express.json());
 
 // --- In production, serve the built React frontend ---
 const distPath = path.join(__dirname, '..', 'dist');
 app.use(express.static(distPath));
 
+// Rate limiters
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, message: { error: 'Too many login attempts, try again in 15 minutes' } });
+const aiLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, message: { error: 'Too many AI requests, try again in a minute' } });
+
 // Apply auth to all /api routes except login
 app.use('/api', (req, res, next) => {
-    if (req.path === '/auth/login' || req.path === '/auth/google') return next();
+    if (req.path === '/auth/login' || req.path === '/auth/google' || req.path === '/health') return next();
     authMiddleware(req, res, next);
+});
+
+// Health check (unauthenticated, for Railway/uptime monitors)
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        uptime: Math.round(process.uptime()),
+        db: dbAvailable ? 'connected' : 'disconnected',
+        trailers_cached: snapshotCache.size,
+    });
 });
 
 // --- VRM API helper ---
@@ -875,7 +900,7 @@ function extractWanInterfaces(device) {
 // Auth & User Management Routes
 // ============================================================
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
     try {
         const { username, password } = req.body;
         if (!username || !password) {
@@ -2309,7 +2334,7 @@ app.get('/api/fleet/intelligence', async (req, res) => {
 // ============================================================
 // Agentic Analysis: Claude-powered trailer intelligence
 // ============================================================
-app.post('/api/analyze/trailer/:id', async (req, res) => {
+app.post('/api/analyze/trailer/:id', aiLimiter, async (req, res) => {
     if (!anthropic) {
         return res.status(501).json({ error: 'Claude API key not configured' });
     }
@@ -3146,7 +3171,7 @@ Examples:
 - "what's the solar score for trailer X" → use intelligence metrics from live context
 `;
 
-app.post('/api/query', async (req, res) => {
+app.post('/api/query', aiLimiter, async (req, res) => {
     if (!anthropic) {
         return res.status(501).json({ error: 'Claude API key not configured' });
     }
@@ -3624,7 +3649,7 @@ app.get('/api/action-queue', async (req, res) => {
                 if (todayData?.consumed_wh > 0) avgConsumption = todayData.consumed_wh;
             }
             if (avgConsumption && avgConsumption > 0 && snapshot.battery_soc !== null) {
-                const usableWh = Math.max(0, (snapshot.battery_soc - 20) * 11040 / 100);
+                const usableWh = Math.max(0, (snapshot.battery_soc - TRAILER_SPECS.battery.min_soc_threshold) * TRAILER_SPECS.battery.total_wh / 100);
                 const daysToCritical = Math.round((usableWh / avgConsumption) * 10) / 10;
                 if (daysToCritical <= 3) {
                     actions.push({
@@ -4193,6 +4218,17 @@ app.get('*', (req, res) => {
     }
 });
 
+// Global error handler — sanitize errors in production
+app.use((err, req, res, _next) => {
+    console.error('Unhandled route error:', err.stack || err.message);
+    const status = err.status || 500;
+    res.status(status).json({
+        error: process.env.NODE_ENV === 'production'
+            ? 'Internal server error'
+            : err.message,
+    });
+});
+
 // --- Start ---
 async function start() {
     try {
@@ -4268,5 +4304,22 @@ async function start() {
         console.warn('IC2_CLIENT_ID / IC2_CLIENT_SECRET not set — Pepwave polling disabled');
     }
 }
+
+// Graceful shutdown and crash handlers
+process.on('uncaughtException', (err) => {
+    console.error('UNCAUGHT EXCEPTION:', err);
+    process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('UNHANDLED REJECTION:', reason);
+});
+process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully...');
+    process.exit(0);
+});
+process.on('SIGINT', () => {
+    console.log('SIGINT received, shutting down...');
+    process.exit(0);
+});
 
 start().catch(console.error);

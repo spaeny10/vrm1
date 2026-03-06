@@ -7,15 +7,25 @@ import ErrorBoundary from './components/ErrorBoundary'
 import LoginPage from './pages/LoginPage'
 import FleetOverview from './pages/FleetOverview'
 import JobSiteDetail from './pages/JobSiteDetail'
-import TrailerDetail from './pages/TrailerDetail'
-import MapView from './pages/MapView'
-import FleetDetailsPage from './pages/FleetDetailsPage'
-import MaintenancePage from './pages/MaintenancePage'
-import Settings from './pages/Settings'
-import PortalDashboard from './pages/PortalDashboard'
-import PortalSiteDetail from './pages/PortalSiteDetail'
 import NotFound from './pages/NotFound'
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
+
+// Lazy-load heavy pages (Chart.js, Leaflet, jsPDF, etc.)
+const TrailerDetail = lazy(() => import('./pages/TrailerDetail'))
+const MapView = lazy(() => import('./pages/MapView'))
+const FleetDetailsPage = lazy(() => import('./pages/FleetDetailsPage'))
+const MaintenancePage = lazy(() => import('./pages/MaintenancePage'))
+const Settings = lazy(() => import('./pages/Settings'))
+const PortalDashboard = lazy(() => import('./pages/PortalDashboard'))
+const PortalSiteDetail = lazy(() => import('./pages/PortalSiteDetail'))
+
+function PageLoader() {
+    return (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
+            <p style={{ color: 'var(--text-secondary)' }}>Loading...</p>
+        </div>
+    )
+}
 
 function App() {
     const { user, loading } = useAuth()
@@ -48,11 +58,13 @@ function App() {
                 {mobileOpen && <div className="sidebar-overlay visible" onClick={() => setMobileOpen(false)} />}
                 <main className="main-content">
                     <ErrorBoundary>
-                        <Routes>
-                            <Route path="/" element={<PortalDashboard />} />
-                            <Route path="/site/:id" element={<PortalSiteDetail />} />
-                            <Route path="*" element={<PortalDashboard />} />
-                        </Routes>
+                        <Suspense fallback={<PageLoader />}>
+                            <Routes>
+                                <Route path="/" element={<PortalDashboard />} />
+                                <Route path="/site/:id" element={<PortalSiteDetail />} />
+                                <Route path="*" element={<PortalDashboard />} />
+                            </Routes>
+                        </Suspense>
                     </ErrorBoundary>
                 </main>
             </div>
@@ -66,16 +78,18 @@ function App() {
             {mobileOpen && <div className="sidebar-overlay visible" onClick={() => setMobileOpen(false)} />}
             <main className="main-content">
                 <ErrorBoundary>
-                    <Routes>
-                        <Route path="/" element={<FleetOverview />} />
-                        <Route path="/site/:id" element={<JobSiteDetail />} />
-                        <Route path="/trailer/:id" element={<TrailerDetail />} />
-                        <Route path="/map" element={<MapView />} />
-                        <Route path="/fleet" element={<FleetDetailsPage />} />
-                        <Route path="/maintenance" element={<MaintenancePage />} />
-                        <Route path="/settings" element={<Settings />} />
-                        <Route path="*" element={<NotFound />} />
-                    </Routes>
+                    <Suspense fallback={<PageLoader />}>
+                        <Routes>
+                            <Route path="/" element={<FleetOverview />} />
+                            <Route path="/site/:id" element={<JobSiteDetail />} />
+                            <Route path="/trailer/:id" element={<TrailerDetail />} />
+                            <Route path="/map" element={<MapView />} />
+                            <Route path="/fleet" element={<FleetDetailsPage />} />
+                            <Route path="/maintenance" element={<MaintenancePage />} />
+                            <Route path="/settings" element={<Settings />} />
+                            <Route path="*" element={<NotFound />} />
+                        </Routes>
+                    </Suspense>
                 </ErrorBoundary>
             </main>
         </div>
