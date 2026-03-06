@@ -22,18 +22,25 @@ export async function generateEmbeddings(texts) {
         return [];
     }
 
-    try {
-        const result = await voyage.embed({
-            input: texts,
-            model: EMBEDDING_MODEL,
-            inputType: 'document' // For indexing/storing documents
-        });
+    const BATCH_SIZE = 128; // Voyage-3 max per call
+    const allEmbeddings = [];
 
-        return result.data.map(item => item.embedding);
-    } catch (error) {
-        console.error('Embedding generation failed:', error.message);
-        throw error;
+    for (let i = 0; i < texts.length; i += BATCH_SIZE) {
+        const batch = texts.slice(i, i + BATCH_SIZE);
+        try {
+            const result = await voyage.embed({
+                input: batch,
+                model: EMBEDDING_MODEL,
+                inputType: 'document'
+            });
+            allEmbeddings.push(...result.data.map(item => item.embedding));
+        } catch (error) {
+            console.error(`Embedding batch ${i}-${i + batch.length} failed:`, error.message);
+            throw error;
+        }
     }
+
+    return allEmbeddings;
 }
 
 /**
@@ -174,6 +181,87 @@ export async function embedAlerts(alerts) {
             site_name: alert.site_name,
             severity: alert.severity,
             streak_days: alert.streak_days,
+        }
+    }));
+}
+
+/**
+ * Convert maintenance log to searchable text
+ */
+export function maintenanceLogToText(log) {
+    const dateFmt = (ms) => ms ? new Date(Number(ms)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+    const parts = [
+        `Maintenance: ${log.title}`,
+        log.job_site_name ? `at ${log.job_site_name}` : null,
+        log.trailer_name ? `for ${log.trailer_name}` : null,
+        `Type: ${log.visit_type}`,
+        `Status: ${log.status}`,
+        log.scheduled_date ? `Scheduled: ${dateFmt(log.scheduled_date)}` : null,
+        (log.assigned_technician_name || log.technician) ? `Technician: ${log.assigned_technician_name || log.technician}` : null,
+        log.description ? `Description: ${log.description.slice(0, 200)}` : null,
+        (log.labor_cost_cents || log.parts_cost_cents) ? `Cost: $${(((log.labor_cost_cents || 0) + (log.parts_cost_cents || 0)) / 100).toFixed(2)}` : null,
+    ].filter(Boolean);
+    return parts.join('. ');
+}
+
+/**
+ * Convert job site to searchable text
+ */
+export function jobSiteToText(site) {
+    const dateFmt = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+    const parts = [
+        `Job Site: ${site.name}`,
+        site.address ? `Address: ${site.address}` : null,
+        `Status: ${site.status}`,
+        site.trailer_count != null ? `Trailers: ${site.trailer_count}` : null,
+        site.delivery_date ? `Delivery: ${dateFmt(site.delivery_date)}` : null,
+        site.active_date ? `Active: ${dateFmt(site.active_date)}` : null,
+        site.calloff_date ? `Call-off: ${dateFmt(site.calloff_date)}` : null,
+        site.pickup_date ? `Pickup: ${dateFmt(site.pickup_date)}` : null,
+        site.notes ? `Notes: ${site.notes.slice(0, 200)}` : null,
+    ].filter(Boolean);
+    return parts.join('. ');
+}
+
+/**
+ * Batch embed maintenance logs
+ */
+export async function embedMaintenanceLogs(logs) {
+    if (!logs || logs.length === 0) return [];
+    const texts = logs.map(maintenanceLogToText);
+    const embeddings = await generateEmbeddings(texts);
+    return logs.map((log, i) => ({
+        contentType: 'maintenance',
+        contentId: String(log.id),
+        contentText: texts[i],
+        embedding: embeddings[i],
+        metadata: {
+            id: log.id,
+            job_site_name: log.job_site_name,
+            visit_type: log.visit_type,
+            status: log.status,
+            technician: log.assigned_technician_name || log.technician,
+        }
+    }));
+}
+
+/**
+ * Batch embed job sites
+ */
+export async function embedJobSites(sites) {
+    if (!sites || sites.length === 0) return [];
+    const texts = sites.map(jobSiteToText);
+    const embeddings = await generateEmbeddings(texts);
+    return sites.map((site, i) => ({
+        contentType: 'job_site',
+        contentId: String(site.id),
+        contentText: texts[i],
+        embedding: embeddings[i],
+        metadata: {
+            id: site.id,
+            name: site.name,
+            status: site.status,
+            address: site.address,
         }
     }));
 }

@@ -34,7 +34,8 @@ import {
 } from './db.js';
 import {
     generateQueryEmbedding, embedSiteSnapshots, embedPepwaveDevices,
-    embedAlerts, isConfigured as isEmbeddingsConfigured
+    embedAlerts, embedMaintenanceLogs, embedJobSites,
+    isConfigured as isEmbeddingsConfigured
 } from './embeddings.js';
 import { runClustering, haversineMeters } from './clustering.js';
 import {
@@ -3016,7 +3017,37 @@ async function generateEmbeddingsAsync() {
             }
         }
 
-        console.log(`  Background embeddings updated: ${sites.length} sites, ${devices.length} devices, ${alerts.length} alerts`);
+        // Embed maintenance logs from DB
+        let maintCount = 0;
+        if (dbAvailable) {
+            try {
+                const logs = await getMaintenanceLogs({ limit: 200 });
+                if (logs.length > 0) {
+                    const maintEmbeddings = await embedMaintenanceLogs(logs);
+                    for (const emb of maintEmbeddings) {
+                        await upsertEmbedding(emb.contentType, emb.contentId, emb.contentText, emb.embedding, emb.metadata);
+                    }
+                    maintCount = logs.length;
+                }
+            } catch (e) { console.error('  Maintenance embedding error:', e.message); }
+        }
+
+        // Embed job sites from DB
+        let jsCount = 0;
+        if (dbAvailable) {
+            try {
+                const jobSites = await getJobSites();
+                if (jobSites.length > 0) {
+                    const jsEmbeddings = await embedJobSites(jobSites);
+                    for (const emb of jsEmbeddings) {
+                        await upsertEmbedding(emb.contentType, emb.contentId, emb.contentText, emb.embedding, emb.metadata);
+                    }
+                    jsCount = jobSites.length;
+                }
+            } catch (e) { console.error('  Job site embedding error:', e.message); }
+        }
+
+        console.log(`  Background embeddings updated: ${sites.length} sites, ${devices.length} devices, ${alerts.length} alerts, ${maintCount} maintenance, ${jsCount} job sites`);
     } catch (err) {
         console.error('  Background embedding error:', err.message);
     }
@@ -3137,10 +3168,27 @@ app.post('/api/query', async (req, res) => {
             } catch {}
         }
 
+        // Build maintenance context from DB
+        let maintContext = '';
+        if (dbAvailable) {
+            try {
+                const stats = await getMaintenanceStats();
+                const upcoming = await getUpcomingMaintenance(14);
+                maintContext = `\n\nMaintenance: ${stats.open_count || 0} open, ${stats.overdue_count || 0} overdue, ${stats.upcoming_week || 0} due this week`;
+                if (upcoming.length > 0) {
+                    maintContext += '\nUpcoming maintenance:\n' + upcoming.slice(0, 15).map(m => {
+                        const d = m.scheduled_date ? new Date(Number(m.scheduled_date)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'no date';
+                        return `- ${m.title} at ${m.job_site_name || 'unassigned'}, due ${d}, ${m.status}`;
+                    }).join('\n');
+                }
+            } catch {}
+        }
+
         const liveContext = `\nCurrent live data (${new Date().toISOString()}):\n` +
-            `Pepwave devices (${deviceSummary.length} total):\n${deviceSummary.slice(0, 20).join('\n')}${deviceSummary.length > 20 ? '\n...(truncated)' : ''}\n\n` +
-            `VRM sites (${snapshotSummary.length} total):\n${snapshotSummary.slice(0, 20).join('\n')}${snapshotSummary.length > 20 ? '\n...(truncated)' : ''}` +
-            (intelSummary.length > 0 ? `\n\nIntelligence metrics (specs: ${TRAILER_SPECS.solar.total_watts}W solar, ${TRAILER_SPECS.battery.total_wh}Wh battery per trailer):\n${intelSummary.slice(0, 20).join('\n')}${intelSummary.length > 20 ? '\n...(truncated)' : ''}` : '');
+            `Pepwave devices (${deviceSummary.length} total):\n${deviceSummary.join('\n')}\n\n` +
+            `VRM sites (${snapshotSummary.length} total):\n${snapshotSummary.join('\n')}` +
+            (intelSummary.length > 0 ? `\n\nIntelligence metrics (specs: ${TRAILER_SPECS.solar.total_watts}W solar, ${TRAILER_SPECS.battery.total_wh}Wh battery per trailer):\n${intelSummary.join('\n')}` : '') +
+            maintContext;
 
         const systemPrompt = FLEET_SCHEMA + liveContext + `\n\nRespond in this JSON format:\n{\n  "answer": "<human-readable answer to the question>",\n  "sql": "<optional SQL query if database lookup would help, or null>",\n  "data": null\n}\n\nIf you can answer from the live context alone, set sql to null and answer directly.\nIf a SQL query would give better/more complete data, include it. The system will execute it and ask you to refine the answer.\nAlways respond with valid JSON only, no markdown fences.`;
 
@@ -3344,11 +3392,33 @@ app.post('/api/embeddings/generate', requireRole('admin'), async (req, res) => {
             }
         }
 
+        // Embed maintenance logs
+        let maintenanceCount = 0;
+        if (data.maintenance && data.maintenance.length > 0) {
+            const maintEmbeddings = await embedMaintenanceLogs(data.maintenance);
+            for (const emb of maintEmbeddings) {
+                await upsertEmbedding(emb.contentType, emb.contentId, emb.contentText, emb.embedding, emb.metadata);
+            }
+            maintenanceCount = data.maintenance.length;
+        }
+
+        // Embed job sites
+        let jobSiteCount = 0;
+        if (data.jobSites && data.jobSites.length > 0) {
+            const jsEmbeddings = await embedJobSites(data.jobSites);
+            for (const emb of jsEmbeddings) {
+                await upsertEmbedding(emb.contentType, emb.contentId, emb.contentText, emb.embedding, emb.metadata);
+            }
+            jobSiteCount = data.jobSites.length;
+        }
+
         res.json({
             success: true,
             sites_embedded: siteCount,
             devices_embedded: deviceCount,
             alerts_embedded: alerts.length,
+            maintenance_embedded: maintenanceCount,
+            job_sites_embedded: jobSiteCount,
         });
     } catch (err) {
         console.error('Embedding generation error:', err.message);

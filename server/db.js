@@ -757,9 +757,34 @@ export async function getAllContentForEmbedding() {
         ORDER BY device_name, timestamp DESC
     `);
 
+    // Get active/recent maintenance logs with context
+    const maintenance = await pool.query(`
+        SELECT m.*, j.name AS job_site_name,
+               ta.site_name AS trailer_name,
+               u.display_name AS assigned_technician_name
+        FROM maintenance_logs m
+        LEFT JOIN job_sites j ON m.job_site_id = j.id
+        LEFT JOIN trailer_assignments ta ON m.site_id = ta.site_id
+        LEFT JOIN users u ON m.assigned_technician_id = u.id
+        WHERE m.status != 'cancelled'
+        ORDER BY m.updated_at DESC
+        LIMIT 200
+    `);
+
+    // Get all job sites with trailer counts
+    const jobSites = await pool.query(`
+        SELECT js.*, COUNT(ta.id) AS trailer_count
+        FROM job_sites js
+        LEFT JOIN trailer_assignments ta ON ta.job_site_id = js.id
+        GROUP BY js.id
+        ORDER BY js.status, js.name
+    `);
+
     return {
         sites: sites.rows,
-        devices: devices.rows
+        devices: devices.rows,
+        maintenance: maintenance.rows,
+        jobSites: jobSites.rows,
     };
 }
 
