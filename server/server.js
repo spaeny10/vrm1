@@ -2588,31 +2588,21 @@ async function pollAllSites() {
                         }
                     }
 
-                    // Debug: log diagnostic codes for one trailer to identify DC load source
-                    if (site.name === 'Trailer 582') {
-                        const dcCodes = ['Pc', 'P', 'Pdc', 'ScW', 'IL', 'I', 'bc', 'bv', 'V'];
-                        const found = dcCodes.map(c => {
-                            const val = extractDiagValue(records, c);
-                            return `${c}=${val}`;
-                        }).join(', ');
-                        console.log(`[DC-DEBUG] Trailer 582: ${found}`);
-                        // Also log all unique codes present
-                        const allCodes = [...new Set(records.map(r => r.code))].sort();
-                        console.log(`[DC-DEBUG] All codes: ${allCodes.join(', ')}`);
-                    }
-
                     // Derive DC load if Pc not available:
-                    // DC load = solar_input - battery_charge_power
-                    // When battery is discharging (negative power), load = solar + |discharge|
-                    // When battery is charging (positive power), load = solar - charge
+                    // DC load = solar - battery_power
+                    // battery_power: positive = charging, negative = discharging
+                    // If P not available, compute from V × I (battery voltage × current)
                     if (dcLoadW === null) {
                         const solarW = extractDiagValue(records, 'ScW') ?? extractDiagValue(records, 'Pdc');
-                        const battPower = extractDiagValue(records, 'P');
+                        let battPower = extractDiagValue(records, 'P');
+                        // Fallback: derive battery power from voltage × current
+                        if (battPower === null && batteryVoltage !== null) {
+                            const battCurrent = extractDiagValue(records, 'I') ?? extractDiagValue(records, 'bc');
+                            if (battCurrent !== null) battPower = batteryVoltage * battCurrent;
+                        }
                         if (solarW !== null && battPower !== null) {
-                            // battPower: positive = charging, negative = discharging
-                            // DC load = solar - battPower (charge going to battery)
                             const derived = solarW - battPower;
-                            if (derived >= 0) dcLoadW = Math.round(derived);
+                            dcLoadW = Math.round(Math.max(0, derived));
                         } else if (loadCurrent !== null && batteryVoltage !== null) {
                             dcLoadW = Math.round(Math.abs(loadCurrent) * batteryVoltage);
                         }
