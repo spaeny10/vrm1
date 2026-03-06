@@ -163,6 +163,20 @@ export async function initDb() {
 
         // Add expected_yield_wh column so each day's score uses that day's weather
         await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS expected_yield_wh NUMERIC`);
+        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS consumption_source TEXT`);
+
+        // Promote VRM diagnostic fields from JSONB to dedicated columns
+        await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS consumed_ah REAL`);
+        await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS dc_load_watts REAL`);
+        await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS load_current REAL`);
+        await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS load_state TEXT`);
+        await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS inverter_mode TEXT`);
+        await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS mppt_state TEXT`);
+        await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS alarm_reason TEXT`);
+        await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS error_code TEXT`);
+        await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS lifetime_yield_kwh REAL`);
+        await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS time_to_go_min REAL`);
+        console.log('  ✓ Extended VRM diagnostic columns ready');
 
         // Maintenance logs table
         await client.query(`
@@ -519,8 +533,12 @@ export async function insertSnapshot(snapshot) {
     if (!pool) return;
     await pool.query(
         `INSERT INTO site_snapshots
-      (site_id, site_name, timestamp, battery_soc, battery_voltage, battery_current, battery_temp, battery_power, solar_watts, solar_yield_today, solar_yield_yesterday, charge_state, raw_battery, raw_solar)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      (site_id, site_name, timestamp, battery_soc, battery_voltage, battery_current,
+       battery_temp, battery_power, solar_watts, solar_yield_today, solar_yield_yesterday,
+       charge_state, raw_battery, raw_solar,
+       consumed_ah, dc_load_watts, load_current, load_state, inverter_mode,
+       mppt_state, alarm_reason, error_code, lifetime_yield_kwh, time_to_go_min)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
         [
             snapshot.site_id,
             snapshot.site_name,
@@ -536,6 +554,16 @@ export async function insertSnapshot(snapshot) {
             snapshot.charge_state,
             snapshot.raw_battery ? JSON.stringify(snapshot.raw_battery) : null,
             snapshot.raw_solar ? JSON.stringify(snapshot.raw_solar) : null,
+            snapshot.consumed_ah ?? null,
+            snapshot.dc_load_watts ?? null,
+            snapshot.load_current ?? null,
+            snapshot.load_state != null ? String(snapshot.load_state) : null,
+            snapshot.inverter_mode != null ? String(snapshot.inverter_mode) : null,
+            snapshot.mppt_state != null ? String(snapshot.mppt_state) : null,
+            snapshot.alarm_reason != null ? String(snapshot.alarm_reason) : null,
+            snapshot.error_code != null ? String(snapshot.error_code) : null,
+            snapshot.lifetime_yield_kwh ?? null,
+            snapshot.time_to_go_min ?? null,
         ]
     );
 }
@@ -1324,19 +1352,20 @@ export async function getAnalyticsDateRange() {
 // Daily Energy Summary (persistent)
 // ============================================================
 
-export async function upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socStartOfDay = null, expectedYieldWh = null) {
+export async function upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socStartOfDay = null, expectedYieldWh = null, consumptionSource = null) {
     if (!pool) return;
     await pool.query(
-        `INSERT INTO daily_energy_summary (site_id, date, site_name, yield_wh, consumed_wh, soc_start_of_day, expected_yield_wh, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO daily_energy_summary (site_id, date, site_name, yield_wh, consumed_wh, soc_start_of_day, expected_yield_wh, consumption_source, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (site_id, date) DO UPDATE SET
            site_name = COALESCE($3, daily_energy_summary.site_name),
            yield_wh = COALESCE($4, daily_energy_summary.yield_wh),
            consumed_wh = COALESCE($5, daily_energy_summary.consumed_wh),
            soc_start_of_day = COALESCE($6, daily_energy_summary.soc_start_of_day),
            expected_yield_wh = COALESCE($7, daily_energy_summary.expected_yield_wh),
-           updated_at = $8`,
-        [siteId, date, siteName, yieldWh, consumedWh, socStartOfDay, expectedYieldWh, Date.now()]
+           consumption_source = COALESCE($8, daily_energy_summary.consumption_source),
+           updated_at = $9`,
+        [siteId, date, siteName, yieldWh, consumedWh, socStartOfDay, expectedYieldWh, consumptionSource, Date.now()]
     );
 }
 

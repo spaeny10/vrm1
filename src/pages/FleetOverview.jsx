@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchDeploymentSummary } from '../api/vrm'
+import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchTechStatus, fetchDeploymentSummary } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
@@ -24,6 +24,7 @@ function FleetOverview() {
     const [searchTerm, setSearchTerm] = useState('')
     const [actionQueueOpen, setActionQueueOpen] = useState(false)
     const [deploymentFilter, setDeploymentFilter] = useState(null) // null | 'billing' | 'standby' | 'hq' | 'pickup'
+    const [techStatusFilter, setTechStatusFilter] = useState(null) // null | 'good' | 'watch' | 'attention'
     const [generatingPdf, setGeneratingPdf] = useState(false)
 
     // Action queue data
@@ -45,6 +46,12 @@ function FleetOverview() {
         }
         return grades
     }, [healthGradesData])
+
+    // Tech status data
+    const fetchTechStatusFn = useCallback(() => fetchTechStatus(), [])
+    const { data: techStatusData } = useApiPolling(fetchTechStatusFn, 60000)
+    const techStatusMap = techStatusData?.statuses || {}
+    const techStatusSummary = techStatusData?.summary || { good: 0, watch: 0, attention: 0 }
 
     // Action queue computed values
     const actionQueueSummary = useMemo(() => {
@@ -196,6 +203,13 @@ function FleetOverview() {
         if (filterAlarm === 'alarm') result = result.filter(js => js.worst_status === 'critical')
         else if (filterAlarm === 'warning') result = result.filter(js => js.worst_status === 'warning' || js.worst_status === 'critical')
 
+        // Tech status filter — show job sites that have at least one trailer matching
+        if (techStatusFilter) {
+            result = result.filter(js =>
+                (js.trailers || []).some(t => techStatusMap[t.site_id]?.status === techStatusFilter)
+            )
+        }
+
         result.sort((a, b) => {
             if (sortBy === 'name') return a.name.localeCompare(b.name, undefined, { numeric: true })
             if (sortBy === 'soc') return (a.avg_soc ?? -1) - (b.avg_soc ?? -1)
@@ -205,11 +219,16 @@ function FleetOverview() {
         })
 
         return result
-    }, [jobSites, sortBy, filterAlarm, searchTerm, deploymentFilter])
+    }, [jobSites, sortBy, filterAlarm, searchTerm, deploymentFilter, techStatusFilter, techStatusMap])
 
     const handleDeploymentFilter = (filter) => {
         setDeploymentFilter(prev => prev === filter ? null : filter)
         setViewMode('sites')
+    }
+
+    const handleTechStatusFilter = (status) => {
+        setTechStatusFilter(prev => prev === status ? null : status)
+        if (viewMode === 'sites') setViewMode('trailers')
     }
 
     // Filter + sort trailers (existing logic)
@@ -240,6 +259,14 @@ function FleetOverview() {
             })
         }
 
+        // Tech status filter
+        if (techStatusFilter) {
+            result = result.filter(s => {
+                const ts = techStatusMap[s.idSite]
+                return ts?.status === techStatusFilter
+            })
+        }
+
         result.sort((a, b) => {
             if (sortBy === 'name') return a.name.localeCompare(b.name, undefined, { numeric: true })
             if (sortBy === 'soc') return (snapshotMap[a.idSite]?.battery_soc ?? -1) - (snapshotMap[b.idSite]?.battery_soc ?? -1)
@@ -250,7 +277,7 @@ function FleetOverview() {
         })
 
         return result
-    }, [sites, snapshotMap, sortBy, filterAlarm, searchTerm, pepwaveMap])
+    }, [sites, snapshotMap, sortBy, filterAlarm, searchTerm, pepwaveMap, techStatusFilter, techStatusMap])
 
     const isLoading = viewMode === 'sites' ? (jobSitesLoading && !jobSitesData) : (sitesLoading && !sitesData)
 
@@ -405,6 +432,41 @@ function FleetOverview() {
                     </div>
                 </div>
             )}
+
+            {/* Tech Status Summary */}
+            <div className="tech-status-section">
+                <div className="tech-status-header">
+                    <h3>Tech Status</h3>
+                    {techStatusFilter && (
+                        <button className="btn btn-sm btn-ghost" onClick={() => setTechStatusFilter(null)}>
+                            Clear filter
+                        </button>
+                    )}
+                </div>
+                <div className="tech-status-cards">
+                    <div
+                        className={`tech-status-card tech-status-attention ${techStatusFilter === 'attention' ? 'tech-status-active' : ''}`}
+                        onClick={() => handleTechStatusFilter('attention')}
+                    >
+                        <span className="tech-status-count">{techStatusSummary.attention}</span>
+                        <span className="tech-status-label">Need Attention</span>
+                    </div>
+                    <div
+                        className={`tech-status-card tech-status-watch ${techStatusFilter === 'watch' ? 'tech-status-active' : ''}`}
+                        onClick={() => handleTechStatusFilter('watch')}
+                    >
+                        <span className="tech-status-count">{techStatusSummary.watch}</span>
+                        <span className="tech-status-label">Watch</span>
+                    </div>
+                    <div
+                        className={`tech-status-card tech-status-good ${techStatusFilter === 'good' ? 'tech-status-active' : ''}`}
+                        onClick={() => handleTechStatusFilter('good')}
+                    >
+                        <span className="tech-status-count">{techStatusSummary.good}</span>
+                        <span className="tech-status-label">Good</span>
+                    </div>
+                </div>
+            </div>
 
             {/* Action Queue Section */}
             {actionItems.length > 0 && (
@@ -574,9 +636,12 @@ function FleetOverview() {
                                 <th onClick={() => setSortBy('solar')} className={sortBy === 'solar' ? 'sorted' : ''}>Solar</th>
                                 <th>Yield</th>
                                 <th>Charge</th>
+                                <th>Load</th>
+                                <th>Alerts</th>
                                 <th>Network</th>
                                 <th onClick={() => setSortBy('signal')} className={sortBy === 'signal' ? 'sorted' : ''}>Signal</th>
                                 <th>Grade</th>
+                                <th>Status</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -607,6 +672,9 @@ function FleetOverview() {
                                         <td>{snap?.solar_watts != null ? `${Math.round(snap.solar_watts)}W` : '—'}</td>
                                         <td>{snap?.solar_yield_today != null ? `${Number(snap.solar_yield_today).toFixed(2)}` : '—'}</td>
                                         <td className="fleet-table-muted">{snap?.charge_state || '—'}</td>
+                                        <td>{snap?.dc_load_watts != null ? `${Math.round(snap.dc_load_watts)}W` : '—'}</td>
+                                        <td>{(snap?.alarm_reason || snap?.error_code) ?
+                                            <span className="alarm-dot" title={snap.alarm_reason || snap.error_code}>!</span> : '—'}</td>
                                         <td>
                                             {pw ? (
                                                 <span className={`fleet-table-net ${pw.online ? 'net-online' : 'net-offline'}`}>
@@ -627,6 +695,16 @@ function FleetOverview() {
                                                     {grade.grade}
                                                 </span>
                                             ) : '—'}
+                                        </td>
+                                        <td>
+                                            {(() => {
+                                                const ts = techStatusMap[site.idSite]
+                                                if (!ts) return '—'
+                                                const colors = { good: '#27ae60', watch: '#f39c12', attention: '#e74c3c' }
+                                                const labels = { good: 'Good', watch: 'Watch', attention: 'Needs Attention' }
+                                                return <span className="tech-status-dot" style={{ background: colors[ts.status] }}
+                                                    title={`${labels[ts.status]}${ts.reason ? ': ' + ts.reason : ''}`} />
+                                            })()}
                                         </td>
                                     </tr>
                                 )
@@ -660,6 +738,7 @@ function FleetOverview() {
                                     pepwave={pepwaveMap[site.name]}
                                     jobSiteName={trailerJobSiteMap[site.idSite]}
                                     healthGrade={healthGradesMap[site.idSite]}
+                                    techStatus={techStatusMap[site.idSite]}
                                 />
                             ))}
                             {filteredSites.length === 0 && (

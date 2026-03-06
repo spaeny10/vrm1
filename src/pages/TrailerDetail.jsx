@@ -62,6 +62,7 @@ function TrailerDetail() {
     const socChartRef = useRef(null)
     const voltageChartRef = useRef(null)
     const solarChartRef = useRef(null)
+    const dcLoadChartRef = useRef(null)
     const rsrpChartRef = useRef(null)
     const usageChartRef = useRef(null)
 
@@ -150,6 +151,12 @@ function TrailerDetail() {
         ttg: diagFormatted(records, 'TTG'),
         minCell: diagValue(records, 'mcV'),
         maxCell: diagValue(records, 'McV'),
+        dcLoadWatts: diagValue(records, 'Pc'),
+        loadCurrent: diagValue(records, 'IL'),
+        consumedAh: diagValue(records, 'CE'),
+        alarmReason: diagFormatted(records, 'AR'),
+        errorCode: diagFormatted(records, 'ERR'),
+        inverterMode: diagFormatted(records, 'MODE'),
     }), [records]);
 
     const solar = useMemo(() => ({
@@ -159,6 +166,8 @@ function TrailerDetail() {
         yieldYesterday: diagValue(records, 'YY'),
         chargeState: diagFormatted(records, 'ScS'),
         temp: diagValue(records, 'ScT'),
+        mpptState: diagFormatted(records, 'MPPT'),
+        lifetimeYield: diagValue(records, 'H19'),
     }), [records]);
 
     // Fetch Pepwave history when device name is known
@@ -216,6 +225,20 @@ function TrailerDetail() {
                 data: toTimePoints(historyData, 'solar_watts'),
                 backgroundColor: 'rgba(241, 196, 15, 0.7)',
                 borderColor: '#f1c40f', borderWidth: 1,
+            }],
+        }
+    }, [historyData])
+
+    const dcLoadChartData = useMemo(() => {
+        if (!historyData.length) return null
+        const pts = toTimePoints(historyData, 'dc_load_watts')
+        if (!pts.length) return null
+        return {
+            datasets: [{
+                label: 'DC Load (W)',
+                data: pts,
+                backgroundColor: 'rgba(231, 76, 60, 0.7)',
+                borderColor: '#e74c3c', borderWidth: 1,
             }],
         }
     }, [historyData])
@@ -359,6 +382,14 @@ function TrailerDetail() {
                 />
             </div>
 
+            {/* Alarm/Error Banner */}
+            {(battery.alarmReason || battery.errorCode) && (
+                <div className="trailer-alert-banner">
+                    {battery.alarmReason && <span>⚠ Alarm: {battery.alarmReason}</span>}
+                    {battery.errorCode && <span>⛔ Error: {battery.errorCode}</span>}
+                </div>
+            )}
+
             {/* Gauges Row */}
             <div className="detail-gauges">
                 <div className="detail-gauge-card">
@@ -380,6 +411,18 @@ function TrailerDetail() {
                             <div className="gauge-detail-row">
                                 <span>Cell Range</span>
                                 <span>{Number(battery.minCell).toFixed(2)} - {Number(battery.maxCell).toFixed(2)}V</span>
+                            </div>
+                        )}
+                        {battery.dcLoadWatts != null && (
+                            <div className="gauge-detail-row">
+                                <span>DC Load</span>
+                                <span>{Math.round(battery.dcLoadWatts)}W</span>
+                            </div>
+                        )}
+                        {battery.consumedAh != null && (
+                            <div className="gauge-detail-row">
+                                <span>Consumed</span>
+                                <span>{Number(battery.consumedAh).toFixed(1)}Ah</span>
                             </div>
                         )}
                     </div>
@@ -404,6 +447,18 @@ function TrailerDetail() {
                             <span>Yield Yesterday</span>
                             <span>{solar.yieldYesterday !== null ? `${Number(solar.yieldYesterday).toFixed(2)} kWh` : '—'}</span>
                         </div>
+                        {solar.mpptState && (
+                            <div className="gauge-detail-row">
+                                <span>MPPT State</span>
+                                <span>{solar.mpptState}</span>
+                            </div>
+                        )}
+                        {solar.lifetimeYield != null && (
+                            <div className="gauge-detail-row">
+                                <span>Lifetime Yield</span>
+                                <span>{Number(solar.lifetimeYield).toFixed(1)} kWh</span>
+                            </div>
+                        )}
                         {solar.yieldToday !== null && solar.yieldYesterday !== null && solar.yieldYesterday > 0 && (() => {
                             const pct = ((solar.yieldToday - solar.yieldYesterday) / solar.yieldYesterday * 100).toFixed(0)
                             const maxVal = Math.max(solar.yieldToday, solar.yieldYesterday, 0.01)
@@ -532,6 +587,17 @@ function TrailerDetail() {
                         )}
                     </div>
                 </div>
+                {dcLoadChartData && (
+                    <div className="chart-card">
+                        <div className="chart-card-header">
+                            <h3>DC Load Power</h3>
+                            <button className="reset-zoom-btn" onClick={() => dcLoadChartRef.current?.resetZoom()}>Reset Zoom</button>
+                        </div>
+                        <div className="chart-container">
+                            <Bar ref={dcLoadChartRef} data={dcLoadChartData} options={chartOptions} />
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Battery Health Prediction */}

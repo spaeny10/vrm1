@@ -401,6 +401,10 @@ export async function fetchHealthGrades() {
     return apiFetch(`${API_BASE}/fleet/health-grades`);
 }
 
+export async function fetchTechStatus() {
+    return apiFetch(`${API_BASE}/fleet/tech-status`);
+}
+
 // ============================================================
 // Checklist & Issue Templates
 // ============================================================

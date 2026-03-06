@@ -56,7 +56,20 @@ function HealthGradeBadge({ healthGrade }) {
     )
 }
 
-function TrailerCard({ site, snapshot, pepwave, jobSiteName, healthGrade }) {
+function TechStatusDot({ techStatus }) {
+    if (!techStatus) return null
+    const colors = { good: '#27ae60', watch: '#f39c12', attention: '#e74c3c' }
+    const labels = { good: 'Good', watch: 'Watch', attention: 'Needs Attention' }
+    return (
+        <span
+            className="tech-status-dot"
+            style={{ background: colors[techStatus.status] }}
+            title={`${labels[techStatus.status]}${techStatus.reason ? ': ' + techStatus.reason : ''}`}
+        />
+    )
+}
+
+function TrailerCard({ site, snapshot, pepwave, jobSiteName, healthGrade, techStatus }) {
     const navigate = useNavigate()
 
     const soc = snapshot?.battery_soc ?? null
@@ -91,6 +104,7 @@ function TrailerCard({ site, snapshot, pepwave, jobSiteName, healthGrade }) {
                     {jobSiteName && <span className="site-card-subtitle">{jobSiteName}</span>}
                 </div>
                 <div className="site-card-badges">
+                    <TechStatusDot techStatus={techStatus} />
                     <SignalBadge pepwave={pepwave} />
                     <HealthGradeBadge healthGrade={healthGrade} />
                     <AlarmBadge level={status} />
@@ -125,6 +139,12 @@ function TrailerCard({ site, snapshot, pepwave, jobSiteName, healthGrade }) {
                         <span className="stat-label">Yield</span>
                         <span className="stat-value">
                             {yieldToday !== null ? `${Number(yieldToday).toFixed(2)} kWh` : '—'}
+                        </span>
+                    </div>
+                    <div className="stat-row">
+                        <span className="stat-label">DC Load</span>
+                        <span className="stat-value">
+                            {snapshot?.dc_load_watts != null ? `${Math.round(snapshot.dc_load_watts)}W` : '—'}
                         </span>
                     </div>
                 </div>

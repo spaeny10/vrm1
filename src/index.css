@@ -6311,3 +6311,107 @@ tr:hover .btn-hq-toggle {
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
+
+/* Alert banner + alarm indicators */
+.trailer-alert-banner {
+  background: rgba(231, 76, 60, 0.1);
+  border: 1px solid #c0392b;
+  border-radius: 8px;
+  padding: 8px 14px;
+  margin-bottom: 12px;
+  color: #e74c3c;
+  font-size: 0.85rem;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.alarm-dot {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #e74c3c;
+  color: white;
+  text-align: center;
+  line-height: 20px;
+  font-weight: 700;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+.trailer-mini-load {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.trailer-mini-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Tech Status */
+.tech-status-section {
+  margin-bottom: 16px;
+}
+.tech-status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.tech-status-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.tech-status-cards {
+  display: flex;
+  gap: 12px;
+}
+.tech-status-card {
+  flex: 1;
+  padding: 12px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: center;
+  transition: transform 0.15s, box-shadow 0.15s;
+  border: 2px solid transparent;
+}
+.tech-status-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.tech-status-active {
+  border-color: white;
+}
+.tech-status-attention {
+  background: rgba(231, 76, 60, 0.15);
+}
+.tech-status-watch {
+  background: rgba(243, 156, 18, 0.15);
+}
+.tech-status-good {
+  background: rgba(39, 174, 96, 0.15);
+}
+.tech-status-count {
+  display: block;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.tech-status-attention .tech-status-count { color: #e74c3c; }
+.tech-status-watch .tech-status-count { color: #f39c12; }
+.tech-status-good .tech-status-count { color: #27ae60; }
+.tech-status-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.tech-status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}

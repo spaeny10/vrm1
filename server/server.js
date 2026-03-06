@@ -673,7 +673,7 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
     if (dbAvailable) {
         const socVal = socStartOfDay.get(siteId);
         const socForDb = (socVal && socVal.date === date) ? socVal.soc : null;
-        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socForDb, siteData[date].expected_yield_wh).catch(() => {});
+        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socForDb, siteData[date].expected_yield_wh, consumptionSource).catch(() => {});
     }
 
     // Prune entries older than 14 days
@@ -1514,6 +1514,7 @@ app.get('/api/job-sites', async (req, res) => {
             let totalSoc = 0, socCount = 0, minSoc = Infinity;
             let totalSolar = 0, trailersOnline = 0;
             let netOnline = 0, netTotal = 0;
+            let totalDcLoad = 0, alarmCount = 0;
             let worstStatus = 'healthy';
 
             for (const t of trailers) {
@@ -1534,6 +1535,8 @@ app.get('/api/job-sites', async (req, res) => {
                         else if (snap.battery_soc < 50 && worstStatus !== 'critical') worstStatus = 'warning';
                     }
                     totalSolar += snap.solar_watts || 0;
+                    if (snap.dc_load_watts != null) totalDcLoad += snap.dc_load_watts;
+                    if (snap.alarm_reason || snap.error_code) alarmCount++;
                 } else if (pw?.online) {
                     // No Cerbo/VRM data but Pepwave is online — not critical
                     trailersOnline++;
@@ -1555,6 +1558,8 @@ app.get('/api/job-sites', async (req, res) => {
                 avg_soc: socCount > 0 ? +(totalSoc / socCount).toFixed(1) : null,
                 min_soc: minSoc === Infinity ? null : +minSoc.toFixed(1),
                 total_solar_watts: +totalSolar.toFixed(0),
+                total_dc_load_watts: +totalDcLoad.toFixed(0),
+                alarm_count: alarmCount,
                 worst_status: trailers.length === 0 ? 'unknown' : worstStatus,
                 net_online: netOnline,
                 net_total: netTotal,
@@ -1572,6 +1577,10 @@ app.get('/api/job-sites', async (req, res) => {
                         online: isIc2Only ? (pw?.online ?? false) : (hasVrmData(snap) || pw?.online || false),
                         ic2_only: isIc2Only,
                         network_online: pw?.online ?? false,
+                        dc_load_watts: snap?.dc_load_watts ?? null,
+                        alarm_reason: snap?.alarm_reason ?? null,
+                        error_code: snap?.error_code ?? null,
+                        inverter_mode: snap?.inverter_mode ?? null,
                     };
                 }),
             };
@@ -2421,6 +2430,7 @@ app.post('/api/analyze/trailer/:id', aiLimiter, async (req, res) => {
             `Error Code: ${snapshot.error_code != null ? snapshot.error_code : 'None'}`,
             `MPPT State: ${fmt(snapshot.mppt_state)}`,
             `Lifetime Yield: ${fmt(snapshot.lifetime_yield_kwh, ' kWh')}`,
+            `Time to Go (Victron estimate): ${snapshot.time_to_go_min != null ? `${Math.round(snapshot.time_to_go_min / 60 * 10) / 10} hours` : 'N/A'}`,
             `Firmware: ${fmt(snapshot.firmware_version)}`,
             '',
             '=== COMPUTED INTELLIGENCE ===',
@@ -2565,6 +2575,7 @@ async function pollAllSites() {
                     const inverterMode = extractDiagValue(records, 'MODE');
                     const mpptState = extractDiagValue(records, 'MPPT');
                     const firmwareVersion = extractDiagValue(records, 'FW');
+                    const timeToGoMin = extractDiagValue(records, 'TTG');
 
                     // GPS: only use IC2 Peplink as authoritative source.
                     // VRM coordinates are often stale/default. Only seed gpsCache
@@ -2601,6 +2612,7 @@ async function pollAllSites() {
                         inverter_mode: inverterMode,
                         mppt_state: mpptState,
                         firmware_version: firmwareVersion,
+                        time_to_go_min: timeToGoMin,
                     };
 
                     snapshotCache.set(site.idSite, snapshot);
@@ -3104,7 +3116,12 @@ Database tables:
    Columns: id SERIAL, site_id INTEGER, site_name TEXT, timestamp BIGINT (ms),
    battery_soc REAL (0-100%), battery_voltage REAL (V), battery_current REAL (A),
    battery_temp REAL (°C), battery_power REAL (W), solar_watts REAL (W),
-   solar_yield_today REAL (kWh), solar_yield_yesterday REAL (kWh), charge_state TEXT
+   solar_yield_today REAL (kWh), solar_yield_yesterday REAL (kWh), charge_state TEXT,
+   consumed_ah REAL (consumed amp-hours from CE diagnostic, most accurate consumption),
+   dc_load_watts REAL (DC load power in watts), load_current REAL (load amps),
+   load_state TEXT (on/off), inverter_mode TEXT, mppt_state TEXT,
+   alarm_reason TEXT, error_code TEXT, lifetime_yield_kwh REAL (cumulative solar kWh),
+   time_to_go_min REAL (Victron TTG estimate in minutes)
 
 2. pepwave_snapshots — Pepwave network data (one row per device per 5-min poll)
    Columns: id SERIAL, device_name TEXT, timestamp BIGINT (ms),
@@ -3136,6 +3153,12 @@ Database tables:
    Columns: id SERIAL, date DATE, site_id INTEGER, avg_soc REAL, min_soc REAL, max_soc REAL,
    solar_yield_kwh REAL, avg_voltage REAL, avg_signal_bar REAL, data_usage_mb REAL,
    uptime_percent REAL, created_at BIGINT (ms). UNIQUE(site_id, date)
+
+7. daily_energy_summary — Daily solar yield and consumption per trailer
+   Columns: site_id INTEGER, date DATE, site_name TEXT, yield_wh NUMERIC (solar Wh),
+   consumed_wh NUMERIC (consumption Wh), soc_start_of_day REAL, expected_yield_wh NUMERIC,
+   consumption_source TEXT ('CE diagnostic'|'DC power accumulation'|'SOC delta estimate'),
+   updated_at BIGINT (ms). PRIMARY KEY(site_id, date)
 
 IMPORTANT:
 - site_snapshots.site_name matches pepwave_snapshots.device_name (they share trailer names)
@@ -3190,7 +3213,7 @@ app.post('/api/query', aiLimiter, async (req, res) => {
         const snapshotSummary = [];
         for (const [siteId, snap] of snapshotCache.entries()) {
             if (!hasVrmData(snap)) continue;
-            snapshotSummary.push(`${snap.site_name || 'Site ' + siteId}: SOC=${snap.battery_soc}%, ${snap.battery_voltage}V, solar=${snap.solar_watts}W, charge=${snap.charge_state}`);
+            snapshotSummary.push(`${snap.site_name || 'Site ' + siteId}: SOC=${snap.battery_soc}%, ${snap.battery_voltage}V, solar=${snap.solar_watts}W, charge=${snap.charge_state}, dcLoad=${snap.dc_load_watts ?? '?'}W, inverter=${snap.inverter_mode ?? '?'}, mppt=${snap.mppt_state ?? '?'}`);
         }
 
         // Build intelligence summary from computed metrics
@@ -3529,6 +3552,118 @@ function computeHealthGrade(siteId) {
     return { grade, score, color };
 }
 
+// ============================================================
+// Tech Status — Actionable 3-state status for field techs
+// ============================================================
+function computeTechStatus(siteId, alertsMap) {
+    const snapshot = snapshotCache.get(siteId);
+    const pw = pepwaveCache.get(snapshot?.site_name);
+
+    // No VRM data — check if pepwave is online
+    if (!snapshot || !hasVrmData(snapshot)) {
+        if (pw?.online) return { status: 'good', reason: 'Network-only trailer, Pepwave online' };
+        return { status: 'attention', reason: 'Trailer offline — no VRM or network data' };
+    }
+
+    const soc = snapshot.battery_soc;
+    const reasons = [];
+
+    // --- NEEDS ATTENTION triggers ---
+
+    // Active alarm or error from VRM
+    if (snapshot.alarm_reason) {
+        reasons.push(`Alarm: ${snapshot.alarm_reason}`);
+    }
+    if (snapshot.error_code) {
+        reasons.push(`Error: ${snapshot.error_code}`);
+    }
+
+    // Critical SOC
+    if (soc !== null && soc < 20) {
+        reasons.push(`Critical SOC: ${soc.toFixed(0)}%`);
+    }
+
+    // Energy deficit streak >= 5 days
+    const deficitStreak = alertsMap?.[siteId] ?? 0;
+    if (deficitStreak >= 5) {
+        reasons.push(`Energy deficit: ${deficitStreak} day streak`);
+    }
+
+    // SOC declining and projected critical within 3 days
+    const socTrend = computeSocTrend(siteId);
+    if (socTrend && socTrend.declining && socTrend.daysUntilCritical !== null && socTrend.daysUntilCritical <= 3) {
+        reasons.push(`SOC declining ${Math.abs(socTrend.slopePerDay).toFixed(1)}%/day — critical in ~${socTrend.daysUntilCritical}d`);
+    }
+
+    if (reasons.length > 0) return { status: 'attention', reason: reasons.join('; ') };
+
+    // --- WATCH triggers ---
+    const watchReasons = [];
+
+    // Low SOC (20-40%)
+    if (soc !== null && soc >= 20 && soc < 40) {
+        watchReasons.push(`Low SOC: ${soc.toFixed(0)}%`);
+    }
+
+    // SOC declining > 2%/day (but not yet critical-imminent)
+    if (socTrend && socTrend.declining && socTrend.slopePerDay < -2) {
+        watchReasons.push(`SOC declining ${Math.abs(socTrend.slopePerDay).toFixed(1)}%/day`);
+    }
+
+    // Energy deficit 2-4 days
+    if (deficitStreak >= 2 && deficitStreak < 5) {
+        watchReasons.push(`Energy deficit: ${deficitStreak} day streak`);
+    }
+
+    if (watchReasons.length > 0) return { status: 'watch', reason: watchReasons.join('; ') };
+
+    return { status: 'good', reason: null };
+}
+
+// Fast SOC trend from in-memory dailyEnergy (no DB query)
+function computeSocTrend(siteId) {
+    const siteEnergy = dailyEnergy.get(siteId);
+    if (!siteEnergy) return null;
+
+    const today = todayStr();
+    const recentDays = Object.entries(siteEnergy)
+        .filter(([d]) => d <= today)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(-4); // last 4 days for trend
+
+    if (recentDays.length < 2) return null;
+
+    // Use socStartOfDay for each day + current SOC for today
+    const points = [];
+    for (const [dateStr] of recentDays) {
+        // Check socStartOfDay for this site's historical start-of-day SOC
+        const sEntry = socStartOfDay.get(siteId);
+        if (sEntry && sEntry.date === dateStr) {
+            points.push(sEntry.soc);
+        }
+    }
+
+    // If we don't have enough start-of-day points, use current snapshot
+    const snapshot = snapshotCache.get(siteId);
+    if (snapshot?.battery_soc !== null && points.length > 0) {
+        points.push(snapshot.battery_soc);
+    }
+
+    if (points.length < 2) return null;
+
+    // Simple slope: (last - first) / days
+    const slopePerDay = (points[points.length - 1] - points[0]) / (points.length - 1);
+    const currentSoc = points[points.length - 1];
+    const declining = slopePerDay < -0.5;
+
+    let daysUntilCritical = null;
+    if (declining && currentSoc > 20) {
+        daysUntilCritical = Math.round((currentSoc - 20) / Math.abs(slopePerDay));
+    }
+
+    return { slopePerDay, declining, daysUntilCritical };
+}
+
 app.get('/api/action-queue', async (req, res) => {
     try {
         const actions = [];
@@ -3736,6 +3871,40 @@ app.get('/api/fleet/health-grades', (req, res) => {
         grades[siteId] = computeHealthGrade(siteId);
     }
     res.json({ success: true, grades });
+});
+
+app.get('/api/fleet/tech-status', (req, res) => {
+    // Build deficit streak map once (reuse computeAlerts)
+    const alertsMap = {};
+    for (const alert of computeAlerts()) {
+        alertsMap[alert.site_id] = alert.streak_days;
+    }
+
+    const statuses = {};
+    // VRM-connected trailers
+    for (const [siteId] of snapshotCache) {
+        statuses[siteId] = computeTechStatus(siteId, alertsMap);
+    }
+    // IC2-only trailers (pepwave-only, no VRM snapshot)
+    for (const [name, dev] of pepwaveCache) {
+        let covered = false;
+        for (const [, snap] of snapshotCache) {
+            if (snap.site_name === name) { covered = true; break; }
+        }
+        if (!covered) {
+            statuses[`pw:${name}`] = {
+                status: dev.online ? 'good' : 'attention',
+                reason: dev.online ? 'Network-only, Pepwave online' : 'Pepwave offline',
+            };
+        }
+    }
+
+    const summary = { good: 0, watch: 0, attention: 0 };
+    for (const s of Object.values(statuses)) {
+        if (s) summary[s.status]++;
+    }
+
+    res.json({ success: true, statuses, summary });
 });
 
 // ============================================================

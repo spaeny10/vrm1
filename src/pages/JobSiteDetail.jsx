@@ -43,6 +43,7 @@ function JobSiteDetail() {
         let totalSoc = 0, socCount = 0, minSoc = Infinity
         let totalSolar = 0, trailersOnline = 0
         let netOnline = 0, netTotal = 0
+        let totalDcLoad = 0, alarmCount = 0
 
         for (const t of trailers) {
             const snap = t.snapshot
@@ -54,6 +55,8 @@ function JobSiteDetail() {
                     if (snap.battery_soc < minSoc) minSoc = snap.battery_soc
                 }
                 totalSolar += snap.solar_watts || 0
+                if (snap.dc_load_watts != null) totalDcLoad += snap.dc_load_watts
+                if (snap.alarm_reason || snap.error_code) alarmCount++
             }
             if (t.pepwave) {
                 netTotal++
@@ -69,6 +72,8 @@ function JobSiteDetail() {
             trailerCount: trailers.length,
             netOnline,
             netTotal,
+            totalDcLoad: totalDcLoad.toFixed(0),
+            alarmCount,
         }
     }, [trailers])
 
@@ -150,6 +155,7 @@ function JobSiteDetail() {
                 <KpiCard title="Avg SOC" value={kpis.avgSoc} unit="%" color="teal" />
                 <KpiCard title="Min SOC" value={kpis.minSoc} unit="%" color={kpis.minSoc !== '--' && kpis.minSoc < 20 ? 'red' : 'blue'} />
                 <KpiCard title="Total Solar" value={kpis.totalSolar} unit="W" color="yellow" />
+                <KpiCard title="Total Load" value={kpis.totalDcLoad} unit="W" color="red" />
                 <KpiCard title="Trailers" value={`${kpis.trailersOnline}/${kpis.trailerCount}`} color="green" />
                 {kpis.netTotal > 0 && (
                     <KpiCard title="Network" value={`${kpis.netOnline}/${kpis.netTotal}`} color="blue" />
@@ -176,9 +182,14 @@ function JobSiteDetail() {
                             >
                                 <div className="trailer-mini-header">
                                     <span className="trailer-mini-name">{t.site_name}</span>
-                                    <span className={`trailer-mini-status trailer-mini-status-${status}`}>
-                                        {status === 'offline' ? 'Offline' : status === 'alarm' ? 'Low' : status === 'warning' ? 'Warn' : 'OK'}
-                                    </span>
+                                    <div className="trailer-mini-badges">
+                                        {(snap?.alarm_reason || snap?.error_code) && (
+                                            <span className="alarm-dot" title={snap.alarm_reason || snap.error_code}>!</span>
+                                        )}
+                                        <span className={`trailer-mini-status trailer-mini-status-${status}`}>
+                                            {status === 'offline' ? 'Offline' : status === 'alarm' ? 'Low' : status === 'warning' ? 'Warn' : 'OK'}
+                                        </span>
+                                    </div>
                                 </div>
                                 <div className="trailer-mini-body">
                                     <GaugeChart
@@ -191,6 +202,9 @@ function JobSiteDetail() {
                                     <div className="trailer-mini-stats">
                                         <span>{snap?.solar_watts != null ? `${Math.round(snap.solar_watts)}W` : '--'}</span>
                                         <span>{snap?.battery_voltage != null ? `${Number(snap.battery_voltage).toFixed(1)}V` : '--'}</span>
+                                        {snap?.dc_load_watts != null && (
+                                            <span className="trailer-mini-load">{Math.round(snap.dc_load_watts)}W load</span>
+                                        )}
                                     </div>
                                 </div>
                                 {t.pepwave && (
