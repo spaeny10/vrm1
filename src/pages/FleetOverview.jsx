@@ -23,6 +23,7 @@ function FleetOverview() {
     const [searchTerm, setSearchTerm] = useState('')
     const [actionQueueOpen, setActionQueueOpen] = useState(false)
     const [deploymentFilter, setDeploymentFilter] = useState(null) // null | 'billing' | 'standby' | 'hq' | 'pickup'
+    const [showDeployedOnly, setShowDeployedOnly] = useState(true)
     const [techStatusFilter, setTechStatusFilter] = useState(null) // null | 'good' | 'watch' | 'attention'
     const [generatingPdf, setGeneratingPdf] = useState(false)
 
@@ -118,6 +119,17 @@ function FleetOverview() {
             }
         }
         return map
+    }, [jobSites])
+
+    // Build set of HQ trailer IDs
+    const hqTrailerIds = useMemo(() => {
+        const set = new Set()
+        for (const js of jobSites) {
+            if (js.is_headquarters) {
+                for (const t of (js.trailers || [])) set.add(t.site_id)
+            }
+        }
+        return set
     }, [jobSites])
 
     // KPIs — computed from job sites when in sites view, trailers when in trailers view
@@ -238,6 +250,11 @@ function FleetOverview() {
     const filteredSites = useMemo(() => {
         let result = [...sites]
 
+        // Hide HQ trailers by default
+        if (showDeployedOnly) {
+            result = result.filter(s => !hqTrailerIds.has(s.idSite))
+        }
+
         if (searchTerm) {
             const term = searchTerm.toLowerCase()
             result = result.filter(s => s.name.toLowerCase().includes(term))
@@ -280,7 +297,7 @@ function FleetOverview() {
         })
 
         return result
-    }, [sites, snapshotMap, sortBy, filterAlarm, searchTerm, pepwaveMap, techStatusFilter, techStatusMap])
+    }, [sites, snapshotMap, sortBy, filterAlarm, searchTerm, pepwaveMap, techStatusFilter, techStatusMap, showDeployedOnly, hqTrailerIds])
 
     const isLoading = viewMode === 'sites' ? (jobSitesLoading && !jobSitesData) : (sitesLoading && !sitesData)
 
@@ -626,6 +643,17 @@ function FleetOverview() {
                         {viewMode === 'trailers' && <option value="net-offline">Network Offline</option>}
                     </select>
                 </div>
+
+                {viewMode === 'trailers' && (
+                    <label className="deployed-toggle">
+                        <input
+                            type="checkbox"
+                            checked={showDeployedOnly}
+                            onChange={(e) => setShowDeployedOnly(e.target.checked)}
+                        />
+                        Deployed only
+                    </label>
+                )}
             </div>
 
             {displayMode === 'list' ? (
