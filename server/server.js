@@ -2588,6 +2588,19 @@ async function pollAllSites() {
                         }
                     }
 
+                    // Debug: log diagnostic codes for one trailer to identify DC load source
+                    if (site.name === 'Trailer 582') {
+                        const dcCodes = ['Pc', 'P', 'Pdc', 'ScW', 'IL', 'I', 'bc', 'bv', 'V'];
+                        const found = dcCodes.map(c => {
+                            const val = extractDiagValue(records, c);
+                            return `${c}=${val}`;
+                        }).join(', ');
+                        console.log(`[DC-DEBUG] Trailer 582: ${found}`);
+                        // Also log all unique codes present
+                        const allCodes = [...new Set(records.map(r => r.code))].sort();
+                        console.log(`[DC-DEBUG] All codes: ${allCodes.join(', ')}`);
+                    }
+
                     // Derive DC load if Pc not available:
                     // DC load = solar_input - battery_charge_power
                     // When battery is discharging (negative power), load = solar + |discharge|
