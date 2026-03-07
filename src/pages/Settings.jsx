@@ -1,7 +1,7 @@
 import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, updateSolarScoreSettings } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, sendTestEmail, updateSolarScoreSettings } from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
 import { useAuth } from '../components/AuthProvider'
 
@@ -206,6 +206,7 @@ function CustomerAccountsSection({ jobSites, toast, loadUsers }) {
 function DigestSettingsSection({ toast }) {
     const [preview, setPreview] = useState(null)
     const [loadingPreview, setLoadingPreview] = useState(false)
+    const [sendingEmail, setSendingEmail] = useState(false)
 
     const handlePreview = async () => {
         setLoadingPreview(true)
@@ -218,16 +219,40 @@ function DigestSettingsSection({ toast }) {
         setLoadingPreview(false)
     }
 
+    const handleTestEmail = async (type) => {
+        setSendingEmail(true)
+        try {
+            const result = await sendTestEmail(type)
+            if (result.success) {
+                toast.success(`Test ${type} email sent to: ${result.recipients.join(', ')}`)
+            } else {
+                toast.error(result.error || 'Failed to send test email')
+            }
+        } catch (err) {
+            toast.error('Error sending test email: ' + err.message)
+        }
+        setSendingEmail(false)
+    }
+
     return (
         <div className="settings-card">
-            <h2>Email Digest</h2>
+            <h2>Email Notifications (SendGrid)</h2>
             <p className="settings-desc">
-                Automated daily fleet digests are configured via environment variables on the server.
-                Set <code>DIGEST_ENABLED=true</code>, <code>DIGEST_TIME=06:00</code>, <code>DIGEST_RECIPIENTS=email@example.com</code>, and <code>DIGEST_TIMEZONE=America/Denver</code>.
+                Configure SendGrid in environment variables: <code>SENDGRID_API_KEY</code>, <code>ALERT_FROM_EMAIL</code>, <code>ALERT_EMAIL_RECIPIENTS</code>.
+                Daily digest scheduling requires: <code>DIGEST_ENABLED=true</code>, <code>DIGEST_TIME=06:00</code>, <code>DIGEST_RECIPIENTS</code>, <code>DIGEST_TIMEZONE=America/Denver</code>.
             </p>
             <div className="settings-actions">
                 <button className="btn btn-secondary" onClick={handlePreview} disabled={loadingPreview}>
                     {loadingPreview ? 'Loading...' : 'Preview Digest Data'}
+                </button>
+                <button className="btn btn-secondary" onClick={() => handleTestEmail('alert')} disabled={sendingEmail}>
+                    {sendingEmail ? 'Sending...' : 'Send Test Alert'}
+                </button>
+                <button className="btn btn-secondary" onClick={() => handleTestEmail('digest')} disabled={sendingEmail}>
+                    {sendingEmail ? 'Sending...' : 'Send Test Digest'}
+                </button>
+                <button className="btn btn-secondary" onClick={() => handleTestEmail('geofence')} disabled={sendingEmail}>
+                    {sendingEmail ? 'Sending...' : 'Send Test Geofence'}
                 </button>
             </div>
             {preview && (

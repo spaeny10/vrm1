@@ -520,6 +520,14 @@ export async function fetchDigestPreview() {
     return apiFetch(`${API_BASE}/reports/digest-preview`);
 }
 
+export async function sendTestEmail(type = 'alert') {
+    return apiFetch(`${API_BASE}/test-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type }),
+    });
+}
+
 export async function updateSolarScoreSettings(config) {
     return apiFetch(`${API_BASE}/settings/solar-score`, {
         method: 'PUT',
