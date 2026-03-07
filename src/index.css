@@ -76,6 +76,7 @@ body {
   margin-left: var(--sidebar-width);
   padding: 28px 32px;
   overflow-y: auto;
+  transition: margin-left 0.3s ease;
 }
 
 /* ========== Sidebar ========== */
@@ -90,6 +91,7 @@ body {
   flex-direction: column;
   z-index: 100;
   border-right: 1px solid rgba(255, 255, 255, 0.06);
+  transition: width 0.3s ease;
 }
 
 .sidebar-brand {
@@ -98,6 +100,31 @@ body {
   gap: 10px;
   padding: 16px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+}
+
+.sidebar-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(255, 255, 255, 0.05);
+  border: none;
+  border-radius: 4px;
+  padding: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  opacity: 0.6;
+}
+
+.sidebar-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  opacity: 1;
 }
 
 .brand-logo {
@@ -132,6 +159,7 @@ body {
   font-size: 14px;
   font-weight: 500;
   transition: all var(--transition);
+  position: relative;
 }
 
 .nav-item:hover {
@@ -167,6 +195,46 @@ body {
 .status-dot.online {
   background: var(--success);
   box-shadow: 0 0 6px rgba(46, 204, 113, 0.5);
+}
+
+/* Collapsed sidebar state */
+.sidebar-collapsed {
+  width: 60px !important;
+}
+
+.sidebar-collapsed .brand-omni,
+.sidebar-collapsed .nav-item span:not(.nav-badge),
+.sidebar-collapsed .sidebar-user-info,
+.sidebar-collapsed .status-indicator span,
+.sidebar-collapsed .sidebar-toggle {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-brand {
+  justify-content: center;
+  padding: 16px 8px;
+}
+
+.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 12px;
+}
+
+.sidebar-collapsed .nav-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-width: 18px;
+}
+
+.sidebar-collapsed .sidebar-footer {
+  padding: 12px 8px;
+}
+
+.sidebar-collapsed .sidebar-user {
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 
 /* ========== Loading / Empty States ========== */

@@ -12,11 +12,21 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
     const alertCount = alertsData?.alerts?.length || 0
 
     const [theme, setTheme] = useState(() => localStorage.getItem('vrm_theme') || 'dark')
+    const [collapsed, setCollapsed] = useState(() => {
+        const saved = localStorage.getItem('vrm_sidebar_collapsed')
+        return saved === 'true'
+    })
 
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme)
         localStorage.setItem('vrm_theme', theme)
     }, [theme])
+
+    useEffect(() => {
+        localStorage.setItem('vrm_sidebar_collapsed', collapsed)
+        // Update CSS variable for main content margin
+        document.documentElement.style.setProperty('--sidebar-width', collapsed ? '60px' : '240px')
+    }, [collapsed])
 
     // Close mobile sidebar on navigation
     useEffect(() => {
@@ -24,12 +34,22 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
     }, [location.pathname])
 
     const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
+    const toggleCollapsed = () => setCollapsed(c => !c)
 
     return (
-        <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
+        <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''} ${collapsed ? 'sidebar-collapsed' : ''}`}>
             <div className="sidebar-brand">
                 <img src="/logo.webp" alt="BIGView" className="brand-logo" />
                 <span className="brand-omni">OMNI</span>
+                <button className="sidebar-toggle" onClick={toggleCollapsed} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        {collapsed ? (
+                            <path d="M9 18l6-6-6-6" />
+                        ) : (
+                            <path d="M15 18l-6-6 6-6" />
+                        )}
+                    </svg>
+                </button>
             </div>
 
             <nav className="sidebar-nav">
