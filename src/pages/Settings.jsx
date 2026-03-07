@@ -204,6 +204,7 @@ function CustomerAccountsSection({ jobSites, toast, loadUsers }) {
 }
 
 function DigestSettingsSection({ toast }) {
+    const [showPreview, setShowPreview] = useState(false)
     const [preview, setPreview] = useState(null)
     const [loadingPreview, setLoadingPreview] = useState(false)
     const [sendingEmail, setSendingEmail] = useState(false)
@@ -221,6 +222,7 @@ function DigestSettingsSection({ toast }) {
         try {
             const data = await fetchDigestPreview()
             setPreview(data.digest)
+            setShowPreview(true)
         } catch (err) {
             toast.error('Error loading preview: ' + err.message)
         }
@@ -244,88 +246,92 @@ function DigestSettingsSection({ toast }) {
 
     return (
         <div className="settings-card">
-            <h2>Email Notifications (SendGrid)</h2>
+            <h2>Email Notifications</h2>
 
             {emailStatus && (
-                <div style={{ marginBottom: 16, padding: 12, background: emailStatus.configured ? 'rgba(46, 204, 113, 0.1)' : 'rgba(231, 76, 60, 0.1)', border: `1px solid ${emailStatus.configured ? '#2ecc71' : '#e74c3c'}`, borderRadius: 'var(--radius)', fontSize: '13px' }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4, color: emailStatus.configured ? '#2ecc71' : '#e74c3c' }}>
+                <div style={{ marginBottom: 12, padding: 10, background: emailStatus.configured ? 'rgba(46, 204, 113, 0.08)' : 'rgba(231, 76, 60, 0.08)', border: `1px solid ${emailStatus.configured ? '#2ecc71' : '#e74c3c'}`, borderRadius: 'var(--radius)', fontSize: '12px' }}>
+                    <div style={{ fontWeight: 600, color: emailStatus.configured ? '#2ecc71' : '#e74c3c' }}>
                         {emailStatus.configured ? '✓ SendGrid Configured' : '✗ SendGrid Not Configured'}
                     </div>
-                    {emailStatus.configured ? (
-                        <div style={{ color: 'var(--text-secondary)' }}>
-                            <div>API Key: {emailStatus.config.apiKeyPrefix}</div>
-                            <div>From: {emailStatus.config.fromEmail}</div>
-                            <div>Recipients: {emailStatus.config.recipients.join(', ')} ({emailStatus.config.recipientCount} total)</div>
-                        </div>
-                    ) : (
-                        <div style={{ color: 'var(--text-secondary)' }}>
-                            Set SENDGRID_API_KEY, ALERT_FROM_EMAIL, and ALERT_EMAIL_RECIPIENTS in Railway environment variables.
+                    {emailStatus.configured && (
+                        <div style={{ color: 'var(--text-muted)', marginTop: 4, fontSize: '11px' }}>
+                            From: {emailStatus.config.fromEmail} · {emailStatus.config.recipientCount} recipient(s)
                         </div>
                     )}
                 </div>
             )}
 
             <p className="settings-desc">
-                Configure SendGrid in environment variables: <code>SENDGRID_API_KEY</code>, <code>ALERT_FROM_EMAIL</code>, <code>ALERT_EMAIL_RECIPIENTS</code>.
-                Daily digest scheduling requires: <code>DIGEST_ENABLED=true</code>, <code>DIGEST_TIME=06:00</code>, <code>DIGEST_RECIPIENTS</code>, <code>DIGEST_TIMEZONE=America/Denver</code>.
+                Alert emails are sent for energy deficits, geofence breaches, and low SOC warnings.
+                Daily digests can be enabled with <code>DIGEST_ENABLED=true</code>. Users can subscribe to digests in the User Management section.
             </p>
             <div className="settings-actions">
                 <button className="btn btn-secondary" onClick={handlePreview} disabled={loadingPreview}>
-                    {loadingPreview ? 'Loading...' : 'Preview Digest Data'}
+                    {loadingPreview ? 'Loading...' : 'Preview Digest'}
                 </button>
                 <button className="btn btn-secondary" onClick={() => handleTestEmail('alert')} disabled={sendingEmail}>
-                    {sendingEmail ? 'Sending...' : 'Send Test Alert'}
+                    {sendingEmail ? 'Sending...' : 'Test Alert'}
                 </button>
                 <button className="btn btn-secondary" onClick={() => handleTestEmail('digest')} disabled={sendingEmail}>
-                    {sendingEmail ? 'Sending...' : 'Send Test Digest'}
+                    {sendingEmail ? 'Sending...' : 'Test Digest'}
                 </button>
                 <button className="btn btn-secondary" onClick={() => handleTestEmail('geofence')} disabled={sendingEmail}>
-                    {sendingEmail ? 'Sending...' : 'Send Test Geofence'}
+                    {sendingEmail ? 'Sending...' : 'Test Geofence'}
                 </button>
             </div>
-            {preview && (
-                <div style={{ marginTop: 16, padding: 16, background: 'var(--bg-primary)', borderRadius: 'var(--radius)', fontSize: '0.85rem' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Fleet Size</span><br /><strong>{preview.fleet_size}</strong></div>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Avg SOC</span><br /><strong>{preview.avg_soc?.toFixed(1)}%</strong></div>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Total Yield</span><br /><strong>{preview.total_yield_kwh?.toFixed(1)} kWh</strong></div>
+
+            {/* Digest Preview Modal */}
+            {showPreview && preview && (
+                <div className="maint-form-overlay" onClick={() => setShowPreview(false)}>
+                    <div className="maint-form-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 600 }}>
+                        <div className="maint-form-header">
+                            <h2>Daily Digest Preview</h2>
+                            <button className="detail-close" onClick={() => setShowPreview(false)}>✕</button>
+                        </div>
+                        <div style={{ padding: '16px 24px', maxHeight: 500, overflowY: 'auto' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16, padding: 12, background: 'var(--bg-primary)', borderRadius: 'var(--radius)' }}>
+                                <div><span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Fleet Size</span><br /><strong>{preview.fleet_size}</strong></div>
+                                <div><span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Avg SOC</span><br /><strong>{preview.avg_soc?.toFixed(1)}%</strong></div>
+                                <div><span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Total Yield</span><br /><strong>{preview.total_yield_kwh?.toFixed(1)} kWh</strong></div>
+                            </div>
+                            {preview.trailers_below_50_soc?.length > 0 && (
+                                <div style={{ marginBottom: 16 }}>
+                                    <strong style={{ color: 'var(--warning)', fontSize: '13px' }}>⚠ Low SOC Trailers ({preview.trailers_below_50_soc.length})</strong>
+                                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                        {preview.trailers_below_50_soc.map((t, i) => (
+                                            <span key={i} style={{ display: 'inline-block', padding: '4px 10px', background: 'var(--bg-card)', borderRadius: 'var(--radius)', fontSize: '12px', border: '1px solid var(--border)' }}>
+                                                {t.site_name}: <strong>{t.battery_soc?.toFixed(0)}%</strong>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {preview.active_alerts?.length > 0 && (
+                                <div style={{ marginBottom: 16 }}>
+                                    <strong style={{ color: 'var(--danger)', fontSize: '13px' }}>🚨 Active Alerts ({preview.active_alerts.length})</strong>
+                                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                        {preview.active_alerts.map((a, i) => (
+                                            <span key={i} style={{ display: 'inline-block', padding: '4px 10px', background: 'var(--bg-card)', borderRadius: 'var(--radius)', fontSize: '12px', border: '1px solid var(--border)' }}>
+                                                {a.site_name}: <strong>{a.severity}</strong> ({a.streak_days}d)
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {preview.predictive_warnings?.length > 0 && (
+                                <div>
+                                    <strong style={{ color: 'var(--warning)', fontSize: '13px' }}>📊 Predictive Warnings ({preview.predictive_warnings.length})</strong>
+                                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                        {preview.predictive_warnings.map((p, i) => (
+                                            <span key={i} style={{ display: 'inline-block', padding: '4px 10px', background: 'var(--bg-card)', borderRadius: 'var(--radius)', fontSize: '12px', border: '1px solid var(--border)' }}>
+                                                {p.site_name}: <strong>{p.days_to_critical}d</strong> to critical
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
-                    {preview.trailers_below_50_soc?.length > 0 && (
-                        <div style={{ marginBottom: 12 }}>
-                            <strong style={{ color: 'var(--warning)' }}>Low SOC Trailers ({preview.trailers_below_50_soc.length}):</strong>
-                            <div style={{ marginTop: 4 }}>
-                                {preview.trailers_below_50_soc.map((t, i) => (
-                                    <span key={i} style={{ display: 'inline-block', padding: '2px 8px', margin: '2px 4px 2px 0', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', fontSize: '12px' }}>
-                                        {t.site_name}: {t.battery_soc?.toFixed(1)}%
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                    {preview.active_alerts?.length > 0 && (
-                        <div style={{ marginBottom: 12 }}>
-                            <strong style={{ color: 'var(--danger)' }}>Active Alerts ({preview.active_alerts.length}):</strong>
-                            <div style={{ marginTop: 4 }}>
-                                {preview.active_alerts.map((a, i) => (
-                                    <span key={i} style={{ display: 'inline-block', padding: '2px 8px', margin: '2px 4px 2px 0', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', fontSize: '12px' }}>
-                                        {a.site_name}: {a.severity} ({a.streak_days}d)
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                    {preview.predictive_warnings?.length > 0 && (
-                        <div>
-                            <strong style={{ color: 'var(--warning)' }}>Predictive Warnings ({preview.predictive_warnings.length}):</strong>
-                            <div style={{ marginTop: 4 }}>
-                                {preview.predictive_warnings.map((p, i) => (
-                                    <span key={i} style={{ display: 'inline-block', padding: '2px 8px', margin: '2px 4px 2px 0', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', fontSize: '12px' }}>
-                                        {p.site_name}: {p.days_to_critical}d to critical
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
                 </div>
             )}
         </div>
@@ -813,6 +819,7 @@ function Settings() {
                         </div>
                         <p className="settings-desc">
                             Manage user accounts, roles, and access. Roles: Admin (full access), Technician (maintenance + fleet), Viewer (read-only).
+                            Users with emails can subscribe to daily digest emails.
                         </p>
 
                         {/* Create User Modal */}
@@ -893,6 +900,7 @@ function Settings() {
                                             <th>Display Name</th>
                                             <th>Email</th>
                                             <th>Role</th>
+                                            <th>Digest</th>
                                             <th>Last Login</th>
                                             <th>Actions</th>
                                         </tr>
@@ -919,6 +927,24 @@ function Settings() {
                                                             <option value="viewer">Viewer</option>
                                                             <option value="customer">Customer</option>
                                                         </select>
+                                                    </td>
+                                                    <td style={{ textAlign: 'center' }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={u.digest_enabled || false}
+                                                            onChange={async (e) => {
+                                                                try {
+                                                                    await updateUserAccount(u.id, { digest_enabled: e.target.checked })
+                                                                    toast.success(`Digest ${e.target.checked ? 'enabled' : 'disabled'} for ${u.username}`)
+                                                                    loadUsers()
+                                                                } catch (err) {
+                                                                    toast.error('Error updating digest subscription: ' + err.message)
+                                                                }
+                                                            }}
+                                                            disabled={!u.email}
+                                                            title={u.email ? (u.digest_enabled ? 'Subscribed to daily digest' : 'Not subscribed to daily digest') : 'Email required for digest subscription'}
+                                                            style={{ cursor: u.email ? 'pointer' : 'not-allowed' }}
+                                                        />
                                                     </td>
                                                     <td style={{ fontSize: '0.85em', color: u.last_login ? 'var(--text-secondary)' : 'var(--text-muted)' }} title={u.last_login ? new Date(Number(u.last_login)).toLocaleString() : 'Never logged in'}>
                                                         {formatLastLogin(u.last_login)}

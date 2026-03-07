@@ -353,6 +353,7 @@ export async function initDb() {
         await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL`);
         await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login BIGINT`);
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN DEFAULT FALSE`);
         console.log('  ✓ Users table ready');
 
         // Extend users role constraint to include 'customer'
@@ -1517,7 +1518,7 @@ export async function createGoogleUser(googleId, email, displayName, role = 'vie
 export async function getUsers() {
     if (!pool) return [];
     const result = await pool.query(
-        `SELECT id, username, display_name, role, active, created_at, updated_at, email, google_id, last_login FROM users ORDER BY created_at ASC`
+        `SELECT id, username, display_name, role, active, created_at, updated_at, email, google_id, last_login, digest_enabled FROM users ORDER BY created_at ASC`
     );
     return result.rows;
 }
@@ -1528,7 +1529,7 @@ export async function updateUser(id, updates) {
     const values = [];
     let idx = 1;
     for (const [key, val] of Object.entries(updates)) {
-        if (['display_name', 'role', 'active', 'password_hash', 'google_id', 'email', 'last_login'].includes(key)) {
+        if (['display_name', 'role', 'active', 'password_hash', 'google_id', 'email', 'last_login', 'digest_enabled'].includes(key)) {
             fields.push(`${key} = $${idx++}`);
             values.push(val);
         }

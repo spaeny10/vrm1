@@ -1075,11 +1075,12 @@ app.post('/api/users', requireRole('admin'), async (req, res) => {
 
 app.put('/api/users/:id', requireRole('admin'), async (req, res) => {
     try {
-        const { display_name, role, active } = req.body;
+        const { display_name, role, active, digest_enabled } = req.body;
         const updates = {};
         if (display_name !== undefined) updates.display_name = display_name;
         if (role !== undefined) updates.role = role;
         if (active !== undefined) updates.active = active;
+        if (digest_enabled !== undefined) updates.digest_enabled = digest_enabled;
         const user = await updateUser(parseInt(req.params.id), updates);
         if (!user) return res.status(404).json({ error: 'User not found' });
         res.json({ success: true, user });
@@ -4467,8 +4468,31 @@ function scheduleDigest() {
                         }));
                 } catch {}
             }
-            await sendDigestEmail(recipients, data);
-            console.log(`  Digest sent to ${recipients.length} recipient(s)`);
+
+            // Merge env var recipients with subscribed users
+            const allRecipients = [...recipients];
+            if (dbAvailable) {
+                try {
+                    const result = await db.query(`
+                        SELECT email FROM users
+                        WHERE digest_enabled = true
+                        AND email IS NOT NULL
+                        AND active = true
+                    `);
+                    const subscribedEmails = result.rows.map(r => r.email).filter(Boolean);
+                    allRecipients.push(...subscribedEmails);
+                } catch (err) {
+                    console.error('  Failed to fetch subscribed users:', err.message);
+                }
+            }
+
+            // Deduplicate recipients
+            const uniqueRecipients = [...new Set(allRecipients)];
+
+            if (uniqueRecipients.length > 0) {
+                await sendDigestEmail(uniqueRecipients, data);
+                console.log(`  Digest sent to ${uniqueRecipients.length} recipient(s) (${recipients.length} env, ${uniqueRecipients.length - recipients.length} subscribed)`);
+            }
         } catch (err) {
             console.error('  Digest error:', err.message);
         }
