@@ -4386,9 +4386,36 @@ app.post('/api/test-email', requireRole('admin'), async (req, res) => {
 
 // --- Digest ---
 async function buildDigestData() {
+    // Get HQ job site IDs from database
+    const hqJobSiteIds = new Set();
+    if (dbAvailable) {
+        try {
+            const result = await db.query(`SELECT id FROM job_sites WHERE is_headquarters = true`);
+            result.rows.forEach(row => hqJobSiteIds.add(row.id));
+        } catch (err) {
+            console.error('  Failed to fetch HQ job sites:', err.message);
+        }
+    }
+
+    // Get trailer assignments to filter out HQ trailers
+    const trailerJobSites = new Map(); // site_id -> job_site_id
+    if (dbAvailable) {
+        try {
+            const result = await db.query(`SELECT site_id, job_site_id FROM trailer_assignments WHERE job_site_id IS NOT NULL`);
+            result.rows.forEach(row => trailerJobSites.set(row.site_id, row.job_site_id));
+        } catch (err) {
+            console.error('  Failed to fetch trailer assignments:', err.message);
+        }
+    }
+
     const trailers = [];
     for (const [siteId, snapshot] of snapshotCache) {
         if (!hasVrmData(snapshot)) continue; // skip connectivity-only trailers
+
+        // Skip HQ trailers (match "Deployed only" toggle on dashboard)
+        const jobSiteId = trailerJobSites.get(siteId);
+        if (jobSiteId && hqJobSiteIds.has(jobSiteId)) continue;
+
         trailers.push({
             site_id: siteId,
             site_name: snapshot.site_name,
