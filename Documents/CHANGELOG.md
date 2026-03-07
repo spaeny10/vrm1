@@ -4,6 +4,69 @@ All notable changes to BIGView OMNI.
 
 ---
 
+## [1.5.0] — 2026-03-06
+
+### Added
+- **Enhanced Morning Digest** — Complete redesign of daily email digest with 5 actionable sections: Yesterday's Fleet Performance (complete 24-hour metrics from DB), Current Status (real-time online count + avg SOC), Needs Attention (Critical vs Watch priorities), Performance Highlights (top/bottom performers), and Network Summary (signal + high usage).
+- **User Digest Subscriptions** — System users can now opt-in to daily digest emails via checkbox in Settings → User Management. New `digest_enabled` column in users table. Recipients merged with environment variable recipients and deduplicated.
+- **SendGrid Configuration Status** — Settings page now displays SendGrid API key status (configured/not configured) with visual indicator showing API key prefix and recipient count.
+- **Test Email Endpoint** — `POST /api/test-email` with `type` parameter (alert/digest/geofence) allows admins to test email delivery with sample data.
+- **IC2-Only Trailer Counting** — Digest now includes IC2-only trailers (network hardware without VRM) in fleet size breakdown (e.g., "91 trailers: 87 VRM + 4 IC2-only"). Counts pepwaveCache devices not in snapshotCache and not at HQ.
+- **Digest Preview Modal** — Settings page digest section now shows preview in a popup modal instead of inline accordion.
+
+### Changed
+- **Yesterday's Complete Metrics** — Digest shifted from current snapshot data to yesterday's complete 24-hour metrics queried from `daily_energy_summary` and `pepwave_snapshots` tables. Shows EOD SOC, total yield, data usage with "Yesterday's Fleet Performance" heading.
+- **Priority-Based Action Items** — Digest separates Critical items (dispatch now: SOC <20%, active alarms, offline 24h+) from Watch items (monitor today: SOC 20-40%, energy deficits 5+ days) for clearer urgency signaling.
+- **Performance Insights** — Added top performers (>100% yield) and underperformers (<70% yield) sections with yield percentage calculations from `daily_energy_summary`.
+- **Digest Subject Line** — Changed from "Daily Digest" to "Morning Digest for [date]" for clarity.
+- **Deployed Trailer Counting** — Digest fleet size now queries `trailer_assignments` table with HQ exclusion filter instead of counting snapshotCache entries (was showing 39 instead of 91).
+
+### Technical Details
+- **buildDigestData() Rebuild** (`server/server.js` line 4388):
+  ```javascript
+  // Query yesterday's complete energy data
+  const energyResult = await db.query(`
+      SELECT
+          AVG(soc_start_of_day) as avg_soc,
+          SUM(yield_wh) / 1000.0 as total_yield_kwh,
+          COUNT(*) as trailer_count
+      FROM daily_energy_summary
+      WHERE date = $1
+  `, [yesterdayStr]);
+
+  // Count IC2-only trailers
+  let ic2OnlyCount = 0;
+  for (const [deviceName, pw] of pepwaveCache) {
+      if (!snapshotCache.has(pw.site_id || deviceName)) {
+          const jobSiteId = trailerJobSites.get(pw.site_id);
+          if (!jobSiteId || !hqJobSiteIds.has(jobSiteId)) {
+              ic2OnlyCount++;
+          }
+      }
+  }
+
+  // Query top/bottom performers
+  const perfResult = await db.query(`
+      SELECT site_name, yield_wh / 1000.0 as yield_kwh,
+             expected_yield_wh / 1000.0 as expected_kwh,
+             CASE WHEN expected_yield_wh > 0
+                  THEN (yield_wh::float / expected_yield_wh * 100)
+                  ELSE 0 END as percent
+      FROM daily_energy_summary
+      WHERE date = $1 AND expected_yield_wh > 0
+      ORDER BY percent DESC
+  `, [yesterdayStr]);
+  ```
+- **Email Template Sections** (`server/email.js` line 233):
+  - Yesterday's Performance: 4 metrics (fleet size breakdown, avg EOD SOC, total yield, data usage)
+  - Current Status: Online count, current avg SOC
+  - Needs Attention: Critical table (dispatch now) + Watch table (monitor today)
+  - Performance Highlights: Top performers >100%, Underperformers <70%
+  - Network Summary: Avg signal, high usage >500MB
+- **User Subscriptions**: `digest_enabled` column added to users table, Settings page checkbox requires email address, `scheduleDigest()` queries subscribed users and merges with env recipients
+
+---
+
 ## [1.4.0] — 2026-03-05
 
 ### Added

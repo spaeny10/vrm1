@@ -236,135 +236,151 @@ export async function sendDigestEmail(recipients, digestData) {
     const to = Array.isArray(recipients) ? recipients : [recipients];
     if (to.length === 0) return;
 
-    const {
-        fleet_size = 0,
-        avg_soc = 0,
-        total_yield_kwh = 0,
-        trailers_below_50_soc = [],
-        active_alerts = [],
-        overdue_maintenance = [],
-        predictive_warnings = [],
-    } = digestData;
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-    // --- Summary cards ---
-    const summarySection = `
-        <h2 style="margin:0 0 16px; color:#ecf0f1; font-size:18px;">Daily Fleet Digest</h2>
+    // === YESTERDAY'S FLEET SUMMARY ===
+    const yesterdaySection = `
+        <h2 style="margin:0 0 8px; color:#ecf0f1; font-size:18px;">📊 Yesterday's Fleet Performance</h2>
+        <p style="margin:0 0 12px; color:#7f8c8d; font-size:12px;">${yesterdayStr} — Complete 24-hour metrics</p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
             <tr>
-                <td width="33%" style="padding:12px; background-color:#1a1d23; border-radius:6px; text-align:center;">
-                    <div style="font-size:24px; font-weight:bold; color:#3498db;">${fleet_size}</div>
-                    <div style="font-size:11px; color:#7f8c8d; margin-top:4px;">Fleet Size</div>
+                <td width="23%" style="padding:12px; background-color:#1a1d23; border-radius:6px; text-align:center;">
+                    <div style="font-size:20px; font-weight:bold; color:#3498db;">${digestData.fleet_size || 0}</div>
+                    <div style="font-size:10px; color:#7f8c8d; margin-top:4px;">Fleet Size</div>
+                    <div style="font-size:9px; color:#5a6c7d; margin-top:2px;">${digestData.fleet_breakdown?.vrm || 0} VRM + ${digestData.fleet_breakdown?.ic2_only || 0} IC2</div>
                 </td>
-                <td width="6"></td>
-                <td width="33%" style="padding:12px; background-color:#1a1d23; border-radius:6px; text-align:center;">
-                    <div style="font-size:24px; font-weight:bold; color:${avg_soc < 50 ? '#e74c3c' : '#2ecc71'};">${avg_soc.toFixed(1)}%</div>
-                    <div style="font-size:11px; color:#7f8c8d; margin-top:4px;">Avg Battery SOC</div>
+                <td width="4"></td>
+                <td width="23%" style="padding:12px; background-color:#1a1d23; border-radius:6px; text-align:center;">
+                    <div style="font-size:20px; font-weight:bold; color:#2ecc71;">${digestData.yesterday?.avg_eod_soc?.toFixed(1) || 0}%</div>
+                    <div style="font-size:10px; color:#7f8c8d; margin-top:4px;">Avg EOD SOC</div>
+                    <div style="font-size:9px; color:#5a6c7d; margin-top:2px;">End of day</div>
                 </td>
-                <td width="6"></td>
-                <td width="33%" style="padding:12px; background-color:#1a1d23; border-radius:6px; text-align:center;">
-                    <div style="font-size:24px; font-weight:bold; color:#f39c12;">${total_yield_kwh.toFixed(1)}</div>
-                    <div style="font-size:11px; color:#7f8c8d; margin-top:4px;">Total Yield (kWh)</div>
+                <td width="4"></td>
+                <td width="23%" style="padding:12px; background-color:#1a1d23; border-radius:6px; text-align:center;">
+                    <div style="font-size:20px; font-weight:bold; color:#f39c12;">${digestData.yesterday?.total_yield_kwh?.toFixed(1) || 0}</div>
+                    <div style="font-size:10px; color:#7f8c8d; margin-top:4px;">Total Yield (kWh)</div>
+                    <div style="font-size:9px; color:#5a6c7d; margin-top:2px;">All day</div>
+                </td>
+                <td width="4"></td>
+                <td width="23%" style="padding:12px; background-color:#1a1d23; border-radius:6px; text-align:center;">
+                    <div style="font-size:20px; font-weight:bold; color:#9b59b6;">${digestData.yesterday?.total_data_gb?.toFixed(1) || 0}</div>
+                    <div style="font-size:10px; color:#7f8c8d; margin-top:4px;">Data Usage (GB)</div>
+                    <div style="font-size:9px; color:#5a6c7d; margin-top:2px;">Network</div>
                 </td>
             </tr>
         </table>`;
 
-    // --- Low SOC trailers ---
-    let lowSocSection = '';
-    if (trailers_below_50_soc.length > 0) {
-        const rows = trailers_below_50_soc.map(t => `
-            <tr>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${t.site_name}</td>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:${t.battery_soc < 25 ? '#e74c3c' : '#f39c12'}; text-align:right; font-weight:bold;">${t.battery_soc.toFixed(1)}%</td>
-            </tr>`).join('');
-        lowSocSection = `
-            <h3 style="margin:0 0 10px; color:#ecf0f1; font-size:15px;">Low Battery Trailers</h3>
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:24px;">
-                <tr style="background-color:#2c3038;">
-                    <th style="padding:10px 12px; text-align:left; color:#7f8c8d; font-size:12px; font-weight:600;">Trailer</th>
-                    <th style="padding:10px 12px; text-align:right; color:#7f8c8d; font-size:12px; font-weight:600;">SOC</th>
-                </tr>
-                ${rows}
-            </table>`;
+    // === CURRENT STATUS ===
+    const currentSection = `
+        <h2 style="margin:0 0 10px; color:#ecf0f1; font-size:16px;">🔋 Current Status</h2>
+        <p style="margin:0 0 12px; color:#7f8c8d; font-size:11px;">Right now — ${digestData.current?.online || 0}/${digestData.current?.total || 0} online · Avg SOC ${digestData.current?.avg_soc?.toFixed(1) || 0}%</p>`;
+
+    // === NEEDS ATTENTION ===
+    let needsAttentionSection = '';
+    const criticalItems = digestData.critical_items || [];
+    const watchItems = digestData.watch_items || [];
+
+    if (criticalItems.length > 0 || watchItems.length > 0) {
+        let criticalRows = '';
+        if (criticalItems.length > 0) {
+            criticalRows = criticalItems.map(item => {
+                if (item.type === 'low_soc') {
+                    return `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${item.trailer}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#e74c3c; text-align:right; font-weight:bold;">SOC ${item.soc.toFixed(0)}%</td></tr>`;
+                } else if (item.type === 'alarm') {
+                    return `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${item.trailer}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#e74c3c; text-align:right;">${item.message}</td></tr>`;
+                }
+                return '';
+            }).join('');
+        }
+
+        let watchRows = '';
+        if (watchItems.length > 0) {
+            watchRows = watchItems.slice(0, 5).map(item => {
+                if (item.type === 'low_soc') {
+                    return `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${item.trailer}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#f39c12; text-align:right;">SOC ${item.soc.toFixed(0)}%</td></tr>`;
+                } else if (item.type === 'energy_deficit') {
+                    return `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${item.trailer}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#f39c12; text-align:right;">${item.streak_days}d deficit</td></tr>`;
+                }
+                return '';
+            }).join('');
+        }
+
+        needsAttentionSection = `
+            <h2 style="margin:0 0 10px; color:#ecf0f1; font-size:16px;">🚨 Needs Attention Today</h2>
+            ${criticalItems.length > 0 ? `
+                <h3 style="margin:0 0 8px; color:#e74c3c; font-size:13px;">Critical — Dispatch Now (${criticalItems.length})</h3>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:16px;">
+                    ${criticalRows}
+                </table>` : ''}
+            ${watchItems.length > 0 ? `
+                <h3 style="margin:0 0 8px; color:#f39c12; font-size:13px;">Watch — Monitor Today (${watchItems.length})</h3>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:24px;">
+                    ${watchRows}
+                </table>` : ''}`;
     }
 
-    // --- Active alerts ---
-    let alertsSection = '';
-    if (active_alerts.length > 0) {
-        const rows = active_alerts.map(a => `
-            <tr>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${a.site_name}</td>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; text-align:center;">
-                    <span style="display:inline-block; padding:2px 8px; border-radius:3px; background-color:${severityColor(a.severity)}; color:#fff; font-size:11px; font-weight:bold; text-transform:uppercase;">${a.severity}</span>
-                </td>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1; text-align:right;">${a.streak_days} day${a.streak_days !== 1 ? 's' : ''}</td>
-            </tr>`).join('');
-        alertsSection = `
-            <h3 style="margin:0 0 10px; color:#ecf0f1; font-size:15px;">Active Energy Alerts</h3>
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:24px;">
-                <tr style="background-color:#2c3038;">
-                    <th style="padding:10px 12px; text-align:left; color:#7f8c8d; font-size:12px; font-weight:600;">Trailer</th>
-                    <th style="padding:10px 12px; text-align:center; color:#7f8c8d; font-size:12px; font-weight:600;">Severity</th>
-                    <th style="padding:10px 12px; text-align:right; color:#7f8c8d; font-size:12px; font-weight:600;">Streak</th>
-                </tr>
-                ${rows}
-            </table>`;
+    // === PERFORMANCE HIGHLIGHTS ===
+    let performanceSection = '';
+    const topPerformers = digestData.top_performers || [];
+    const underperformers = digestData.underperformers || [];
+
+    if (topPerformers.length > 0 || underperformers.length > 0) {
+        performanceSection = `<h2 style="margin:0 0 10px; color:#ecf0f1; font-size:16px;">📈 Performance Highlights</h2>`;
+
+        if (topPerformers.length > 0) {
+            const topRows = topPerformers.map(p =>
+                `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${p.site_name}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#2ecc71; text-align:right; font-weight:bold;">${p.percent.toFixed(0)}%</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#7f8c8d; text-align:right; font-size:11px;">${p.yield_kwh.toFixed(1)} kWh</td></tr>`
+            ).join('');
+            performanceSection += `
+                <h3 style="margin:0 0 8px; color:#2ecc71; font-size:13px;">Top Performers</h3>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:16px;">
+                    ${topRows}
+                </table>`;
+        }
+
+        if (underperformers.length > 0) {
+            const underRows = underperformers.map(p =>
+                `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${p.site_name}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#e74c3c; text-align:right; font-weight:bold;">${p.percent.toFixed(0)}%</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#7f8c8d; text-align:right; font-size:11px;">${p.yield_kwh.toFixed(1)} kWh</td></tr>`
+            ).join('');
+            performanceSection += `
+                <h3 style="margin:0 0 8px; color:#e74c3c; font-size:13px;">Underperformers</h3>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:24px;">
+                    ${underRows}
+                </table>`;
+        }
     }
 
-    // --- Overdue maintenance ---
-    let maintenanceSection = '';
-    if (overdue_maintenance.length > 0) {
-        const rows = overdue_maintenance.map(m => `
-            <tr>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${m.title}</td>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${m.job_site_name}</td>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#e74c3c; text-align:right;">${m.scheduled_date}</td>
-            </tr>`).join('');
-        maintenanceSection = `
-            <h3 style="margin:0 0 10px; color:#ecf0f1; font-size:15px;">Overdue Maintenance</h3>
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:24px;">
-                <tr style="background-color:#2c3038;">
-                    <th style="padding:10px 12px; text-align:left; color:#7f8c8d; font-size:12px; font-weight:600;">Task</th>
-                    <th style="padding:10px 12px; text-align:left; color:#7f8c8d; font-size:12px; font-weight:600;">Job Site</th>
-                    <th style="padding:10px 12px; text-align:right; color:#7f8c8d; font-size:12px; font-weight:600;">Due Date</th>
-                </tr>
-                ${rows}
-            </table>`;
+    // === NETWORK SUMMARY ===
+    let networkSection = '';
+    if (digestData.network) {
+        const net = digestData.network;
+        networkSection = `
+            <h2 style="margin:0 0 10px; color:#ecf0f1; font-size:16px;">📡 Network Summary</h2>
+            <p style="margin:0 0 12px; color:#7f8c8d; font-size:11px;">Avg Signal: ${net.avg_signal_dbm?.toFixed(0) || 0} dBm · Total Usage: ${net.total_data_gb?.toFixed(1) || 0} GB</p>`;
+
+        if (net.high_usage && net.high_usage.length > 0) {
+            const highRows = net.high_usage.map(h =>
+                `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${h.device}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#f39c12; text-align:right; font-weight:bold;">${h.usage_gb.toFixed(2)} GB</td></tr>`
+            ).join('');
+            networkSection += `
+                <h3 style="margin:0 0 8px; color:#f39c12; font-size:13px;">High Data Usage (>500 MB)</h3>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:24px;">
+                    ${highRows}
+                </table>`;
+        }
     }
 
-    // --- Predictive warnings ---
-    let predictiveSection = '';
-    if (predictive_warnings.length > 0) {
-        const rows = predictive_warnings.map(p => `
-            <tr>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${p.site_name}</td>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#f39c12; text-align:right; font-weight:bold;">${p.days_to_critical} day${p.days_to_critical !== 1 ? 's' : ''}</td>
-                <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:${p.battery_soc < 25 ? '#e74c3c' : '#f39c12'}; text-align:right;">${p.battery_soc.toFixed(1)}%</td>
-            </tr>`).join('');
-        predictiveSection = `
-            <h3 style="margin:0 0 10px; color:#ecf0f1; font-size:15px;">Predictive Warnings</h3>
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:24px;">
-                <tr style="background-color:#2c3038;">
-                    <th style="padding:10px 12px; text-align:left; color:#7f8c8d; font-size:12px; font-weight:600;">Trailer</th>
-                    <th style="padding:10px 12px; text-align:right; color:#7f8c8d; font-size:12px; font-weight:600;">Days to Critical</th>
-                    <th style="padding:10px 12px; text-align:right; color:#7f8c8d; font-size:12px; font-weight:600;">Current SOC</th>
-                </tr>
-                ${rows}
-            </table>`;
-    }
+    // === ALL SYSTEMS NOMINAL ===
+    const noIssues = (criticalItems.length === 0 && watchItems.length === 0)
+        ? '<p style="color:#2ecc71; font-size:14px; margin:0 0 20px;">✓ All systems nominal. No critical issues to report.</p>'
+        : '';
 
-    // --- No issues fallback ---
-    const noIssues =
-        trailers_below_50_soc.length === 0 &&
-        active_alerts.length === 0 &&
-        overdue_maintenance.length === 0 &&
-        predictive_warnings.length === 0
-            ? '<p style="color:#2ecc71; font-size:14px; margin:0 0 20px;">All systems nominal. No issues to report.</p>'
-            : '';
-
-    const bodyContent = `${summarySection}${noIssues}${lowSocSection}${alertsSection}${maintenanceSection}${predictiveSection}`;
+    const bodyContent = `${yesterdaySection}${currentSection}${noIssues}${needsAttentionSection}${performanceSection}${networkSection}`;
 
     const today = new Date().toISOString().slice(0, 10);
-    const subject = `BIGView OMNI — Fleet Digest for ${today}`;
+    const subject = `BIGView OMNI — Morning Digest for ${today}`;
 
     const msg = {
         to,

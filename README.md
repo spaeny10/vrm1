@@ -27,6 +27,7 @@ Open http://localhost:5173
 
 - 📊 **Real-time monitoring** - Battery SOC, solar power, DC load, network status
 - 🎯 **Tech Status** - 3-state system (Good/Watch/Needs Attention) for field techs
+- 📧 **Morning Digest** - Daily email with yesterday's complete metrics, prioritized action items, performance insights
 - 🤖 **AI queries** - Ask questions in plain English: "Which trailers are offline?"
 - 📡 **Network analytics** - Signal strength, data usage, carrier tracking
 - ⚡ **Energy alerts** - Automatic deficit detection with SOC trend analysis
