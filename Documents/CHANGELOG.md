@@ -13,6 +13,7 @@ All notable changes to BIGView OMNI.
 - **Test Email Endpoint** — `POST /api/test-email` with `type` parameter (alert/digest/geofence) allows admins to test email delivery with sample data.
 - **IC2-Only Trailer Counting** — Digest now includes IC2-only trailers (network hardware without VRM) in fleet size breakdown (e.g., "91 trailers: 87 VRM + 4 IC2-only"). Counts pepwaveCache devices not in snapshotCache and not at HQ.
 - **Digest Preview Modal** — Settings page digest section now shows preview in a popup modal instead of inline accordion.
+- **Collapsible Sidebar** — Sidebar now collapses from 240px to 70px with toggle button at bottom of navigation. Icons stay visible at consistent 22px size. Custom CSS tooltips (dark background, arrow pointer) appear on hover when collapsed. Saves 170px horizontal space. Preference persists in localStorage.
 
 ### Changed
 - **Yesterday's Complete Metrics** — Digest shifted from current snapshot data to yesterday's complete 24-hour metrics queried from `daily_energy_summary` and `pepwave_snapshots` tables. Shows EOD SOC, total yield, data usage with "Yesterday's Fleet Performance" heading.
