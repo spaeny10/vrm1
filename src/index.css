@@ -111,20 +111,38 @@ body {
   background: rgba(255, 255, 255, 0.05);
   border: none;
   border-radius: 4px;
-  padding: 6px;
+  padding: 8px;
   cursor: pointer;
   color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
-  opacity: 0.6;
+  opacity: 0.8;
+  z-index: 10;
 }
 
 .sidebar-toggle:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.15);
   color: var(--text-primary);
   opacity: 1;
+}
+
+/* Make toggle button more prominent when collapsed */
+.sidebar-collapsed .sidebar-toggle {
+  right: auto;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--accent);
+  color: white;
+  opacity: 0.9;
+  padding: 10px;
+  border-radius: 6px;
+}
+
+.sidebar-collapsed .sidebar-toggle:hover {
+  opacity: 1;
+  background: var(--accent-hover);
 }
 
 .brand-logo {
@@ -216,7 +234,12 @@ body {
 
 .sidebar-collapsed .nav-item {
   justify-content: center;
-  padding: 12px;
+  padding: 14px;
+}
+
+.sidebar-collapsed .nav-item svg {
+  width: 24px;
+  height: 24px;
 }
 
 .sidebar-collapsed .nav-badge {
