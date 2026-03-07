@@ -162,6 +162,10 @@ body {
   position: relative;
 }
 
+.nav-item svg {
+  flex-shrink: 0;
+}
+
 .nav-item:hover {
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-primary);
@@ -170,6 +174,44 @@ body {
 .nav-item.active {
   background: var(--accent);
   color: #fff;
+}
+
+/* Custom tooltip for collapsed sidebar */
+.sidebar-collapsed .nav-item[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0, 0, 0, 0.9);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  z-index: 1000;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Tooltip arrow */
+.sidebar-collapsed .nav-item[data-tooltip]:hover::before {
+  content: '';
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-right-color: rgba(0, 0, 0, 0.9);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+/* Don't show tooltips when sidebar is expanded */
+.nav-item[data-tooltip]::after,
+.nav-item[data-tooltip]::before {
+  display: none;
 }
 
 .sidebar-footer {
@@ -221,16 +263,16 @@ body {
   height: 32px;
 }
 
-/* Nav items centered with larger icons */
+/* Nav items centered */
 .sidebar-collapsed .nav-item {
   justify-content: center;
-  padding: 16px;
+  padding: 12px;
   margin: 0 8px 4px;
+  opacity: 1;
 }
 
 .sidebar-collapsed .nav-item svg {
-  width: 26px;
-  height: 26px;
+  opacity: 1;
 }
 
 /* Badge positioning when collapsed */
