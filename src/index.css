@@ -208,12 +208,6 @@ body {
   pointer-events: none;
 }
 
-/* Don't show tooltips when sidebar is expanded */
-.nav-item[data-tooltip]::after,
-.nav-item[data-tooltip]::before {
-  display: none;
-}
-
 .sidebar-footer {
   padding: 16px 20px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
