@@ -25,7 +25,7 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
     useEffect(() => {
         localStorage.setItem('vrm_sidebar_collapsed', collapsed)
         // Update CSS variable for main content margin
-        document.documentElement.style.setProperty('--sidebar-width', collapsed ? '60px' : '240px')
+        document.documentElement.style.setProperty('--sidebar-width', collapsed ? '70px' : '240px')
     }, [collapsed])
 
     // Close mobile sidebar on navigation
@@ -41,20 +41,11 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
             <div className="sidebar-brand">
                 <img src="/logo.webp" alt="BIGView" className="brand-logo" />
                 <span className="brand-omni">OMNI</span>
-                <button className="sidebar-toggle" onClick={toggleCollapsed} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        {collapsed ? (
-                            <path d="M9 18l6-6-6-6" />
-                        ) : (
-                            <path d="M15 18l-6-6 6-6" />
-                        )}
-                    </svg>
-                </button>
             </div>
 
             <nav className="sidebar-nav">
                 <NavLink to="/" end className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Dashboard">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <rect x="3" y="3" width="7" height="7" rx="1" />
                         <rect x="14" y="3" width="7" height="7" rx="1" />
                         <rect x="3" y="14" width="7" height="7" rx="1" />
@@ -64,7 +55,7 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
                 </NavLink>
 
                 <NavLink to="/map" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Map">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
                         <circle cx="12" cy="9" r="2.5"/>
                     </svg>
@@ -72,7 +63,7 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
                 </NavLink>
 
                 <NavLink to="/fleet" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Fleet Details">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M18 20V10M12 20V4M6 20v-6" />
                     </svg>
                     <span>Fleet Details</span>
@@ -80,20 +71,32 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
                 </NavLink>
 
                 <NavLink to="/maintenance" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Maintenance">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
                     </svg>
                     <span>Maintenance</span>
                 </NavLink>
 
                 <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} title="Settings">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <circle cx="12" cy="12" r="3" />
                         <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
                     </svg>
                     <span>Settings</span>
                 </NavLink>
             </nav>
+
+            {/* Collapse toggle button - always visible at bottom of nav */}
+            <button className="sidebar-collapse-toggle" onClick={toggleCollapsed} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    {collapsed ? (
+                        <path d="M9 18l6-6-6-6" />
+                    ) : (
+                        <path d="M15 18l-6-6 6-6" />
+                    )}
+                </svg>
+                <span>{collapsed ? 'Expand' : 'Collapse'}</span>
+            </button>
 
             <div className="sidebar-footer">
                 {user && (

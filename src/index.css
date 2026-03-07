@@ -103,46 +103,28 @@ body {
   position: relative;
 }
 
-.sidebar-toggle {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: rgba(255, 255, 255, 0.05);
-  border: none;
-  border-radius: 4px;
-  padding: 8px;
-  cursor: pointer;
-  color: var(--text-secondary);
+/* Collapse toggle button at bottom of nav */
+.sidebar-collapse-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin: 0 12px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
   transition: all 0.2s;
-  opacity: 0.8;
-  z-index: 10;
 }
 
-.sidebar-toggle:hover {
-  background: rgba(255, 255, 255, 0.15);
+.sidebar-collapse-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
   color: var(--text-primary);
-  opacity: 1;
-}
-
-/* Make toggle button more prominent when collapsed */
-.sidebar-collapsed .sidebar-toggle {
-  right: auto;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: var(--accent);
-  color: white;
-  opacity: 0.9;
-  padding: 10px;
-  border-radius: 6px;
-}
-
-.sidebar-collapsed .sidebar-toggle:hover {
-  opacity: 1;
-  background: var(--accent-hover);
 }
 
 .brand-logo {
@@ -215,48 +197,73 @@ body {
   box-shadow: 0 0 6px rgba(46, 204, 113, 0.5);
 }
 
-/* Collapsed sidebar state */
+/* ========== Collapsed Sidebar State ========== */
 .sidebar-collapsed {
-  width: 60px !important;
+  width: 70px !important;
 }
 
+/* Hide text elements when collapsed */
 .sidebar-collapsed .brand-omni,
 .sidebar-collapsed .nav-item span:not(.nav-badge),
+.sidebar-collapsed .sidebar-collapse-toggle span,
 .sidebar-collapsed .sidebar-user-info,
 .sidebar-collapsed .status-indicator span {
   display: none;
 }
 
+/* Brand logo centered when collapsed */
 .sidebar-collapsed .sidebar-brand {
   justify-content: center;
-  padding: 16px 8px;
+  padding: 16px 10px;
 }
 
+.sidebar-collapsed .brand-logo {
+  height: 32px;
+}
+
+/* Nav items centered with larger icons */
 .sidebar-collapsed .nav-item {
   justify-content: center;
-  padding: 14px;
+  padding: 16px;
+  margin: 0 8px 4px;
 }
 
 .sidebar-collapsed .nav-item svg {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
 }
 
+/* Badge positioning when collapsed */
 .sidebar-collapsed .nav-badge {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  min-width: 18px;
+  top: 8px;
+  right: 8px;
+  min-width: 16px;
+  font-size: 10px;
+  padding: 2px 5px;
 }
 
+/* Collapse toggle button when collapsed - icon only */
+.sidebar-collapsed .sidebar-collapse-toggle {
+  margin: 0 8px 12px;
+  padding: 14px 10px;
+  justify-content: center;
+}
+
+/* Footer adjustments when collapsed */
 .sidebar-collapsed .sidebar-footer {
-  padding: 12px 8px;
+  padding: 12px 10px;
 }
 
 .sidebar-collapsed .sidebar-user {
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.sidebar-collapsed .status-indicator {
+  justify-content: center;
 }
 
 /* ========== Loading / Empty States ========== */
