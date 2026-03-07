@@ -4397,7 +4397,24 @@ async function buildDigestData() {
         }
     }
 
-    // Get trailer assignments to filter out HQ trailers
+    // Get all deployed trailer IDs (excluding HQ) from database
+    let deployedTrailerCount = 0;
+    if (dbAvailable) {
+        try {
+            const result = await db.query(`
+                SELECT COUNT(DISTINCT ta.site_id)
+                FROM trailer_assignments ta
+                LEFT JOIN job_sites js ON ta.job_site_id = js.id
+                WHERE ta.job_site_id IS NOT NULL
+                AND (js.is_headquarters IS NULL OR js.is_headquarters = false)
+            `);
+            deployedTrailerCount = parseInt(result.rows[0].count) || 0;
+        } catch (err) {
+            console.error('  Failed to fetch deployed trailer count:', err.message);
+        }
+    }
+
+    // Get trailer assignments to filter HQ trailers from snapshots
     const trailerJobSites = new Map(); // site_id -> job_site_id
     if (dbAvailable) {
         try {
@@ -4424,6 +4441,7 @@ async function buildDigestData() {
             solar_yield_today: snapshot.solar_yield_today,
         });
     }
+
     const onlineTrailers = trailers.filter(t => t.battery_soc != null);
     const avgSoc = onlineTrailers.length > 0
         ? onlineTrailers.reduce((s, t) => s + t.battery_soc, 0) / onlineTrailers.length : 0;
@@ -4450,7 +4468,7 @@ async function buildDigestData() {
     // Will be filled if db data is available from the scheduled job
 
     return {
-        fleet_size: trailers.length,
+        fleet_size: deployedTrailerCount || trailers.length,
         avg_soc: avgSoc,
         total_yield_kwh: totalYieldKwh,
         trailers_below_50_soc: lowSoc.slice(0, 10),
