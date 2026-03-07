@@ -4,6 +4,48 @@ All notable changes to BIGView OMNI.
 
 ---
 
+## [1.4.0] — 2026-03-05
+
+### Added
+- **DC Load Monitoring** — Real-time DC load power tracking across all trailers with V×I derivation when direct measurement unavailable. 3-tier fallback: VRM `Pc` diagnostic → `solar - (V×I)` → `IL×V`. Displayed in Load column (FleetOverview), DC Load chart (TrailerDetail), total load KPI (JobSiteDetail), and trailer mini-cards.
+- **Tech Status System** — Separate 3-state actionable status (Good/Watch/Needs Attention) for field techs alongside Intelligence grades. Triggers: critical SOC, active alarms, energy deficit streaks, SOC decline rate, offline detection. Summary bar with clickable filter cards on FleetOverview.
+- **VRM Diagnostic Dashboard** — Promoted 10 diagnostic fields from JSONB to dedicated DB columns: `dc_load_watts`, `load_current`, `consumed_ah`, `mppt_state`, `lifetime_yield_kwh`, `alarm_reason`, `error_code`, `inverter_mode`, `load_state`, `time_to_go_min`. Surfaced in TrailerDetail gauges, alarms banner, and DC Load chart.
+- **Slim Stat Bars** — Replaced large Fleet KPI cards with compact single-line stat bars (e.g., "53 sites · 62/111 online · 83.6% avg SOC · 95.0 kWh yield · 1 at risk"). Deployment status inline with colored dots and clickable filters. Saves ~120px vertical space.
+- **Deployed Only Toggle** — "Deployed only" checkbox in All Trailers view to hide HQ trailers (defaults to checked). Uses job site assignment data to identify HQ vs deployed trailers.
+
+### Changed
+- **List View Default** — Fleet dashboard now defaults to list view instead of grid for faster scanning.
+- **Consolidated Table** — Fleet table reduced from 13 to 8 columns (Status, Trailer, Job Site, SOC, Solar, Load, Network, Grade) for cleaner reading.
+- **Deployment Stats** — Deployment bar now shows "92 trailers on 53 sites" instead of just site counts.
+- **Battery Power Derivation** — `battery_power` snapshot field now uses V×I derivation when `P` diagnostic unavailable (was incorrectly falling back to `Pdc` solar power). Fixes AI analysis context and DB accuracy.
+- **IC2-only Device Handling** — IC2-only Pepwave devices now count as "online" when their router is reachable (was deflating online/total ratio). Tech status map keys changed from `pw:DeviceName` to negative device ID (`-dev.id`) to match `/api/sites` format.
+
+### Fixed
+- **DC Load Column Empty** — Trailers lacked BMV/SmartShunt, so VRM `Pc` and `P` diagnostics were unavailable. Derivation now uses BMS current (`I`/`bc`) × voltage from CANBUS data. Verified against VRM dashboard (84W shown = 87W calculated).
+- **Tech Status Filter Mismatch** — "9 need attention" but filter showed only 2. IC2-only devices used incompatible map keys preventing frontend lookup.
+- **Trailers Online Count** — Was 62/111 (excluding IC2-only devices). Now correctly counts IC2-only devices as online when Pepwave is reachable.
+
+### Technical Details
+- **V×I Derivation Logic** (`server/server.js` lines 2591-2606):
+  ```javascript
+  // Battery power: P (from BMV) or derive from V × I
+  const solarW = extractDiagValue(records, 'ScW') ?? extractDiagValue(records, 'Pdc');
+  let battPower = extractDiagValue(records, 'P');
+  if (battPower === null && batteryVoltage !== null) {
+      const battCurrent = extractDiagValue(records, 'I') ?? extractDiagValue(records, 'bc');
+      if (battCurrent !== null) battPower = Math.round(batteryVoltage * battCurrent);
+  }
+  // DC load = solar - battery_power
+  if (solarW !== null && battPower !== null) {
+      dcLoadW = Math.round(Math.max(0, solarW - battPower));
+  }
+  ```
+- **Hardware Note**: Trailers use LiFePO4 BMS → CANBUS → Cerbo GX pipeline. No BMV/SmartShunt means `P` (battery power) and `Pc` (DC load) diagnostics unavailable from VRM. Current (`I`/`bc`) and voltage (`V`/`bv`) provided by BMS over CANBUS.
+- **Tech Status Computation** (`computeTechStatus` in `server/server.js`): SOC thresholds, alarm/error presence, energy deficit streaks (from `computeAlerts`), SOC trend analysis (3-day regression), offline detection.
+- **Frontend Null Handling**: All dc_load_watts displays use `snapshot?.dc_load_watts != null ? value : '—'` pattern across FleetOverview, TrailerDetail, JobSiteDetail, TrailerCard.
+
+---
+
 ## [1.3.0] — 2026-03-01
 
 ### Added

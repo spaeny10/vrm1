@@ -107,6 +107,43 @@ Sites where daily consumption exceeded yield for 2+ consecutive days.
 
 ---
 
+### GET `/api/fleet/tech-status`
+Actionable 3-state tech status for all trailers (Good/Watch/Needs Attention).
+
+**Response:**
+```json
+{
+  "success": true,
+  "statuses": {
+    "813842": {
+      "status": "attention",
+      "reason": "Critical SOC: 18%"
+    },
+    "903924": {
+      "status": "watch",
+      "reason": "Low SOC: 35%"
+    }
+  },
+  "summary": {
+    "good": 45,
+    "watch": 12,
+    "attention": 9
+  }
+}
+```
+
+**Status Triggers:**
+- **Attention**: SOC < 20%, active alarms/errors, energy deficit streak ≥ 5 days, SOC declining with critical in ≤ 3 days, offline
+- **Watch**: SOC 20-40%, SOC declining > 2%/day (but not critical-imminent)
+- **Good**: All other conditions
+
+**Notes:**
+- IC2-only devices (no VRM data) keyed by negative device ID: `"-123": { status: "good", reason: "Network-only, Pepwave online" }`
+- SOC trend computed from in-memory `dailyEnergy` map (no DB queries)
+- Reuses `computeAlerts()` for energy deficit streak data
+
+---
+
 ## Site Endpoints
 
 ### GET `/api/sites/:id/diagnostics`
