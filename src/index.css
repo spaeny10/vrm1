@@ -205,8 +205,7 @@ body {
 .sidebar-collapsed .brand-omni,
 .sidebar-collapsed .nav-item span:not(.nav-badge),
 .sidebar-collapsed .sidebar-user-info,
-.sidebar-collapsed .status-indicator span,
-.sidebar-collapsed .sidebar-toggle {
+.sidebar-collapsed .status-indicator span {
   display: none;
 }
 
