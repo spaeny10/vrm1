@@ -2588,21 +2588,18 @@ async function pollAllSites() {
                         }
                     }
 
-                    // Derive DC load if Pc not available:
-                    // DC load = solar - battery_power
-                    // battery_power: positive = charging, negative = discharging
-                    // If P not available, compute from V × I (battery voltage × current)
+                    // Battery power: P (from BMV) or derive from V × I
+                    const solarW = extractDiagValue(records, 'ScW') ?? extractDiagValue(records, 'Pdc');
+                    let battPower = extractDiagValue(records, 'P');
+                    if (battPower === null && batteryVoltage !== null) {
+                        const battCurrent = extractDiagValue(records, 'I') ?? extractDiagValue(records, 'bc');
+                        if (battCurrent !== null) battPower = Math.round(batteryVoltage * battCurrent);
+                    }
+
+                    // Derive DC load if Pc not available: load = solar - battery_power
                     if (dcLoadW === null) {
-                        const solarW = extractDiagValue(records, 'ScW') ?? extractDiagValue(records, 'Pdc');
-                        let battPower = extractDiagValue(records, 'P');
-                        // Fallback: derive battery power from voltage × current
-                        if (battPower === null && batteryVoltage !== null) {
-                            const battCurrent = extractDiagValue(records, 'I') ?? extractDiagValue(records, 'bc');
-                            if (battCurrent !== null) battPower = batteryVoltage * battCurrent;
-                        }
                         if (solarW !== null && battPower !== null) {
-                            const derived = solarW - battPower;
-                            dcLoadW = Math.round(Math.max(0, derived));
+                            dcLoadW = Math.round(Math.max(0, solarW - battPower));
                         } else if (loadCurrent !== null && batteryVoltage !== null) {
                             dcLoadW = Math.round(Math.abs(loadCurrent) * batteryVoltage);
                         }
@@ -2616,7 +2613,7 @@ async function pollAllSites() {
                         battery_voltage: batteryVoltage,
                         battery_current: extractDiagValue(records, 'I') ?? extractDiagValue(records, 'bc'),
                         battery_temp: extractDiagValue(records, 'BT') ?? extractDiagValue(records, 'bT'),
-                        battery_power: extractDiagValue(records, 'P') ?? extractDiagValue(records, 'Pdc'),
+                        battery_power: battPower,
                         solar_watts: extractDiagValue(records, 'ScW') ?? extractDiagValue(records, 'Pdc'),
                         solar_yield_today: yieldToday,
                         solar_yield_yesterday: yieldYesterday,
