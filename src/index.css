@@ -1669,8 +1669,10 @@ body {
     max-width: none;
   }
 
+  /* Gauges: 2x2 grid on mobile instead of 1x4 stack */
   .detail-gauges {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
   }
 }
 
@@ -6242,7 +6244,7 @@ tr:hover .btn-hq-toggle {
     grid-column: span 1 !important;
   }
 
-  /* Tables horizontal scroll */
+  /* Tables - responsive columns instead of horizontal scroll */
   .fleet-list,
   .jobsite-mgmt-table-wrapper,
   .maint-table-wrapper {
@@ -6251,7 +6253,24 @@ tr:hover .btn-hq-toggle {
   }
 
   .fleet-table {
-    min-width: 700px;
+    min-width: 0; /* Remove forced scroll, use responsive columns */
+  }
+
+  /* Hide less critical columns on mobile - show Status, Trailer, SOC, Grade only */
+  .fleet-table th:nth-child(3),  /* Job Site */
+  .fleet-table td:nth-child(3),
+  .fleet-table th:nth-child(5),  /* Solar */
+  .fleet-table td:nth-child(5),
+  .fleet-table th:nth-child(6),  /* Load */
+  .fleet-table td:nth-child(6),
+  .fleet-table th:nth-child(7),  /* Network */
+  .fleet-table td:nth-child(7) {
+    display: none;
+  }
+
+  /* Larger touch targets for table rows */
+  .fleet-table-row td {
+    padding: 14px 12px; /* Increased from 10px for better touch area */
   }
 
   /* Touch-friendly buttons and controls */
@@ -6375,6 +6394,12 @@ tr:hover .btn-hq-toggle {
     grid-template-columns: 1fr 1fr;
     gap: 6px;
   }
+
+  /* Tech status cards: single column on very small screens */
+  .tech-status-card {
+    flex: 1 1 100%; /* Full width */
+    min-width: 0;
+  }
 }
 
 /* Map fullscreen toggle button */
@@ -6482,6 +6507,7 @@ tr:hover .btn-hq-toggle {
 .tech-status-cards {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap; /* Allow cards to wrap on narrow screens */
 }
 .tech-status-card {
   flex: 1;
