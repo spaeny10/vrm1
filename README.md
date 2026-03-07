@@ -25,11 +25,13 @@ Open http://localhost:5173
 
 ## ✨ Features
 
-- 📊 **Real-time monitoring** - Battery SOC, solar power, network status
+- 📊 **Real-time monitoring** - Battery SOC, solar power, DC load, network status
+- 🎯 **Tech Status** - 3-state system (Good/Watch/Needs Attention) for field techs
 - 🤖 **AI queries** - Ask questions in plain English: "Which trailers are offline?"
 - 📡 **Network analytics** - Signal strength, data usage, carrier tracking
-- ⚡ **Energy alerts** - Automatic deficit detection
-- 📈 **Historical charts** - Battery trends, usage patterns
+- ⚡ **Energy alerts** - Automatic deficit detection with SOC trend analysis
+- 📈 **Historical charts** - Battery trends, DC load, usage patterns
+- 🔧 **Diagnostics** - VRM alarm/error tracking, MPPT state, inverter mode
 
 ## 📚 Documentation
 
