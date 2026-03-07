@@ -520,6 +520,10 @@ export async function fetchDigestPreview() {
     return apiFetch(`${API_BASE}/reports/digest-preview`);
 }
 
+export async function fetchEmailConfigStatus() {
+    return apiFetch(`${API_BASE}/email-config-status`);
+}
+
 export async function sendTestEmail(type = 'alert') {
     return apiFetch(`${API_BASE}/test-email`, {
         method: 'POST',

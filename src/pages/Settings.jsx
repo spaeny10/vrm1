@@ -1,7 +1,7 @@
 import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, sendTestEmail, updateSolarScoreSettings } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings } from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
 import { useAuth } from '../components/AuthProvider'
 
@@ -207,6 +207,14 @@ function DigestSettingsSection({ toast }) {
     const [preview, setPreview] = useState(null)
     const [loadingPreview, setLoadingPreview] = useState(false)
     const [sendingEmail, setSendingEmail] = useState(false)
+    const [emailStatus, setEmailStatus] = useState(null)
+
+    useEffect(() => {
+        // Load email config status on mount
+        fetchEmailConfigStatus()
+            .then(data => setEmailStatus(data))
+            .catch(err => console.error('Failed to load email status:', err))
+    }, [])
 
     const handlePreview = async () => {
         setLoadingPreview(true)
@@ -237,6 +245,26 @@ function DigestSettingsSection({ toast }) {
     return (
         <div className="settings-card">
             <h2>Email Notifications (SendGrid)</h2>
+
+            {emailStatus && (
+                <div style={{ marginBottom: 16, padding: 12, background: emailStatus.configured ? 'rgba(46, 204, 113, 0.1)' : 'rgba(231, 76, 60, 0.1)', border: `1px solid ${emailStatus.configured ? '#2ecc71' : '#e74c3c'}`, borderRadius: 'var(--radius)', fontSize: '13px' }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4, color: emailStatus.configured ? '#2ecc71' : '#e74c3c' }}>
+                        {emailStatus.configured ? '✓ SendGrid Configured' : '✗ SendGrid Not Configured'}
+                    </div>
+                    {emailStatus.configured ? (
+                        <div style={{ color: 'var(--text-secondary)' }}>
+                            <div>API Key: {emailStatus.config.apiKeyPrefix}</div>
+                            <div>From: {emailStatus.config.fromEmail}</div>
+                            <div>Recipients: {emailStatus.config.recipients.join(', ')} ({emailStatus.config.recipientCount} total)</div>
+                        </div>
+                    ) : (
+                        <div style={{ color: 'var(--text-secondary)' }}>
+                            Set SENDGRID_API_KEY, ALERT_FROM_EMAIL, and ALERT_EMAIL_RECIPIENTS in Railway environment variables.
+                        </div>
+                    )}
+                </div>
+            )}
+
             <p className="settings-desc">
                 Configure SendGrid in environment variables: <code>SENDGRID_API_KEY</code>, <code>ALERT_FROM_EMAIL</code>, <code>ALERT_EMAIL_RECIPIENTS</code>.
                 Daily digest scheduling requires: <code>DIGEST_ENABLED=true</code>, <code>DIGEST_TIME=06:00</code>, <code>DIGEST_RECIPIENTS</code>, <code>DIGEST_TIMEZONE=America/Denver</code>.

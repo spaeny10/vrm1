@@ -4304,6 +4304,27 @@ app.get('/api/reports/digest-preview', requireRole('admin'), async (req, res) =>
     }
 });
 
+// Check SendGrid configuration status
+app.get('/api/email-config-status', requireRole('admin'), (req, res) => {
+    const configured = isEmailConfigured();
+    const recipients = (process.env.ALERT_EMAIL_RECIPIENTS || '').split(',').map(e => e.trim()).filter(Boolean);
+    const fromEmail = process.env.ALERT_FROM_EMAIL || 'noreply@bigview.ai';
+    const hasApiKey = Boolean(process.env.SENDGRID_API_KEY);
+    const apiKeyPrefix = hasApiKey ? process.env.SENDGRID_API_KEY.substring(0, 10) + '...' : null;
+
+    res.json({
+        success: true,
+        configured,
+        config: {
+            hasApiKey,
+            apiKeyPrefix,
+            fromEmail,
+            recipients,
+            recipientCount: recipients.length
+        }
+    });
+});
+
 // Send test email to verify SendGrid configuration
 app.post('/api/test-email', requireRole('admin'), async (req, res) => {
     try {
