@@ -7,12 +7,15 @@ import Anthropic from '@anthropic-ai/sdk';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
+import crypto from 'crypto';
 import {
     initDb, insertSnapshot, getHistory, getLatestSnapshots,
     getRetentionDays, setRetentionDays, getSetting, setSetting, pruneOldData, getDbStats,
     insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
     upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding,
-    getJobSites, getJobSite, insertJobSite, updateJobSite,
+    getJobSites, getJobSite, getJobSiteByPhone, insertJobSite, updateJobSite,
+    getSiteNotes, insertSiteNote,
+    insertAuditLog, getAuditLog,
     getTrailerAssignments, getTrailersByJobSite, upsertTrailerAssignment, linkIc2Device,
     assignTrailerToJobSite, getTrailersWithGps,
     getMaintenanceLogs, getMaintenanceLog, insertMaintenanceLog,
@@ -41,7 +44,8 @@ import {
 import { runClustering, haversineMeters } from './clustering.js';
 import {
     isEmailConfigured, sendAlertEmail, sendAlertResolvedEmail,
-    sendGeofenceEmail, sendDigestEmail, checkRateLimit, markNotified
+    sendGeofenceEmail, sendDigestEmail, checkRateLimit, markNotified,
+    sendMentionNotification
 } from './email.js';
 import cron from 'node-cron';
 
@@ -381,7 +385,7 @@ async function computeTrailerIntelligence(siteId) {
     const gps = gpsCache.get(siteId);
     let weather = null;
     if (gps) {
-        try { weather = await fetchSolarIrradiance(gps.latitude, gps.longitude); } catch {}
+        try { weather = await fetchSolarIrradiance(gps.latitude, gps.longitude); } catch { }
     }
     const peakSunHours = weather?.peak_sun_hours ?? 5; // fallback to 5h US average
 
@@ -543,7 +547,7 @@ async function computeTrailerIntelligence(siteId) {
             score_label: adjustedSolarScore !== null
                 ? (adjustedSolarScore >= cfg.score_excellent ? 'Excellent'
                     : adjustedSolarScore >= cfg.score_good ? 'Good'
-                    : adjustedSolarScore >= cfg.score_fair ? 'Fair' : 'Poor')
+                        : adjustedSolarScore >= cfg.score_fair ? 'Fair' : 'Poor')
                 : null,
             throttled: isThrottled,
             score_adjustment_reason: scoreAdjustmentReason,
@@ -682,7 +686,7 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
     if (dbAvailable) {
         const socVal = socStartOfDay.get(siteId);
         const socForDb = (socVal && socVal.date === date) ? socVal.soc : null;
-        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socForDb, siteData[date].expected_yield_wh, consumptionSource, batterySoc, mpptStateEod).catch(() => {});
+        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socForDb, siteData[date].expected_yield_wh, consumptionSource, batterySoc, mpptStateEod).catch(() => { });
     }
 
     // Prune entries older than 14 days
@@ -883,7 +887,7 @@ function isRealDeficit(dayData, deficitWh) {
         return {
             real: false,
             reason: 'idle_throttled',
-            details: `EOD: ${dayData.battery_soc_eod?.toFixed(0)}% SOC, MPPT ${mpptStateToString(mpptState)}, ${(deficitWh/1000).toFixed(2)} kWh deficit`
+            details: `EOD: ${dayData.battery_soc_eod?.toFixed(0)}% SOC, MPPT ${mpptStateToString(mpptState)}, ${(deficitWh / 1000).toFixed(2)} kWh deficit`
         };
     }
 
@@ -1744,13 +1748,170 @@ app.get('/api/job-sites/:id', async (req, res) => {
 // PUT update job site (rename, address, status, notes)
 app.put('/api/job-sites/:id', requireRole('admin', 'technician'), async (req, res) => {
     try {
-        const updated = await updateJobSite(parseInt(req.params.id), req.body);
+        const siteId = parseInt(req.params.id);
+        const updated = await updateJobSite(siteId, req.body);
         if (!updated) return res.status(404).json({ success: false, error: 'Job site not found' });
+        const actor = req.user ? req.user.display_name : 'system';
+        insertAuditLog('site', siteId, 'site_updated', { fields: Object.keys(req.body) }, actor).catch(() => { });
         res.json({ success: true, job_site: updated });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
+// POST new job site
+app.post('/api/job-sites', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        const { name } = req.body;
+        if (!name) return res.status(400).json({ success: false, error: 'Name is required' });
+
+        const created = await insertJobSite(req.body);
+        if (!created) return res.status(500).json({ success: false, error: 'Could not create job site' });
+        const actor = req.user ? req.user.display_name : 'system';
+        insertAuditLog('site', created.id, 'site_created', { name: created.name, uid: created.uid }, actor).catch(() => { });
+        res.status(201).json({ success: true, job_site: created });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET site notes (paginated)
+app.get('/api/job-sites/:id/notes', async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+        const offset = parseInt(req.query.offset) || 0;
+        const result = await getSiteNotes(parseInt(req.params.id), { limit, offset });
+        res.json({ success: true, notes: result.notes, total: result.total, limit, offset });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST new site note (with @mention notifications + audit log)
+app.post('/api/job-sites/:id/notes', async (req, res) => {
+    try {
+        const { note, mentions } = req.body;
+        if (!note) return res.status(400).json({ success: false, error: 'Note is required' });
+        const author = req.user ? req.user.display_name : 'system';
+        const siteId = parseInt(req.params.id);
+        const created = await insertSiteNote(siteId, note, author, mentions || []);
+
+        // Audit log
+        insertAuditLog('site', siteId, 'note_added', { note_id: created.id, mentions }, author).catch(() => { });
+
+        // Send @mention email notifications (async, don't block response)
+        if (mentions && mentions.length > 0) {
+            const site = await getJobSite(siteId);
+            const allUsers = await getUsers();
+            for (const mentionName of mentions) {
+                const user = allUsers.find(u =>
+                    u.display_name.toLowerCase() === mentionName.toLowerCase()
+                );
+                if (user && user.email) {
+                    sendMentionNotification({
+                        recipientEmail: user.email,
+                        recipientName: user.display_name,
+                        authorName: author,
+                        siteName: site?.name || `Site #${siteId}`,
+                        noteText: note,
+                    }).catch(err => console.error('[Mention] Notification failed:', err.message));
+                }
+            }
+        }
+
+        res.status(201).json({ success: true, note: created });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET mentionable users (lightweight, just id + display_name)
+app.get('/api/users/mentionable', async (req, res) => {
+    try {
+        const users = await getUsers();
+        const mentionable = users
+            .filter(u => u.active !== false)
+            .map(u => ({ id: u.id, display_name: u.display_name, role: u.role }));
+        res.json({ success: true, users: mentionable });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Outbound SMS via Twilio
+// ============================================================
+app.post('/api/job-sites/:id/sms', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        const { message, to } = req.body;
+        if (!message) return res.status(400).json({ success: false, error: 'Message is required' });
+
+        const accountSid = process.env.TWILIO_ACCOUNT_SID;
+        const authToken = process.env.TWILIO_AUTH_TOKEN;
+        const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+        if (!accountSid || !authToken || !fromNumber) {
+            return res.status(503).json({ success: false, error: 'Twilio is not configured (missing SID, token, or phone number)' });
+        }
+
+        const siteId = parseInt(req.params.id);
+        const site = await getJobSite(siteId);
+        if (!site) return res.status(404).json({ success: false, error: 'Site not found' });
+
+        // Determine recipient: explicit `to` param or primary contact phone
+        const recipient = to || site.primary_contact_phone;
+        if (!recipient) {
+            return res.status(400).json({ success: false, error: 'No recipient phone number. Provide `to` or add a primary contact phone to the site.' });
+        }
+
+        // Send SMS via Twilio REST API (no SDK dependency)
+        const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+        const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+        const body = new URLSearchParams({ To: recipient, From: fromNumber, Body: message });
+
+        const twilioRes = await fetch(twilioUrl, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Basic ${auth}`,
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: body.toString(),
+        });
+
+        const twilioData = await twilioRes.json();
+        if (!twilioRes.ok) {
+            console.error('[Twilio Outbound] Error:', twilioData);
+            return res.status(502).json({ success: false, error: twilioData.message || 'Twilio send failed' });
+        }
+
+        // Log outbound SMS as a site note
+        const author = req.user ? req.user.display_name : 'system';
+        await insertSiteNote(siteId, `SMS sent to ${recipient}: ${message}`, author);
+
+        // Audit log
+        insertAuditLog('site', siteId, 'sms_sent', { to: recipient, sid: twilioData.sid }, author).catch(() => { });
+
+        res.json({ success: true, sid: twilioData.sid, to: recipient });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Audit Log API
+// ============================================================
+app.get('/api/audit-log', requireRole('admin'), async (req, res) => {
+    try {
+        const entityType = req.query.entity_type || null;
+        const entityId = req.query.entity_id ? parseInt(req.query.entity_id) : null;
+        const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+        const offset = parseInt(req.query.offset) || 0;
+        const result = await getAuditLog({ entityType, entityId, limit, offset });
+        res.json({ success: true, ...result });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 
 // POST manually assign a trailer to a job site
 app.post('/api/job-sites/:id/assign', requireRole('admin', 'technician'), async (req, res) => {
@@ -1777,6 +1938,74 @@ app.post('/api/job-sites/recluster', requireRole('admin'), async (req, res) => {
         res.json({ success: true, ...result });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Twilio Webhooks
+// ============================================================
+
+// Validate Twilio request signature
+function validateTwilioSignature(req) {
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (!authToken) return true; // Skip validation if token not configured
+
+    const signature = req.headers['x-twilio-signature'];
+    if (!signature) return false;
+
+    // Build the full URL Twilio used
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers.host;
+    const url = `${protocol}://${host}${req.originalUrl}`;
+
+    // Sort POST params and append to URL
+    const params = req.body || {};
+    const sortedKeys = Object.keys(params).sort();
+    let data = url;
+    for (const key of sortedKeys) {
+        data += key + params[key];
+    }
+
+    const computed = crypto
+        .createHmac('sha1', authToken)
+        .update(Buffer.from(data, 'utf-8'))
+        .digest('base64');
+
+    return crypto.timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(computed)
+    );
+}
+
+app.post('/api/webhooks/twilio', express.urlencoded({ extended: true }), async (req, res) => {
+    try {
+        // Validate Twilio signature
+        if (!validateTwilioSignature(req)) {
+            console.warn('[Twilio] Invalid signature — rejecting request');
+            return res.status(403).send('Invalid signature');
+        }
+
+        const { From, Body } = req.body;
+        if (!From || !Body) {
+            return res.status(400).send('Missing From or Body');
+        }
+
+        // Find the job site associated with this phone number
+        const site = await getJobSiteByPhone(From);
+        if (site) {
+            // Log the incoming SMS as a site note
+            await insertSiteNote(site.id, `SMS received: ${Body}`, From);
+            console.log(`[Twilio] Saved SMS from ${From} to job site ${site.name}`);
+        } else {
+            console.warn(`[Twilio] Received SMS from unknown number: ${From}`);
+        }
+
+        // Send a generic empty TwiML response so Twilio knows we received it
+        res.set('Content-Type', 'text/xml');
+        res.send('<Response></Response>');
+    } catch (err) {
+        console.error('Twilio webhook error:', err.message);
+        res.status(500).send('Webhook parsing error');
     }
 });
 
@@ -2510,7 +2739,7 @@ app.post('/api/analyze/trailer/:id', aiLimiter, async (req, res) => {
                         data_points: n,
                     };
                 }
-            } catch {}
+            } catch { }
         }
 
         // Helper to format nullable values for AI context
@@ -2768,7 +2997,7 @@ async function pollAllSites() {
                             const wx = await fetchSolarIrradiance(gpsForYield.latitude, gpsForYield.longitude);
                             const psh = wx?.peak_sun_hours ?? 5;
                             expectedYieldWh = Math.round(TRAILER_SPECS.solar.total_watts * psh * TRAILER_SPECS.solar.system_efficiency);
-                        } catch {}
+                        } catch { }
                     }
 
                     updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage, snapshot.battery_soc, dcLoadW, loadCurrent, expectedYieldWh);
@@ -3138,9 +3367,40 @@ async function checkGeofences() {
         const assignments = await getTrailerAssignments();
 
         for (const assignment of assignments) {
-            if (!assignment.job_site_id) continue;
             const gps = gpsCache.get(assignment.site_id);
             if (!gps) continue;
+
+            if (!assignment.job_site_id) {
+                // Trailer is unassigned. Check if it's near any job site.
+                let nearestSite = null;
+                let minDistance = Infinity;
+                for (const site of jobSites) {
+                    if (!site.latitude || !site.longitude) continue;
+                    const d = haversineMeters(gps.latitude, gps.longitude, site.latitude, site.longitude);
+                    if (d < minDistance) {
+                        minDistance = d;
+                        nearestSite = site;
+                    }
+                }
+
+                if (nearestSite && minDistance <= (nearestSite.geofence_radius_m || 500)) {
+                    geofenceAlerts.set(assignment.site_id, {
+                        breached: false,
+                        unassigned_near_site: true,
+                        distance_m: Math.round(minDistance),
+                        lastAlertedAt: Date.now(),
+                        site_name: assignment.site_name,
+                        job_site_name: null,
+                        suggested_site: { id: nearestSite.id, name: nearestSite.name, distance_m: Math.round(minDistance) }
+                    });
+                } else {
+                    const existing = geofenceAlerts.get(assignment.site_id);
+                    if (existing && existing.unassigned_near_site) {
+                        geofenceAlerts.delete(assignment.site_id);
+                    }
+                }
+                continue;
+            }
 
             const jobSite = jobSites.find(js => js.id === assignment.job_site_id);
             if (!jobSite || !jobSite.latitude || !jobSite.longitude) continue;
@@ -3149,6 +3409,23 @@ async function checkGeofences() {
             const radius = jobSite.geofence_radius_m || 500;
 
             if (distance > radius) {
+                // Find nearest other job site to suggest reassignment
+                let nearestSite = null;
+                let minDistance = Infinity;
+                for (const otherSite of jobSites) {
+                    if (otherSite.id === jobSite.id || !otherSite.latitude || !otherSite.longitude) continue;
+                    const d = haversineMeters(gps.latitude, gps.longitude, otherSite.latitude, otherSite.longitude);
+                    if (d < minDistance) {
+                        minDistance = d;
+                        nearestSite = otherSite;
+                    }
+                }
+
+                let suggestedSite = null;
+                if (nearestSite && minDistance <= 1000) {
+                    suggestedSite = { id: nearestSite.id, name: nearestSite.name, distance_m: Math.round(minDistance) };
+                }
+
                 const existing = geofenceAlerts.get(assignment.site_id);
                 const cooldown = 24 * 60 * 60 * 1000;
                 if (!existing || Date.now() - existing.lastAlertedAt > cooldown) {
@@ -3158,6 +3435,7 @@ async function checkGeofences() {
                         lastAlertedAt: Date.now(),
                         site_name: assignment.site_name,
                         job_site_name: jobSite.name,
+                        suggested_site: suggestedSite
                     });
                     if (isEmailConfigured()) {
                         sendGeofenceEmail({
@@ -3169,7 +3447,10 @@ async function checkGeofences() {
                     }
                 }
             } else {
-                geofenceAlerts.delete(assignment.site_id);
+                const existing = geofenceAlerts.get(assignment.site_id);
+                if (existing && !existing.unassigned_near_site) {
+                    geofenceAlerts.delete(assignment.site_id);
+                }
             }
         }
     } catch (err) {
@@ -3278,6 +3559,8 @@ Database tables:
 3. job_sites — Construction locations (one row per physical location)
    Columns: id SERIAL, name TEXT, latitude DOUBLE PRECISION, longitude DOUBLE PRECISION,
    address TEXT, status TEXT ('active'|'standby'|'completed'), notes TEXT,
+   uid TEXT, customer_name TEXT, primary_contact_name TEXT, primary_contact_phone TEXT,
+   primary_contact_email TEXT, secondary_contact_name TEXT, secondary_contact_phone TEXT, secondary_contact_email TEXT,
    created_at BIGINT (ms), updated_at BIGINT (ms)
 
 4. trailer_assignments — Links trailers to job sites
@@ -3305,6 +3588,10 @@ Database tables:
    consumption_source TEXT ('CE diagnostic'|'DC power accumulation'|'SOC delta estimate'),
    battery_soc_eod REAL (end-of-day battery SOC %), mppt_state_eod INTEGER (0-7: 0=Off, 3=Bulk, 4=Absorption, 5=Float, 6=Storage),
    updated_at BIGINT (ms). PRIMARY KEY(site_id, date)
+
+8. site_notes — Communications and log of interactions per job site
+   Columns: id SERIAL, job_site_id INTEGER REFERENCES job_sites(id),
+   note TEXT, author TEXT, created_at BIGINT (ms)
 
    Energy Deficit Context:
    - A "deficit" occurs when consumed_wh > yield_wh on a given date
@@ -3339,6 +3626,8 @@ Intelligence vocabulary (available in live context below):
 
 Examples:
 - "trailers at Downtown site" → JOIN trailer_assignments + job_sites WHERE js.name ILIKE '%downtown%'
+- "how many trailers does X have" → JOIN trailer_assignments ta ON ta.job_site_id = js.id WHERE js.customer_name ILIKE '%X%'
+- "read notes for site X" → JOIN site_notes sn ON sn.job_site_id = js.id WHERE js.name ILIKE '%X%'
 - "which sites have most maintenance costs" → SUM(labor_cost_cents + parts_cost_cents) from maintenance_logs GROUP BY job_site_id
 - "low battery trailers" → DISTINCT ON site_snapshots for latest where battery_soc < 30
 - "site rankings by SOC" → analytics_daily_metrics AVG(avg_soc) GROUP BY site_id, JOIN job_sites
@@ -3378,7 +3667,7 @@ app.post('/api/query', aiLimiter, async (req, res) => {
                 if (intel) {
                     intelSummary.push(`${intel.site_name}: score=${intel.solar.score ?? '?'}%(${intel.solar.score_label ?? '?'}), autonomy=${intel.battery.days_of_autonomy ?? '?'}d, panel=${intel.solar.panel_performance_pct ?? '?'}%, PSH=${intel.location.peak_sun_hours}h`);
                 }
-            } catch {}
+            } catch { }
         }
 
         // Build maintenance context from DB
@@ -3394,7 +3683,7 @@ app.post('/api/query', aiLimiter, async (req, res) => {
                         return `- ${m.title} at ${m.job_site_name || 'unassigned'}, due ${d}, ${m.status}`;
                     }).join('\n');
                 }
-            } catch {}
+            } catch { }
         }
 
         const liveContext = `\nCurrent live data (${new Date().toISOString()}):\n` +
@@ -3920,7 +4209,7 @@ app.get('/api/action-queue', async (req, res) => {
                         created_at: item.created_at || now,
                     });
                 }
-            } catch {}
+            } catch { }
         }
 
         // Source: Predictive SOC depletion (VRM-connected trailers only)
@@ -3957,17 +4246,33 @@ app.get('/api/action-queue', async (req, res) => {
             }
         }
 
-        // Source: Geofence breaches
+        // Source: Geofence breaches and suggestions
         for (const [siteId, gf] of geofenceAlerts) {
-            actions.push({
-                key: `geofence:${siteId}`,
-                priority: 2,
-                category: 'network',
-                title: `Geofence breach: ${gf.distance_m}m from site`,
-                subtitle: `${gf.site_name} — ${gf.job_site_name}`,
-                site_id: siteId,
-                details: `Trailer is ${gf.distance_m}m from assigned job site (radius: 500m)`,
-            });
+            if (gf.unassigned_near_site) {
+                actions.push({
+                    key: `geofence:suggest:${siteId}`,
+                    priority: 2,
+                    category: 'network',
+                    title: `Unassigned Trailer Near Site`,
+                    subtitle: `${gf.site_name}`,
+                    site_id: siteId,
+                    details: `Trailer is ${gf.distance_m}m from ${gf.suggested_site.name}. Consider assigning it.`,
+                });
+            } else {
+                let detailsMsg = `Trailer is ${gf.distance_m}m from assigned job site (radius: 500m).`;
+                if (gf.suggested_site) {
+                    detailsMsg += ` Suggestion: Assign to ${gf.suggested_site.name} (${gf.suggested_site.distance_m}m away).`;
+                }
+                actions.push({
+                    key: `geofence:${siteId}`,
+                    priority: 2,
+                    category: 'network',
+                    title: `Geofence breach: ${gf.distance_m}m from site`,
+                    subtitle: `${gf.site_name} — ${gf.job_site_name}`,
+                    site_id: siteId,
+                    details: detailsMsg,
+                });
+            }
         }
 
         // Get acknowledged actions
@@ -4166,9 +4471,9 @@ app.get('/api/reports/trailer/:id', async (req, res) => {
         let upcoming = [];
         let batteryHistory = [];
         if (dbAvailable) {
-            try { maintenance = await getMaintenanceLogs({ site_id: siteId, limit: 20 }); } catch {}
-            try { upcoming = (await getUpcomingMaintenance(30)).filter(m => m.site_id === siteId); } catch {}
-            try { batteryHistory = await getBatteryHistory(siteId, 30); } catch {}
+            try { maintenance = await getMaintenanceLogs({ site_id: siteId, limit: 20 }); } catch { }
+            try { upcoming = (await getUpcomingMaintenance(30)).filter(m => m.site_id === siteId); } catch { }
+            try { batteryHistory = await getBatteryHistory(siteId, 30); } catch { }
         }
 
         const energyHistory = Object.entries(energyData)
@@ -4219,7 +4524,7 @@ app.get('/api/reports/site/:id', async (req, res) => {
 
         let maintenance = [];
         if (dbAvailable) {
-            try { maintenance = await getMaintenanceLogs({ job_site_id: jobSiteId, limit: 20 }); } catch {}
+            try { maintenance = await getMaintenanceLogs({ job_site_id: jobSiteId, limit: 20 }); } catch { }
         }
 
         res.json({
@@ -4260,8 +4565,8 @@ app.get('/api/reports/fleet', async (req, res) => {
         let stats = null;
         let energyTrends = [];
         if (dbAvailable) {
-            try { stats = await getMaintenanceStats(); } catch {}
-            try { energyTrends = await getAllDailyEnergy(14); } catch {}
+            try { stats = await getMaintenanceStats(); } catch { }
+            try { energyTrends = await getAllDailyEnergy(14); } catch { }
         }
 
         // Aggregate KPIs
@@ -4832,7 +5137,7 @@ function scheduleDigest() {
                             job_site_name: m.job_site_name || 'Unknown',
                             scheduled_date: new Date(m.scheduled_date).toISOString().slice(0, 10),
                         }));
-                } catch {}
+                } catch { }
             }
 
             // Merge env var recipients with subscribed users

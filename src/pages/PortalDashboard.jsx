@@ -43,9 +43,12 @@ export default function PortalDashboard() {
             <div className="site-grid" style={{ marginTop: 24 }}>
                 {sites.map(site => (
                     <div key={site.id} className={`site-card site-card-${site.worst_status || 'ok'}`}
-                         onClick={() => navigate(`/site/${site.id}`)} style={{ cursor: 'pointer' }}>
+                        onClick={() => navigate(`/site/${site.id}`)} style={{ cursor: 'pointer' }}>
                         <div className="site-card-header">
-                            <h3>{site.name}</h3>
+                            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                                {site.name}
+                                {site.uid && <span style={{ fontSize: '13px', fontWeight: 'normal', color: 'var(--text-secondary)' }}>({site.uid})</span>}
+                            </h3>
                             <span className={`status-badge status-${site.status}`}>{site.status}</span>
                         </div>
                         <div className="site-card-stats">

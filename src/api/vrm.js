@@ -206,6 +206,21 @@ export async function fetchJobSite(id) {
     return apiFetch(`${API_BASE}/job-sites/${id}`);
 }
 
+export async function fetchSiteNotes(id) {
+    return apiFetch(`${API_BASE}/job-sites/${id}/notes`);
+}
+
+export async function addSiteNote(id, noteText, mentions = []) {
+    return apiFetch(`${API_BASE}/job-sites/${id}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ note: noteText, mentions }),
+    });
+}
+
+export async function fetchMentionableUsers() {
+    return apiFetch(`${API_BASE}/users/mentionable`);
+}
+
 export async function updateJobSite(id, data) {
     return apiFetch(`${API_BASE}/job-sites/${id}`, {
         method: 'PUT',

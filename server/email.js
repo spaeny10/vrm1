@@ -407,3 +407,40 @@ export async function sendDigestEmail(recipients, digestData) {
 
     await sgMail.send(msg);
 }
+
+// ---------------------------------------------------------------------------
+// sendMentionNotification — notify users when @mentioned in a site note
+// ---------------------------------------------------------------------------
+
+export async function sendMentionNotification({ recipientEmail, recipientName, authorName, siteName, noteText }) {
+    if (!isEmailConfigured() || !recipientEmail) return;
+
+    const body = `
+        <div style="margin-bottom:24px;">
+            <span style="display:inline-block; padding:4px 12px; border-radius:4px; background-color:#6366f1; color:#fff; font-size:12px; font-weight:bold; text-transform:uppercase;">MENTIONED</span>
+        </div>
+        <h2 style="margin:0 0 8px; color:#ecf0f1; font-size:18px;">You were mentioned in a note</h2>
+        <p style="margin:0 0 20px; color:#bdc3c7;">
+            <strong>${authorName}</strong> mentioned you in a note on <strong>${siteName}</strong>.
+        </p>
+        <div style="background-color:#1a1d23; border-radius:6px; padding:16px; margin-bottom:20px; border-left:3px solid #6366f1;">
+            <p style="margin:0; color:#ecf0f1; font-size:14px; white-space:pre-wrap;">${noteText}</p>
+        </div>
+        <p style="margin:0; color:#7f8c8d; font-size:13px;">Log in to BIGView OMNI to view and respond.</p>`;
+
+    const subject = `[MENTION] ${authorName} mentioned you on ${siteName}`;
+
+    const msg = {
+        to: recipientEmail,
+        from: FROM_EMAIL,
+        subject,
+        html: wrapHtml(subject, body),
+    };
+
+    try {
+        await sgMail.send(msg);
+        console.log(`[Email] Mention notification sent to ${recipientEmail}`);
+    } catch (err) {
+        console.error(`[Email] Failed to send mention notification to ${recipientEmail}:`, err.message);
+    }
+}

@@ -154,6 +154,46 @@ export async function initDb() {
         await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS calloff_date DATE`);
         await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS pickup_date DATE`);
         await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS geofence_radius_m INTEGER DEFAULT 500`);
+
+        // Site Information Architecture columns
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS uid TEXT UNIQUE`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS customer_name TEXT`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS primary_contact_name TEXT`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS primary_contact_phone TEXT`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS primary_contact_email TEXT`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS secondary_contact_name TEXT`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS secondary_contact_phone TEXT`);
+        await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS secondary_contact_email TEXT`);
+
+        // Create site notes table for communications
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS site_notes (
+        id SERIAL PRIMARY KEY,
+        job_site_id INTEGER REFERENCES job_sites(id) ON DELETE CASCADE,
+        note TEXT NOT NULL,
+        author TEXT,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_site_notes_job_site ON site_notes(job_site_id)`);
+        await client.query(`ALTER TABLE site_notes ADD COLUMN IF NOT EXISTS mentions JSONB DEFAULT '[]'`);
+
+        // Audit log table
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id SERIAL PRIMARY KEY,
+        entity_type TEXT NOT NULL,
+        entity_id INTEGER,
+        action TEXT NOT NULL,
+        details JSONB DEFAULT '{}',
+        actor TEXT,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC)`);
+        console.log('  ✓ Audit log table ready');
+
         // Auto-flag Big View HQ as headquarters
         await client.query(`UPDATE job_sites SET is_headquarters = TRUE WHERE name ILIKE '%big view hq%' AND (is_headquarters IS NULL OR is_headquarters = FALSE)`);
         console.log('  ✓ Deployment management columns ready');
@@ -854,13 +894,68 @@ export async function getJobSite(id) {
     return result.rows[0] || null;
 }
 
+export async function getJobSiteByPhone(phone) {
+    if (!pool || !phone) return null;
+    // Strip non-numeric characters for comparison just in case, or do a loose match
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (!cleanPhone && phone) {
+        // fallback if it's alphanumeric
+        const result = await pool.query(
+            `SELECT * FROM job_sites WHERE primary_contact_phone ILIKE $1 OR secondary_contact_phone ILIKE $1`,
+            [`%${phone}%`]
+        );
+        return result.rows[0] || null;
+    }
+
+    const result = await pool.query(
+        `SELECT * FROM job_sites WHERE 
+         REPLACE(REPLACE(REPLACE(REPLACE(primary_contact_phone, '-', ''), ' ', ''), '(', ''), ')', '') LIKE $1
+         OR REPLACE(REPLACE(REPLACE(REPLACE(secondary_contact_phone, '-', ''), ' ', ''), '(', ''), ')', '') LIKE $1`,
+        [`%${cleanPhone}%`]
+    );
+    return result.rows[0] || null;
+}
+
 export async function insertJobSite(site) {
     if (!pool) return null;
+
+    // Collision-safe UID generation with retry loop
+    let uid = site.uid;
+    if (!uid) {
+        for (let attempt = 0; attempt < 5; attempt++) {
+            uid = `SITE-${Math.floor(Math.random() * 90000) + 10000}`;
+            const existing = await pool.query(`SELECT id FROM job_sites WHERE uid = $1`, [uid]);
+            if (existing.rows.length === 0) break;
+            if (attempt === 4) uid = `SITE-${Date.now().toString(36).toUpperCase()}`; // fallback guaranteed unique
+        }
+    }
+
     const result = await pool.query(
-        `INSERT INTO job_sites (name, latitude, longitude, address, status, notes, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+        `INSERT INTO job_sites (
+            name, latitude, longitude, address, status, notes, 
+            uid, customer_name, primary_contact_name, primary_contact_phone, primary_contact_email,
+            secondary_contact_name, secondary_contact_phone, secondary_contact_email,
+            created_at, updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
          RETURNING *`,
-        [site.name, site.latitude, site.longitude, site.address || null, site.status || 'active', site.notes || null, Date.now()]
+        [
+            site.name,
+            site.latitude,
+            site.longitude,
+            site.address || null,
+            site.status || 'active',
+            site.notes || null,
+            uid,
+            site.customer_name || null,
+            site.primary_contact_name || null,
+            site.primary_contact_phone || null,
+            site.primary_contact_email || null,
+            site.secondary_contact_name || null,
+            site.secondary_contact_phone || null,
+            site.secondary_contact_email || null,
+            Date.now()
+        ]
     );
     return result.rows[0];
 }
@@ -872,7 +967,7 @@ export async function updateJobSite(id, updates) {
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-        if (['name', 'latitude', 'longitude', 'address', 'status', 'notes', 'is_headquarters', 'delivery_date', 'active_date', 'calloff_date', 'pickup_date', 'geofence_radius_m'].includes(key)) {
+        if (['name', 'latitude', 'longitude', 'address', 'status', 'notes', 'is_headquarters', 'delivery_date', 'active_date', 'calloff_date', 'pickup_date', 'geofence_radius_m', 'uid', 'customer_name', 'primary_contact_name', 'primary_contact_phone', 'primary_contact_email', 'secondary_contact_name', 'secondary_contact_phone', 'secondary_contact_email'].includes(key)) {
             fields.push(`${key} = $${idx}`);
             values.push(value);
             idx++;
@@ -890,6 +985,77 @@ export async function updateJobSite(id, updates) {
         values
     );
     return result.rows[0] || null;
+}
+
+// ============================================================
+// Site Notes
+// ============================================================
+export async function getSiteNotes(jobSiteId, { limit = 50, offset = 0 } = {}) {
+    if (!pool) return { notes: [], total: 0 };
+    const countResult = await pool.query(
+        `SELECT COUNT(*) as total FROM site_notes WHERE job_site_id = $1`,
+        [jobSiteId]
+    );
+    const total = parseInt(countResult.rows[0].total);
+    const result = await pool.query(
+        `SELECT * FROM site_notes WHERE job_site_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+        [jobSiteId, limit, offset]
+    );
+    return { notes: result.rows, total };
+}
+
+export async function insertSiteNote(jobSiteId, noteText, author = 'system', mentions = []) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `INSERT INTO site_notes (job_site_id, note, author, mentions, created_at)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [jobSiteId, noteText, author, JSON.stringify(mentions), Date.now()]
+    );
+    return result.rows[0];
+}
+
+// ============================================================
+// Audit Log
+// ============================================================
+export async function insertAuditLog(entityType, entityId, action, details = {}, actor = 'system') {
+    if (!pool) return null;
+    const result = await pool.query(
+        `INSERT INTO audit_log (entity_type, entity_id, action, details, actor, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [entityType, entityId, action, JSON.stringify(details), actor, Date.now()]
+    );
+    return result.rows[0];
+}
+
+export async function getAuditLog({ entityType, entityId, limit = 50, offset = 0 } = {}) {
+    if (!pool) return { entries: [], total: 0 };
+    let where = 'WHERE 1=1';
+    const params = [];
+    let idx = 1;
+
+    if (entityType) {
+        where += ` AND entity_type = $${idx}`;
+        params.push(entityType);
+        idx++;
+    }
+    if (entityId) {
+        where += ` AND entity_id = $${idx}`;
+        params.push(entityId);
+        idx++;
+    }
+
+    const countResult = await pool.query(
+        `SELECT COUNT(*) as total FROM audit_log ${where}`,
+        params
+    );
+    const total = parseInt(countResult.rows[0].total);
+
+    params.push(limit, offset);
+    const result = await pool.query(
+        `SELECT * FROM audit_log ${where} ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+        params
+    );
+    return { entries: result.rows, total };
 }
 
 // ============================================================
@@ -1178,8 +1344,8 @@ export async function insertComponent(comp) {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
          RETURNING *`,
         [comp.site_id, comp.component_type, comp.make || null, comp.model || null,
-         comp.serial_number || null, comp.installed_date || null, comp.warranty_expiry || null,
-         comp.status || 'active', comp.notes || null, now]
+        comp.serial_number || null, comp.installed_date || null, comp.warranty_expiry || null,
+        comp.status || 'active', comp.notes || null, now]
     );
     return result.rows[0];
 }
@@ -1652,7 +1818,7 @@ export async function insertCompletedChecklist(checklist) {
         `INSERT INTO completed_checklists (maintenance_log_id, template_id, template_name, completed_by, items)
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
         [checklist.maintenance_log_id, checklist.template_id, checklist.template_name,
-         checklist.completed_by, JSON.stringify(checklist.items)]
+        checklist.completed_by, JSON.stringify(checklist.items)]
     );
     return result.rows[0];
 }
@@ -1673,7 +1839,7 @@ export async function insertIssueTemplate(template) {
         `INSERT INTO issue_templates (name, visit_type, title, description, expected_parts, estimated_hours)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
         [template.name, template.visit_type, template.title, template.description,
-         JSON.stringify(template.expected_parts || []), template.estimated_hours || null]
+        JSON.stringify(template.expected_parts || []), template.estimated_hours || null]
     );
     return result.rows[0];
 }
