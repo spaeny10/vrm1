@@ -263,12 +263,17 @@ function EnergyPage({ embedded }) {
                                                 </thead>
                                                 <tbody>
                                                     {alert.deficit_days.map(day => (
-                                                        <tr key={day.date}>
+                                                        <tr key={day.date} className={day.throttled ? 'deficit-row-throttled' : ''}>
                                                             <td>{new Date(day.date + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' })}</td>
                                                             <td>{Math.round(day.yield_wh)} Wh</td>
                                                             <td>{Math.round(day.consumed_wh)} Wh</td>
                                                             <td className={day.yield_wh - day.consumed_wh >= 0 ? 'positive' : 'negative'}>
                                                                 {Math.round(day.yield_wh - day.consumed_wh)} Wh
+                                                                {day.throttled && (
+                                                                    <span className="throttle-indicator" title={day.throttle_details || 'Idle-throttled deficit'}>
+                                                                        🔋 Throttled
+                                                                    </span>
+                                                                )}
                                                             </td>
                                                         </tr>
                                                     ))}

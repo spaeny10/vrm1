@@ -105,13 +105,28 @@ export async function sendAlertEmail(alert) {
     const { site_id, site_name, streak_days, severity, deficit_days } = alert;
     const color = severityColor(severity);
 
-    const deficitRows = (deficit_days || []).map(d => `
+    const deficitRows = (deficit_days || []).map(d => {
+        const throttleBadge = d.throttled
+            ? `<span style="display:inline-block;background:#f39c12;color:#1a1d23;padding:2px 6px;border-radius:3px;font-size:10px;margin-left:6px;">THROTTLED</span>`
+            : '';
+        return `
         <tr>
             <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${d.date}</td>
             <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1; text-align:right;">${(d.yield_wh / 1000).toFixed(2)} kWh</td>
             <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1; text-align:right;">${(d.consumed_wh / 1000).toFixed(2)} kWh</td>
-            <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:${color}; text-align:right; font-weight:bold;">-${(d.deficit_wh / 1000).toFixed(2)} kWh</td>
-        </tr>`).join('');
+            <td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:${color}; text-align:right; font-weight:bold;">
+                -${(d.deficit_wh / 1000).toFixed(2)} kWh${throttleBadge}
+            </td>
+        </tr>`;
+    }).join('');
+
+    const hasThrottled = (deficit_days || []).some(d => d.throttled);
+    const throttleNote = hasThrottled
+        ? `<p style="font-size:13px;color:#95a5a6;margin-top:16px;">
+             <strong>Note:</strong> Days marked "THROTTLED" had high battery SOC (≥88%) with MPPT in Float/Storage mode.
+             Small deficits on these days are typically due to intentional solar throttling, not energy shortage.
+           </p>`
+        : '';
 
     const body = `
         <div style="margin-bottom:24px;">
@@ -131,7 +146,8 @@ export async function sendAlertEmail(alert) {
             </tr>
             ${deficitRows}
         </table>
-        <p style="margin:0; color:#7f8c8d; font-size:13px;">Review this trailer's solar and battery configuration to prevent further energy loss.</p>`;
+        <p style="margin:0; color:#7f8c8d; font-size:13px;">Review this trailer's solar and battery configuration to prevent further energy loss.</p>
+        ${throttleNote}`;
 
     const subject = `[${severity.toUpperCase()}] Energy deficit — ${site_name} (${streak_days} day${streak_days !== 1 ? 's' : ''})`;
 

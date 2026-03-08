@@ -526,7 +526,14 @@ function FleetOverview() {
                                     </span>
                                     <div className="action-queue-text">
                                         <span className="action-queue-title">{action.title}</span>
-                                        {action.subtitle && <span className="action-queue-subtitle">{action.subtitle}</span>}
+                                        {action.subtitle && (
+                                            <span className="action-queue-subtitle">
+                                                {action.subtitle}
+                                                {action.details?.hasThrottledDays && (
+                                                    <span className="action-throttle-note"> (includes throttled days)</span>
+                                                )}
+                                            </span>
+                                        )}
                                     </div>
                                     {canEdit && (
                                         <button
@@ -552,7 +559,14 @@ function FleetOverview() {
                                     </span>
                                     <div className="action-queue-text">
                                         <span className="action-queue-title">{action.title}</span>
-                                        {action.subtitle && <span className="action-queue-subtitle">{action.subtitle}</span>}
+                                        {action.subtitle && (
+                                            <span className="action-queue-subtitle">
+                                                {action.subtitle}
+                                                {action.details?.hasThrottledDays && (
+                                                    <span className="action-throttle-note"> (includes throttled days)</span>
+                                                )}
+                                            </span>
+                                        )}
                                     </div>
                                     <span className="action-ack-done" title="Acknowledged">
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">

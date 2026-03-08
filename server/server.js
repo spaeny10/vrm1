@@ -660,20 +660,26 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
         }
     }
 
+    // Get snapshot to extract end-of-day MPPT state
+    const snapshot = snapshotCache.get(siteId);
+    const mpptStateEod = extractMpptState(snapshot);
+
     siteData[date] = {
         site_name: siteName,
         yield_wh: yieldWh,
         consumed_wh: consumedWh,
         consumption_source: consumptionSource,
         expected_yield_wh: expectedYieldWh ?? siteData[date]?.expected_yield_wh ?? null,
+        battery_soc_eod: batterySoc,         // NEW: End-of-day SOC
+        mppt_state_eod: mpptStateEod,        // NEW: End-of-day MPPT state
         updated: now,
     };
 
-    // Persist to DB with SOC start-of-day (async, don't block)
+    // Persist to DB with SOC start-of-day + end-of-day state (async, don't block)
     if (dbAvailable) {
         const socVal = socStartOfDay.get(siteId);
         const socForDb = (socVal && socVal.date === date) ? socVal.soc : null;
-        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socForDb, siteData[date].expected_yield_wh, consumptionSource).catch(() => {});
+        upsertDailyEnergy(siteId, date, siteName, yieldWh, consumedWh, socForDb, siteData[date].expected_yield_wh, consumptionSource, batterySoc, mpptStateEod).catch(() => {});
     }
 
     // Prune entries older than 14 days
@@ -683,6 +689,28 @@ function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, voltage, ba
     for (const d of Object.keys(siteData)) {
         if (d < cutoffStr) delete siteData[d];
     }
+}
+
+/**
+ * Extract MPPT charge state from snapshot, normalized to numeric value.
+ * Returns: 0=Off, 1=Low power, 2=Fault, 3=Bulk, 4=Absorption, 5=Float, 6=Storage, 7=Equalize, 252=External
+ */
+function extractMpptState(snapshot) {
+    if (!snapshot) return null;
+
+    const chargeState = snapshot.charge_state || snapshot.mppt_state;
+
+    // Normalize to numeric if string
+    if (typeof chargeState === 'string') {
+        const csNum = parseInt(chargeState, 10);
+        if (!isNaN(csNum)) return csNum;
+
+        // String states
+        if (/float/i.test(chargeState)) return 5;
+        if (/storage/i.test(chargeState)) return 6;
+    }
+
+    return typeof chargeState === 'number' ? chargeState : null;
 }
 
 // Seed dailyEnergy and socStartOfDay from DB on startup so data survives restarts
@@ -730,7 +758,8 @@ async function seedDailyEnergyFromDb() {
 const offlineTimestamps = new Map(); // deviceName -> firstOfflineTime
 
 // ============================================================
-// Alert logic: yield < consumed for 2+ consecutive days
+// Alert logic: yield < consumed for 2+ consecutive REAL deficit days
+// (excludes idle-throttled deficits: SOC ≥88%, MPPT Float/Storage, <1 kWh)
 // ============================================================
 function computeAlerts() {
     const alerts = [];
@@ -742,38 +771,112 @@ function computeAlerts() {
             .sort()
             .reverse();
 
-        let streak = 0;
+        let realStreak = 0;  // Only count real deficits
         const siteName = Object.values(days)[0]?.site_name || `Site ${siteId}`;
 
+        // Count consecutive real deficit days (idle-throttled breaks streak)
         for (const date of dates) {
             const { yield_wh, consumed_wh } = days[date];
+
             if (yield_wh !== null && consumed_wh !== null && yield_wh < consumed_wh) {
-                streak++;
+                const deficitWh = consumed_wh - yield_wh;
+                const classification = isRealDeficit(days[date], deficitWh);
+
+                if (classification.real) {
+                    realStreak++;  // ✅ Only count real deficits
+                } else {
+                    // Idle-throttled day breaks the streak (Option A)
+                    break;
+                }
             } else {
-                break;
+                break;  // Surplus day breaks streak
             }
         }
 
-        if (streak >= 2) {
-            const deficitDays = dates.slice(0, streak).map(d => ({
-                date: d,
-                yield_wh: days[d].yield_wh,
-                consumed_wh: days[d].consumed_wh,
-                deficit_wh: days[d].consumed_wh - days[d].yield_wh,
-            }));
+        if (realStreak >= 2) {  // Alert threshold: 2+ real deficit days
+            // Collect all deficit days for transparency (including throttled)
+            const allDeficitDays = [];
+            for (let i = 0; i < dates.length; i++) {
+                const date = dates[i];
+                const day = days[date];
+
+                if (day.yield_wh !== null && day.consumed_wh !== null && day.yield_wh < day.consumed_wh) {
+                    const deficitWh = day.consumed_wh - day.yield_wh;
+                    const classification = isRealDeficit(day, deficitWh);
+
+                    allDeficitDays.push({
+                        date,
+                        yield_wh: day.yield_wh,
+                        consumed_wh: day.consumed_wh,
+                        deficit_wh: deficitWh,
+                        throttled: !classification.real,      // NEW
+                        throttle_reason: classification.reason,  // NEW
+                        throttle_details: classification.details, // NEW
+                    });
+
+                    if (!classification.real) break;  // Stop at first throttled day
+                } else {
+                    break;  // Stop at surplus day
+                }
+            }
 
             alerts.push({
                 site_id: siteId,
                 site_name: siteName,
-                streak_days: streak,
-                deficit_days: deficitDays,
-                severity: streak >= 5 ? 'critical' : streak >= 3 ? 'warning' : 'caution',
+                streak_days: realStreak,  // Only real deficit days
+                deficit_days: allDeficitDays,
+                severity: realStreak >= 5 ? 'critical' : realStreak >= 3 ? 'warning' : 'caution',
             });
         }
     }
 
     alerts.sort((a, b) => b.streak_days - a.streak_days);
     return alerts;
+}
+
+/**
+ * Determines if a day's deficit represents a real energy problem or MPPT throttling.
+ *
+ * Thresholds (user-specified):
+ * - SOC ≥88% (high battery)
+ * - MPPT state: Float (5) or Storage (6)
+ * - Deficit <1 kWh (1000 Wh)
+ *
+ * @returns {Object} { real: boolean, reason: string|null, details: string|null }
+ */
+function isRealDeficit(dayData, deficitWh) {
+    // Missing data - can't determine, assume real for safety
+    if (!dayData || deficitWh === null || deficitWh === undefined) {
+        return { real: true, reason: null, details: null };
+    }
+
+    // Check throttling conditions
+    const mpptState = dayData.mppt_state_eod;
+    const isThrottled = mpptState === 5 || mpptState === 6;  // Float or Storage
+    const isHighSoc = dayData.battery_soc_eod !== null && dayData.battery_soc_eod >= 88;
+    const isSmallDeficit = deficitWh < 1000;  // <1 kWh
+
+    // All three conditions met = idle throttling, not a real problem
+    if (isThrottled && isHighSoc && isSmallDeficit) {
+        return {
+            real: false,
+            reason: 'idle_throttled',
+            details: `EOD: ${dayData.battery_soc_eod?.toFixed(0)}% SOC, MPPT ${mpptStateToString(mpptState)}, ${(deficitWh/1000).toFixed(2)} kWh deficit`
+        };
+    }
+
+    return { real: true, reason: null, details: null };
+}
+
+/**
+ * Convert MPPT charge state numeric code to human-readable string.
+ */
+function mpptStateToString(state) {
+    const states = {
+        0: 'Off', 1: 'Low power', 2: 'Fault', 3: 'Bulk',
+        4: 'Absorption', 5: 'Float', 6: 'Storage', 7: 'Equalize', 252: 'External'
+    };
+    return states[state] || `Unknown (${state})`;
 }
 
 // ============================================================
@@ -3176,7 +3279,15 @@ Database tables:
    Columns: site_id INTEGER, date DATE, site_name TEXT, yield_wh NUMERIC (solar Wh),
    consumed_wh NUMERIC (consumption Wh), soc_start_of_day REAL, expected_yield_wh NUMERIC,
    consumption_source TEXT ('CE diagnostic'|'DC power accumulation'|'SOC delta estimate'),
+   battery_soc_eod REAL (end-of-day battery SOC %), mppt_state_eod INTEGER (0-7: 0=Off, 3=Bulk, 4=Absorption, 5=Float, 6=Storage),
    updated_at BIGINT (ms). PRIMARY KEY(site_id, date)
+
+   Energy Deficit Context:
+   - A "deficit" occurs when consumed_wh > yield_wh on a given date
+   - "Idle-throttled deficit": Small deficit (<1 kWh) with high EOD SOC (≥88%) and MPPT in Float/Storage (5/6)
+     → Not a problem—just MPPT intentionally throttling excess solar when batteries are full
+   - "Real deficit": Deficit not meeting throttle criteria—indicates potential energy shortage
+   - Alerts only trigger on 2+ consecutive REAL deficit days (throttled days excluded)
 
 IMPORTANT:
 - site_snapshots.site_name matches pepwave_snapshots.device_name (they share trailer names)
@@ -3700,7 +3811,11 @@ app.get('/api/action-queue', async (req, res) => {
                 site_id: alert.site_id,
                 site_name: alert.site_name,
                 severity: alert.severity,
-                details: { streak_days: alert.streak_days, deficit_days: alert.deficit_days },
+                details: {
+                    streak_days: alert.streak_days,
+                    deficit_days: alert.deficit_days,
+                    hasThrottledDays: alert.deficit_days.some(d => d.throttled),  // NEW
+                },
                 created_at: now,
             });
         }
@@ -4531,13 +4646,15 @@ async function buildDigestData() {
         ? currentTrailers.reduce((s, t) => s + (t.battery_soc || 0), 0) / currentOnlineCount : 0;
 
     // Add energy deficit alerts to watch list
+    // Note: streak_days only counts REAL deficits (throttled deficits excluded by computeAlerts)
     const alerts = computeAlerts();
     alerts.filter(a => a.streak_days >= 5).forEach(a => {
         currentWatch.push({
             type: 'energy_deficit',
             trailer: a.site_name,
             streak_days: a.streak_days,
-            severity: a.severity
+            severity: a.severity,
+            has_throttled: a.deficit_days.some(d => d.throttled),  // NEW: transparency
         });
     });
 

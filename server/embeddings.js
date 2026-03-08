@@ -103,12 +103,16 @@ export function pepwaveDeviceToText(device) {
  * Convert alert to searchable text
  */
 export function alertToText(alert) {
+    const throttledCount = alert.deficit_days?.filter(d => d.throttled).length || 0;
+    const realCount = alert.deficit_days?.length - throttledCount;
+
     const parts = [
         `Alert for ${alert.site_name}`,
-        `${alert.streak_days} consecutive days of energy deficit`,
+        `${alert.streak_days} consecutive days of real energy deficit`,
+        throttledCount > 0 ? `(${throttledCount} throttled days excluded)` : null,
         `Severity: ${alert.severity}`,
         alert.deficit_days && alert.deficit_days.length > 0
-            ? `Latest deficit: ${Math.round(alert.deficit_days[0].deficit_wh / 1000)}kWh`
+            ? `Latest deficit: ${Math.round(alert.deficit_days[0].deficit_wh / 1000)}kWh${alert.deficit_days[0].throttled ? ' (throttled)' : ''}`
             : null,
     ].filter(Boolean);
 
