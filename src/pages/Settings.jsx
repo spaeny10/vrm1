@@ -1,4 +1,5 @@
 import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings } from '../api/vrm'
@@ -1366,6 +1367,20 @@ function Settings() {
                         </div>
                     </div>
                 )}
+
+                {/* Documentation */}
+                <div className="settings-card">
+                    <h2>📚 Documentation & Help</h2>
+                    <p className="settings-desc">
+                        Complete guide to the Intelligence Analysis & Alerting System, including energy deficit detection,
+                        solar performance scoring, action queue, morning digest, and troubleshooting scenarios.
+                    </p>
+                    <div className="settings-actions">
+                        <Link to="/help" className="btn btn-primary" style={{ textDecoration: 'none' }}>
+                            📖 View Documentation
+                        </Link>
+                    </div>
+                </div>
 
                 {/* Danger Zone — admin only */}
                 {isAdmin && (
