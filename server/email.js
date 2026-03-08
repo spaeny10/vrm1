@@ -102,7 +102,7 @@ function wrapHtml(title, bodyContent) {
 export async function sendAlertEmail(alert) {
     if (!isEmailConfigured() || ALERT_EMAIL_RECIPIENTS.length === 0) return;
 
-    const { site_id, site_name, streak_days, severity, deficit_days } = alert;
+    const { site_id, site_name, job_site_name, streak_days, severity, deficit_days } = alert;
     const color = severityColor(severity);
 
     const deficitRows = (deficit_days || []).map(d => {
@@ -134,7 +134,7 @@ export async function sendAlertEmail(alert) {
         </div>
         <h2 style="margin:0 0 8px; color:#ecf0f1; font-size:18px;">Energy Deficit Alert</h2>
         <p style="margin:0 0 20px; color:#bdc3c7;">
-            <strong>${site_name}</strong> (ID&nbsp;${site_id}) has been in energy deficit for
+            <strong>${site_name}</strong> (ID&nbsp;${site_id})${job_site_name ? ` at <strong>${job_site_name}</strong>` : ''} has been in energy deficit for
             <strong style="color:${color};">${streak_days} consecutive day${streak_days !== 1 ? 's' : ''}</strong>.
         </p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:20px;">
@@ -149,7 +149,7 @@ export async function sendAlertEmail(alert) {
         <p style="margin:0; color:#7f8c8d; font-size:13px;">Review this trailer's solar and battery configuration to prevent further energy loss.</p>
         ${throttleNote}`;
 
-    const subject = `[${severity.toUpperCase()}] Energy deficit — ${site_name} (${streak_days} day${streak_days !== 1 ? 's' : ''})`;
+    const subject = `[${severity.toUpperCase()}] Energy deficit — ${site_name}${job_site_name ? ` @ ${job_site_name}` : ''} (${streak_days} day${streak_days !== 1 ? 's' : ''})`;
 
     const msg = {
         to: ALERT_EMAIL_RECIPIENTS,

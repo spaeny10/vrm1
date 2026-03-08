@@ -233,6 +233,9 @@ let bandwidthLoggedOnce = false;
 const gpsCache = new Map();
 let initialClusteringDone = false;
 
+// Trailer to job site mapping: siteId -> job_site_name
+const trailerJobSiteMap = new Map();
+
 // SOC-at-start-of-day cache: siteId -> { date, soc }
 // Used to estimate daily consumption when CE diagnostic is unavailable
 const socStartOfDay = new Map();
@@ -758,6 +761,24 @@ async function seedDailyEnergyFromDb() {
 const offlineTimestamps = new Map(); // deviceName -> firstOfflineTime
 
 // ============================================================
+// Trailer to Job Site Mapping
+// ============================================================
+async function refreshTrailerJobSiteMap() {
+    if (!dbAvailable) return;
+    try {
+        const assignments = await getTrailerAssignments();
+        trailerJobSiteMap.clear();
+        for (const assignment of assignments) {
+            if (assignment.job_site_name) {
+                trailerJobSiteMap.set(assignment.site_id, assignment.job_site_name);
+            }
+        }
+    } catch (err) {
+        console.error('  Error refreshing trailer job site map:', err.message);
+    }
+}
+
+// ============================================================
 // Alert logic: yield < consumed for 2+ consecutive REAL deficit days
 // (excludes idle-throttled deficits: SOC ≥88%, MPPT Float/Storage, <1 kWh)
 // ============================================================
@@ -823,6 +844,7 @@ function computeAlerts() {
             alerts.push({
                 site_id: siteId,
                 site_name: siteName,
+                job_site_name: trailerJobSiteMap.get(siteId) || null,  // NEW: Job site for email context
                 streak_days: realStreak,  // Only real deficit days
                 deficit_days: allDeficitDays,
                 severity: realStreak >= 5 ? 'critical' : realStreak >= 3 ? 'warning' : 'caution',
@@ -2807,6 +2829,8 @@ async function pollAllSites() {
 
         if (dbAvailable) {
             try { await pruneOldData(); } catch (e) { /* ignore */ }
+            // Refresh trailer-to-job-site mapping for alert emails
+            try { await refreshTrailerJobSiteMap(); } catch (e) { /* ignore */ }
         }
 
         const currentAlerts = computeAlerts();
