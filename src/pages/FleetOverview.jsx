@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchTechStatus, fetchDeploymentSummary } from '../api/vrm'
+import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchTechStatus, fetchDeploymentSummary, createJobSite } from '../api/vrm'
 import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
 import QueryBar from '../components/QueryBar'
@@ -26,6 +26,9 @@ function FleetOverview() {
     const [showDeployedOnly, setShowDeployedOnly] = useState(true)
     const [techStatusFilter, setTechStatusFilter] = useState(null) // null | 'good' | 'watch' | 'attention'
     const [generatingPdf, setGeneratingPdf] = useState(false)
+    const [showAddSiteModal, setShowAddSiteModal] = useState(false)
+    const [newSite, setNewSite] = useState({ name: '', address: '', customer_name: '', primary_contact_name: '', primary_contact_phone: '', primary_contact_email: '' })
+    const [addingSite, setAddingSite] = useState(false)
 
     // Action queue data
     const fetchActionQueueFn = useCallback(() => fetchActionQueue(), [])
@@ -363,7 +366,7 @@ function FleetOverview() {
                     <div className="skeleton skeleton-text" style={{ width: 300, height: 16, marginTop: 8 }}></div>
                 </div>
                 <div className="kpi-row">
-                    {[1,2,3,4,5].map(i => (
+                    {[1, 2, 3, 4, 5].map(i => (
                         <div key={i} className="kpi-card skeleton-card">
                             <div className="skeleton skeleton-text" style={{ width: '60%', height: 14 }}></div>
                             <div className="skeleton skeleton-text" style={{ width: '40%', height: 28, marginTop: 8 }}></div>
@@ -371,7 +374,7 @@ function FleetOverview() {
                     ))}
                 </div>
                 <div className="site-grid">
-                    {[1,2,3,4,5,6].map(i => (
+                    {[1, 2, 3, 4, 5, 6].map(i => (
                         <div key={i} className="skeleton-card" style={{ height: 160, borderRadius: 'var(--radius)' }}>
                             <div className="skeleton" style={{ width: '100%', height: '100%', borderRadius: 'var(--radius)' }}></div>
                         </div>
@@ -403,6 +406,14 @@ function FleetOverview() {
                             Export
                         </button>
                         <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
+                        {canEdit && (
+                            <button className="btn btn-sm btn-primary" onClick={() => setShowAddSiteModal(true)} title="Add new job site">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                                </svg>
+                                Add Site
+                            </button>
+                        )}
                     </div>
                 </div>
                 <p className="page-subtitle">
@@ -796,6 +807,68 @@ function FleetOverview() {
                             )}
                         </>
                     )}
+                </div>
+            )}
+
+            {/* Add Site Modal */}
+            {showAddSiteModal && (
+                <div className="modal-overlay" onClick={() => setShowAddSiteModal(false)}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+                        <div className="modal-header">
+                            <h2>Add New Site</h2>
+                            <button className="modal-close" onClick={() => setShowAddSiteModal(false)}>&times;</button>
+                        </div>
+                        <form onSubmit={async (e) => {
+                            e.preventDefault()
+                            if (!newSite.name.trim()) return
+                            setAddingSite(true)
+                            try {
+                                await createJobSite(newSite)
+                                setShowAddSiteModal(false)
+                                setNewSite({ name: '', address: '', customer_name: '', primary_contact_name: '', primary_contact_phone: '', primary_contact_email: '' })
+                                refetch()
+                            } catch (err) {
+                                console.error('Failed to create site:', err)
+                            } finally {
+                                setAddingSite(false)
+                            }
+                        }} style={{ padding: '20px' }}>
+                            <div style={{ display: 'grid', gap: '14px' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Site Name *</label>
+                                    <input className="input" required value={newSite.name} onChange={e => setNewSite(s => ({ ...s, name: e.target.value }))} placeholder="e.g. Downtown Construction" />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Address</label>
+                                    <input className="input" value={newSite.address} onChange={e => setNewSite(s => ({ ...s, address: e.target.value }))} placeholder="123 Main St, Kansas City, KS" />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Customer Name</label>
+                                    <input className="input" value={newSite.customer_name} onChange={e => setNewSite(s => ({ ...s, customer_name: e.target.value }))} placeholder="ABC Construction LLC" />
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Contact Name</label>
+                                        <input className="input" value={newSite.primary_contact_name} onChange={e => setNewSite(s => ({ ...s, primary_contact_name: e.target.value }))} placeholder="John Smith" />
+                                    </div>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Contact Phone</label>
+                                        <input className="input" value={newSite.primary_contact_phone} onChange={e => setNewSite(s => ({ ...s, primary_contact_phone: e.target.value }))} placeholder="(555) 123-4567" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Contact Email</label>
+                                    <input className="input" type="email" value={newSite.primary_contact_email} onChange={e => setNewSite(s => ({ ...s, primary_contact_email: e.target.value }))} placeholder="john@example.com" />
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '20px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                                <button type="button" className="btn btn-secondary" onClick={() => setShowAddSiteModal(false)}>Cancel</button>
+                                <button type="submit" className="btn btn-primary" disabled={!newSite.name.trim() || addingSite}>
+                                    {addingSite ? 'Creating...' : 'Create Site'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
                 </div>
             )}
         </div>

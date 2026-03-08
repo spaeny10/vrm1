@@ -228,6 +228,13 @@ export async function updateJobSite(id, data) {
     });
 }
 
+export async function createJobSite(data) {
+    return apiFetch(`${API_BASE}/job-sites`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
 export async function assignTrailer(jobSiteId, siteId) {
     return apiFetch(`${API_BASE}/job-sites/${jobSiteId}/assign`, {
         method: 'POST',
