@@ -340,6 +340,21 @@ function FleetOverview() {
         setGeneratingPdf(false)
     }
 
+    const handleAtRiskClick = () => {
+        if (viewMode === 'sites') {
+            // Navigate to first critical job site
+            const criticalSite = jobSites.find(js => js.worst_status === 'critical')
+            if (criticalSite) navigate(`/site/${criticalSite.id}`)
+        } else {
+            // Navigate to first at-risk trailer (SOC < 20%)
+            const atRiskTrailer = sites.find(site => {
+                const snap = snapshotMap[site.idSite]
+                return snap && snap.battery_soc !== null && snap.battery_soc < 20
+            })
+            if (atRiskTrailer) navigate(`/trailer/${atRiskTrailer.idSite}`)
+        }
+    }
+
     if (isLoading) {
         return (
             <div className="fleet-overview">
@@ -408,7 +423,14 @@ function FleetOverview() {
                 {kpis.atRisk > 0 && (
                     <>
                         <span className="fleet-stat-sep" />
-                        <span className="fleet-stat fleet-stat-risk"><strong>{kpis.atRisk}</strong> at risk</span>
+                        <span
+                            className="fleet-stat fleet-stat-risk fleet-stat-clickable"
+                            onClick={handleAtRiskClick}
+                            style={{ cursor: 'pointer' }}
+                            title="Click to view at-risk trailer"
+                        >
+                            <strong>{kpis.atRisk}</strong> at risk
+                        </span>
                     </>
                 )}
             </div>

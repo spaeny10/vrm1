@@ -516,6 +516,18 @@ body {
   color: #e74c3c;
 }
 
+.fleet-stat-clickable {
+  transition: all 0.2s ease;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin: -4px -8px;
+}
+
+.fleet-stat-clickable:hover {
+  background: rgba(231, 76, 60, 0.1);
+  transform: translateY(-1px);
+}
+
 .fleet-stat-sep {
   width: 1px;
   height: 14px;
