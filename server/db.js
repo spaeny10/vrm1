@@ -704,11 +704,14 @@ export async function getHistory(siteId, startTs, endTs) {
 
 export async function getLatestSnapshots() {
     if (!pool) return [];
+    // Only return snapshots from the last 30 minutes to avoid serving stale data
+    const cutoff = Date.now() - 30 * 60 * 1000;
     const result = await pool.query(`
     SELECT DISTINCT ON (site_id) *
     FROM site_snapshots
+    WHERE timestamp > $1
     ORDER BY site_id, timestamp DESC
-  `);
+  `, [cutoff]);
     return result.rows;
 }
 

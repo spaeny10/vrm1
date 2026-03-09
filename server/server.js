@@ -387,7 +387,7 @@ function computeAstronomicalPSH(latitude, dayOfYear) {
 // ============================================================
 async function computeTrailerIntelligence(siteId) {
     const snapshot = snapshotCache.get(siteId);
-    if (!snapshot) return null;
+    if (!snapshot || !hasVrmData(snapshot)) return null;
 
     const specs = TRAILER_SPECS;
 
@@ -536,7 +536,7 @@ async function computeTrailerIntelligence(siteId) {
     return {
         site_id: siteId,
         site_name: snapshot.site_name,
-        timestamp: Date.now(),
+        timestamp: snapshot.vrm_timestamp || snapshot.timestamp,
         specs: {
             solar_capacity_w: specs.solar.total_watts,
             battery_capacity_wh: specs.battery.total_wh,
@@ -3432,6 +3432,16 @@ async function pollAllSites() {
             }
         }
 
+        // Evict snapshots for sites no longer in VRM
+        const activeSiteIds = new Set(sites.map(s => s.idSite));
+        for (const cachedId of snapshotCache.keys()) {
+            if (!activeSiteIds.has(cachedId)) {
+                snapshotCache.delete(cachedId);
+                gpsCache.delete(cachedId);      // clean up associated GPS
+                dailyEnergy.delete(cachedId);    // clean up associated energy
+            }
+        }
+
         if (dbAvailable) {
             try { await pruneOldData(); } catch (e) { /* ignore */ }
             // Refresh trailer-to-job-site mapping for alert emails
@@ -3704,6 +3714,15 @@ async function pollIc2Devices() {
                         await upsertTrailerAssignment(siteId, dev.name, null, null, null, dev.id);
                     } catch (e) { /* non-critical */ }
                 }
+            }
+        }
+
+        // Evict pepwaveCache entries for devices no longer in IC2
+        const activeDeviceNames = new Set(devices.map(d => d.name));
+        for (const cachedName of pepwaveCache.keys()) {
+            if (!activeDeviceNames.has(cachedName)) {
+                pepwaveCache.delete(cachedName);
+                offlineTimestamps.delete(cachedName);
             }
         }
 
