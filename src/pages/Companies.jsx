@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { fetchCompanies, createCompany, updateCompanyApi, fetchContacts, createContact, updateContactApi, deleteContactApi, fetchJobSites } from '../api/vrm'
+import { fetchCompanies, createCompany, updateCompanyApi, fetchContacts, createContact, updateContactApi, deleteContactApi, fetchJobSites, inviteContactToPortal } from '../api/vrm'
 import { useAuth } from '../components/AuthProvider'
 
 export default function Companies() {
@@ -17,6 +17,8 @@ export default function Companies() {
     const [newContact, setNewContact] = useState({ name: '', title: '', phone: '', email: '', is_primary: false })
     const [editingCompany, setEditingCompany] = useState(null)
     const [jobSites, setJobSites] = useState([])
+    const [inviting, setInviting] = useState(null) // contactId currently being invited
+    const [inviteResult, setInviteResult] = useState(null) // { username, temp_password, sites_linked }
 
     const loadCompanies = useCallback(async () => {
         try {
@@ -112,6 +114,25 @@ export default function Companies() {
             loadContacts(expandedId)
         } catch (err) {
             console.error('Failed to delete contact:', err)
+        }
+    }
+
+    const handleInviteToPortal = async (contact) => {
+        if (!contact.email) return alert('This contact needs an email address before they can be invited.')
+        setInviting(contact.id)
+        try {
+            const result = await inviteContactToPortal(contact.id)
+            setInviteResult({
+                name: contact.name,
+                username: contact.email.toLowerCase(),
+                temp_password: result.temp_password,
+                sites_linked: result.sites_linked,
+            })
+        } catch (err) {
+            const msg = err?.message || 'Failed to invite'
+            alert(msg)
+        } finally {
+            setInviting(null)
         }
     }
 
@@ -242,9 +263,24 @@ export default function Companies() {
                                                             )}
                                                         </div>
                                                         {canEdit && (
-                                                            <button className="contact-delete" onClick={() => handleDeleteContact(c.id)} title="Remove contact">
-                                                                &times;
-                                                            </button>
+                                                            <div className="contact-card-actions">
+                                                                {c.email && !c.portal_user_id && (
+                                                                    <button
+                                                                        className="btn btn-xs btn-accent"
+                                                                        onClick={() => handleInviteToPortal(c)}
+                                                                        disabled={inviting === c.id}
+                                                                        title="Create a portal account for this contact"
+                                                                    >
+                                                                        {inviting === c.id ? '...' : '🔑 Invite to Portal'}
+                                                                    </button>
+                                                                )}
+                                                                {c.portal_user_id && (
+                                                                    <span className="contact-portal-badge">✓ Portal Access</span>
+                                                                )}
+                                                                <button className="contact-delete" onClick={() => handleDeleteContact(c.id)} title="Remove contact">
+                                                                    &times;
+                                                                </button>
+                                                            </div>
                                                         )}
                                                     </div>
                                                 ))}
@@ -420,6 +456,47 @@ export default function Companies() {
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Invite Credentials Modal */}
+            {inviteResult && (
+                <div className="modal-overlay" onClick={() => setInviteResult(null)}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+                        <div className="modal-header">
+                            <h2>Portal Account Created</h2>
+                            <button className="modal-close" onClick={() => setInviteResult(null)}>&times;</button>
+                        </div>
+                        <div style={{ padding: 20 }}>
+                            <p style={{ margin: '0 0 16px', color: 'var(--text-secondary)', fontSize: 14 }}>
+                                A customer portal account has been created for <strong>{inviteResult.name}</strong>.
+                                Share the credentials below so they can log in.
+                            </p>
+                            <div className="invite-credentials">
+                                <div className="invite-cred-row">
+                                    <span className="invite-cred-label">Username</span>
+                                    <code className="invite-cred-value">{inviteResult.username}</code>
+                                </div>
+                                <div className="invite-cred-row">
+                                    <span className="invite-cred-label">Temp Password</span>
+                                    <code className="invite-cred-value">{inviteResult.temp_password}</code>
+                                </div>
+                                <div className="invite-cred-row">
+                                    <span className="invite-cred-label">Sites Linked</span>
+                                    <span className="invite-cred-value">{inviteResult.sites_linked} site(s)</span>
+                                </div>
+                            </div>
+                            <p style={{ margin: '16px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
+                                The customer will only see sites they are assigned to as a contact.
+                            </p>
+                            <div className="modal-footer">
+                                <button className="btn btn-primary" onClick={() => {
+                                    navigator.clipboard.writeText(`Username: ${inviteResult.username}\nPassword: ${inviteResult.temp_password}`)
+                                    setInviteResult(null)
+                                }}>Copy Credentials & Close</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}

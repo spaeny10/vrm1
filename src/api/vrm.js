@@ -297,6 +297,11 @@ export async function removeContact(siteId, contactId) {
     return apiFetch(`${API_BASE}/job-sites/${siteId}/contacts/${contactId}`, { method: 'DELETE' });
 }
 
+// Invite contact to customer portal
+export async function inviteContactToPortal(contactId) {
+    return apiFetch(`${API_BASE}/contacts/${contactId}/invite`, { method: 'POST' });
+}
+
 export async function assignTrailer(jobSiteId, siteId) {
     return apiFetch(`${API_BASE}/job-sites/${jobSiteId}/assign`, {
         method: 'POST',

@@ -1162,6 +1162,26 @@ export async function deleteContact(id) {
     await pool.query(`DELETE FROM contacts WHERE id = $1`, [id]);
 }
 
+export async function getContactById(id) {
+    if (!pool) return null;
+    const result = await pool.query(`SELECT * FROM contacts WHERE id = $1`, [id]);
+    return result.rows[0] || null;
+}
+
+export async function getContactSiteIds(contactId) {
+    if (!pool) return [];
+    const result = await pool.query(
+        `SELECT DISTINCT job_site_id FROM site_contacts WHERE contact_id = $1`, [contactId]
+    );
+    return result.rows.map(r => r.job_site_id);
+}
+
+export async function setContactPortalUserId(contactId, userId) {
+    if (!pool) return;
+    await pool.query(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS portal_user_id INTEGER`);
+    await pool.query(`UPDATE contacts SET portal_user_id = $1 WHERE id = $2`, [userId, contactId]);
+}
+
 // ============================================================
 // Site Contacts (junction)
 // ============================================================

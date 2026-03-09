@@ -18,6 +18,7 @@ import {
     insertAuditLog, getAuditLog,
     getCompanies, getCompany, insertCompany, updateCompany,
     getContacts, insertContact, updateContact, deleteContact,
+    getContactById, getContactSiteIds, setContactPortalUserId,
     getSiteContacts, assignContactToSite, removeContactFromSite,
     getTrailerAssignments, getTrailersByJobSite, upsertTrailerAssignment, linkIc2Device,
     assignTrailerToJobSite, getTrailersWithGps,
@@ -2004,6 +2005,56 @@ app.delete('/api/contacts/:id', requireRole('admin'), async (req, res) => {
     try {
         await deleteContact(parseInt(req.params.id));
         res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Invite contact to customer portal
+app.post('/api/contacts/:id/invite', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        const contactId = parseInt(req.params.id);
+        const contact = await getContactById(contactId);
+        if (!contact) return res.status(404).json({ success: false, error: 'Contact not found' });
+
+        if (!contact.email) return res.status(400).json({ success: false, error: 'Contact must have an email address to be invited' });
+
+        // Check if user already exists with this email as username
+        const existing = await getUserByUsername(contact.email.toLowerCase());
+        if (existing) return res.status(409).json({ success: false, error: `A portal account already exists for ${contact.email}` });
+
+        // Generate a temporary password
+        const tempPassword = 'BV-' + Math.random().toString(36).slice(2, 8).toUpperCase() + Math.floor(Math.random() * 90 + 10);
+        const hash = await bcrypt.hash(tempPassword, 10);
+
+        // Create the customer user account
+        const newUser = await createUser(contact.email.toLowerCase(), hash, contact.name, 'customer');
+
+        // Auto-link site access from contact's site assignments
+        const siteIds = await getContactSiteIds(contactId);
+        if (siteIds.length > 0) {
+            for (const siteId of siteIds) {
+                await upsertCustomerSiteAccess(newUser.id, siteId);
+            }
+        }
+
+        // Store portal user reference on contact
+        await setContactPortalUserId(contactId, newUser.id);
+
+        const actor = req.user ? req.user.display_name : 'system';
+        insertAuditLog('contact', contactId, 'portal_invited', {
+            user_id: newUser.id,
+            email: contact.email,
+            sites_linked: siteIds.length
+        }, actor).catch(() => { });
+
+        res.status(201).json({
+            success: true,
+            user: newUser,
+            temp_password: tempPassword,
+            sites_linked: siteIds.length,
+            message: `Portal account created for ${contact.name}. Username: ${contact.email}, Temp password: ${tempPassword}`
+        });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }

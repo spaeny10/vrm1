@@ -8653,3 +8653,80 @@ tr:hover .btn-hq-toggle {
 .detail-company-badge:hover {
   color: var(--accent);
 }
+
+/* ========== Invite to Portal ========== */
+.contact-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.btn-xs {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.btn-accent {
+  background: linear-gradient(135deg, var(--accent), #8e44ad);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+
+.btn-accent:hover {
+  opacity: 0.85;
+}
+
+.btn-accent:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.contact-portal-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(46, 204, 113, 0.15);
+  color: var(--success);
+}
+
+.invite-credentials {
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+}
+
+.invite-cred-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.invite-cred-row+.invite-cred-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.invite-cred-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.invite-cred-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 8px;
+  border-radius: 3px;
+}
