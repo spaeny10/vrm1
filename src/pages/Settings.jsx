@@ -2,7 +2,7 @@ import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings, fetchCommunications } from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
 import { useAuth } from '../components/AuthProvider'
 
@@ -33,6 +33,145 @@ function DroppableJobSiteRow({ jobSiteId, isOver, children }) {
         >
             {children}
         </tr>
+    )
+}
+
+function CommunicationLogSection({ jobSites, toast }) {
+    const [notes, setNotes] = useState([])
+    const [total, setTotal] = useState(0)
+    const [loading, setLoading] = useState(false)
+    const [filters, setFilters] = useState({ site_id: '', author: '', search: '', date_from: '', date_to: '' })
+    const [page, setPage] = useState(0)
+    const perPage = 25
+
+    const loadNotes = useCallback(async (pg = 0) => {
+        setLoading(true)
+        try {
+            const params = { limit: perPage, offset: pg * perPage }
+            if (filters.site_id) params.site_id = filters.site_id
+            if (filters.author) params.author = filters.author
+            if (filters.search) params.search = filters.search
+            if (filters.date_from) params.date_from = new Date(filters.date_from).getTime()
+            if (filters.date_to) params.date_to = new Date(filters.date_to + 'T23:59:59').getTime()
+            const data = await fetchCommunications(params)
+            setNotes(data?.notes || [])
+            setTotal(data?.total || 0)
+            setPage(pg)
+        } catch (err) {
+            toast.error('Error loading communications: ' + err.message)
+        }
+        setLoading(false)
+    }, [filters, toast])
+
+    useEffect(() => { loadNotes(0) }, [loadNotes])
+
+    const totalPages = Math.ceil(total / perPage)
+
+    const formatTime = (ts) => {
+        if (!ts) return '—'
+        return new Date(Number(ts)).toLocaleString()
+    }
+
+    const updateFilter = (key, value) => {
+        setFilters(f => ({ ...f, [key]: value }))
+    }
+
+    return (
+        <div className="settings-card settings-card-wide">
+            <div className="settings-card-header">
+                <h2>📋 Communication Log</h2>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{total} total entries</span>
+            </div>
+            <p className="settings-desc">
+                All site notes and communications across every job site. Use filters to narrow results.
+            </p>
+
+            {/* Filters */}
+            <div className="comm-log-filters">
+                <div className="comm-filter-group">
+                    <label>Site</label>
+                    <select value={filters.site_id} onChange={e => updateFilter('site_id', e.target.value)}>
+                        <option value="">All Sites</option>
+                        {jobSites.filter(js => js.status === 'active').map(js => (
+                            <option key={js.id} value={js.id}>{js.name}</option>
+                        ))}
+                    </select>
+                </div>
+                <div className="comm-filter-group">
+                    <label>Author</label>
+                    <input type="text" placeholder="Filter by author..." value={filters.author} onChange={e => updateFilter('author', e.target.value)} />
+                </div>
+                <div className="comm-filter-group">
+                    <label>Search</label>
+                    <input type="text" placeholder="Search note text..." value={filters.search} onChange={e => updateFilter('search', e.target.value)} />
+                </div>
+                <div className="comm-filter-group">
+                    <label>From</label>
+                    <input type="date" className="date-input" value={filters.date_from} onChange={e => updateFilter('date_from', e.target.value)} />
+                </div>
+                <div className="comm-filter-group">
+                    <label>To</label>
+                    <input type="date" className="date-input" value={filters.date_to} onChange={e => updateFilter('date_to', e.target.value)} />
+                </div>
+                <div className="comm-filter-group" style={{ alignSelf: 'flex-end' }}>
+                    <button className="btn btn-sm btn-ghost" onClick={() => setFilters({ site_id: '', author: '', search: '', date_from: '', date_to: '' })}>Clear</button>
+                </div>
+            </div>
+
+            {/* Results */}
+            {loading ? (
+                <div className="empty-section"><p>Loading...</p></div>
+            ) : notes.length === 0 ? (
+                <div className="empty-section"><p>No communication entries found.</p></div>
+            ) : (
+                <div className="jobsite-mgmt-table-wrapper">
+                    <table className="maint-table">
+                        <thead>
+                            <tr>
+                                <th>Site</th>
+                                <th>Author</th>
+                                <th style={{ width: '45%' }}>Note</th>
+                                <th>Mentions</th>
+                                <th>Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {notes.map(n => (
+                                <tr key={n.id} className="maint-row">
+                                    <td>
+                                        <span className="comm-log-site-name">{n.site_name || `Site #${n.job_site_id}`}</span>
+                                        <span className="comm-log-site-uid">UID {n.job_site_id}</span>
+                                    </td>
+                                    <td className="maint-title">{n.author}</td>
+                                    <td>
+                                        <span className="comm-log-note">{n.note}</span>
+                                    </td>
+                                    <td>
+                                        {n.mentions && n.mentions.length > 0 ? (
+                                            <div className="comm-log-mentions">
+                                                {(typeof n.mentions === 'string' ? JSON.parse(n.mentions) : n.mentions).map((m, i) => (
+                                                    <span key={i} className="mention-tag-sm">@{m}</span>
+                                                ))}
+                                            </div>
+                                        ) : '—'}
+                                    </td>
+                                    <td className="comm-log-date">{formatTime(n.created_at)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+                <div className="comm-log-pagination">
+                    <button className="btn btn-sm btn-ghost" disabled={page === 0} onClick={() => loadNotes(page - 1)}>← Prev</button>
+                    <span className="comm-log-page-info">Page {page + 1} of {totalPages}</span>
+                    <button className="btn btn-sm btn-ghost" disabled={page >= totalPages - 1} onClick={() => loadNotes(page + 1)}>Next →</button>
+                </div>
+            )}
+        </div>
     )
 }
 
@@ -1065,6 +1204,11 @@ function Settings() {
                 {/* Customer Accounts */}
                 {isAdmin && (
                     <CustomerAccountsSection jobSites={jobSites} toast={toast} loadUsers={loadUsers} />
+                )}
+
+                {/* Communication Log */}
+                {isAdmin && (
+                    <CommunicationLogSection jobSites={jobSites} toast={toast} />
                 )}
 
                 {/* Email Digest Settings */}

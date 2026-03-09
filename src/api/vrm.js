@@ -233,6 +233,18 @@ export async function markAllNotifsRead() {
     return apiFetch(`${API_BASE}/notifications/read-all`, { method: 'PUT' });
 }
 
+export async function fetchCommunications(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.site_id) params.set('site_id', filters.site_id);
+    if (filters.author) params.set('author', filters.author);
+    if (filters.search) params.set('search', filters.search);
+    if (filters.date_from) params.set('date_from', filters.date_from);
+    if (filters.date_to) params.set('date_to', filters.date_to);
+    if (filters.limit) params.set('limit', filters.limit);
+    if (filters.offset) params.set('offset', filters.offset);
+    return apiFetch(`${API_BASE}/communications?${params.toString()}`);
+}
+
 export async function updateJobSite(id, data) {
     return apiFetch(`${API_BASE}/job-sites/${id}`, {
         method: 'PUT',

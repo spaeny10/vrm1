@@ -1050,6 +1050,53 @@ export async function getSiteNotes(jobSiteId, { limit = 50, offset = 0 } = {}) {
     return { notes: result.rows, total };
 }
 
+export async function getAllSiteNotes({ limit = 100, offset = 0, siteId, author, search, dateFrom, dateTo } = {}) {
+    if (!pool) return { notes: [], total: 0 };
+    const conditions = [];
+    const params = [];
+    let paramIdx = 1;
+
+    if (siteId) {
+        conditions.push(`sn.job_site_id = $${paramIdx++}`);
+        params.push(siteId);
+    }
+    if (author) {
+        conditions.push(`sn.author ILIKE $${paramIdx++}`);
+        params.push(`%${author}%`);
+    }
+    if (search) {
+        conditions.push(`sn.note ILIKE $${paramIdx++}`);
+        params.push(`%${search}%`);
+    }
+    if (dateFrom) {
+        conditions.push(`sn.created_at >= $${paramIdx++}`);
+        params.push(dateFrom);
+    }
+    if (dateTo) {
+        conditions.push(`sn.created_at <= $${paramIdx++}`);
+        params.push(dateTo);
+    }
+
+    const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    const countResult = await pool.query(
+        `SELECT COUNT(*) as total FROM site_notes sn ${where}`, params
+    );
+    const total = parseInt(countResult.rows[0].total);
+
+    const dataParams = [...params, limit, offset];
+    const result = await pool.query(
+        `SELECT sn.*, js.name as site_name, js.address as site_address
+         FROM site_notes sn
+         LEFT JOIN job_sites js ON sn.job_site_id = js.id
+         ${where}
+         ORDER BY sn.created_at DESC
+         LIMIT $${paramIdx++} OFFSET $${paramIdx}`,
+        dataParams
+    );
+    return { notes: result.rows, total };
+}
+
 export async function insertSiteNote(jobSiteId, noteText, author = 'system', mentions = []) {
     if (!pool) return null;
     const result = await pool.query(

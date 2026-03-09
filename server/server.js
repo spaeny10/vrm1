@@ -14,7 +14,7 @@ import {
     insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
     upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding,
     getJobSites, getJobSite, getJobSiteByPhone, insertJobSite, updateJobSite,
-    getSiteNotes, insertSiteNote,
+    getSiteNotes, insertSiteNote, getAllSiteNotes,
     insertAuditLog, getAuditLog,
     getCompanies, getCompany, insertCompany, updateCompany,
     getContacts, insertContact, updateContact, deleteContact,
@@ -1850,6 +1850,25 @@ app.get('/api/users/mentionable', async (req, res) => {
         res.json({ success: true, users: mentionable });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET all communications (admin only) — cross-site notes with filters
+app.get('/api/communications', requireRole('admin'), async (req, res) => {
+    try {
+        const { site_id, author, search, date_from, date_to, limit, offset } = req.query;
+        const result = await getAllSiteNotes({
+            siteId: site_id ? parseInt(site_id) : undefined,
+            author: author || undefined,
+            search: search || undefined,
+            dateFrom: date_from ? parseInt(date_from) : undefined,
+            dateTo: date_to ? parseInt(date_to) : undefined,
+            limit: limit ? parseInt(limit) : 100,
+            offset: offset ? parseInt(offset) : 0,
+        });
+        res.json({ success: true, ...result });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
