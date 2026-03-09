@@ -209,16 +209,8 @@ body {
 }
 
 .sidebar-footer {
-  padding: 16px 20px;
+  padding: 12px 16px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-muted);
 }
 
 .status-dot {
@@ -242,8 +234,7 @@ body {
 .sidebar-collapsed .brand-omni,
 .sidebar-collapsed .nav-item span:not(.nav-badge),
 .sidebar-collapsed .sidebar-collapse-toggle span,
-.sidebar-collapsed .sidebar-user-info,
-.sidebar-collapsed .status-indicator span {
+.sidebar-collapsed .sidebar-user-info {
   display: none;
 }
 
@@ -288,18 +279,24 @@ body {
 
 /* Footer adjustments when collapsed */
 .sidebar-collapsed .sidebar-footer {
-  padding: 12px 10px;
+  padding: 8px 6px;
 }
 
 .sidebar-collapsed .sidebar-user {
-  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  padding: 6px 4px;
+  gap: 0;
 }
 
-.sidebar-collapsed .status-indicator {
+.sidebar-collapsed .sidebar-user-actions {
+  flex-wrap: wrap;
   justify-content: center;
+  gap: 2px;
+}
+
+.sidebar-collapsed .sidebar-user-actions button,
+.sidebar-collapsed .sidebar-user-actions .notif-bell-btn {
+  padding: 5px;
 }
 
 /* ========== Loading / Empty States ========== */
@@ -1974,7 +1971,7 @@ body {
 
   .brand-omni,
   .nav-item span,
-  .sidebar-footer span {
+  .sidebar-user-info {
     display: none;
   }
 
@@ -5745,19 +5742,26 @@ tr:hover .btn-hq-toggle {
 
 .sidebar-user {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
   background: rgba(255, 255, 255, 0.03);
   border-radius: var(--radius-sm);
 }
 
 .sidebar-user-info {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
+}
+
+.sidebar-user-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
 .sidebar-user-name {
@@ -5769,29 +5773,36 @@ tr:hover .btn-hq-toggle {
   text-overflow: ellipsis;
 }
 
+.sidebar-user-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .role-badge {
   display: inline-block;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 10px;
-  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   width: fit-content;
+  flex-shrink: 0;
 }
 
 .role-badge-admin {
-  background: rgba(231, 76, 60, 0.2);
-  color: #e74c3c;
+  background: rgba(231, 76, 60, 0.12);
+  color: #e07060;
 }
 
 .role-badge-technician {
-  background: rgba(52, 152, 219, 0.2);
-  color: #3498db;
+  background: rgba(52, 152, 219, 0.15);
+  color: #5dade2;
 }
 
 .role-badge-viewer {
-  background: rgba(127, 140, 141, 0.2);
+  background: rgba(127, 140, 141, 0.15);
   color: #95a5a6;
 }
 

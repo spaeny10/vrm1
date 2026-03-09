@@ -138,10 +138,13 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
                 {user && (
                     <div className="sidebar-user">
                         <div className="sidebar-user-info">
-                            <span className="sidebar-user-name">{user.display_name}</span>
+                            <div className="sidebar-user-name-row">
+                                <span className="status-dot online" title="System Online"></span>
+                                <span className="sidebar-user-name">{user.display_name}</span>
+                            </div>
                             <span className={`role-badge role-badge-${user.role}`}>{user.role}</span>
                         </div>
-                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <div className="sidebar-user-actions">
                             <div className="notif-bell-wrapper">
                                 <button className="notif-bell-btn" onClick={() => setShowNotifs(v => !v)} title="Notifications">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -203,10 +206,6 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
                         </div>
                     </div>
                 )}
-                <div className="status-indicator">
-                    <span className="status-dot online"></span>
-                    <span>System Online</span>
-                </div>
             </div>
         </aside>
     )
