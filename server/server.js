@@ -1634,6 +1634,8 @@ app.get('/api/job-sites', async (req, res) => {
     try {
         const jobSites = await getJobSites();
         const assignments = await getTrailerAssignments();
+        const companies = await getCompanies();
+        const companyMap = new Map(companies.map(c => [c.id, c.name]));
 
         // Group assignments by job_site_id
         const assignmentsByJobSite = new Map();
@@ -1688,6 +1690,7 @@ app.get('/api/job-sites', async (req, res) => {
 
             return {
                 ...js,
+                company_name: companyMap.get(js.company_id) || null,
                 trailer_count: trailers.length,
                 trailers_online: trailersOnline,
                 avg_soc: socCount > 0 ? +(totalSoc / socCount).toFixed(1) : null,

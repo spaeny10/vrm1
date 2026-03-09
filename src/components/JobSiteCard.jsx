@@ -60,6 +60,7 @@ function JobSiteCard({ jobSite, healthGrades }) {
                     <h3 className="site-card-name">{name}</h3>
                     <span className="site-card-subtitle">
                         {trailer_count} trailer{trailer_count !== 1 ? 's' : ''}
+                        {jobSite.company_name && <span className="site-card-company">{jobSite.company_name}</span>}
                     </span>
                 </div>
                 <div className="site-card-badges">

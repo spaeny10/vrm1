@@ -3112,6 +3112,13 @@ body {
   color: var(--text-muted);
 }
 
+.fleet-table-company {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
 .fleet-table-soc {
   font-weight: 700;
   padding: 2px 8px;
@@ -3161,6 +3168,15 @@ body {
   color: var(--text-muted);
   margin-top: 2px;
   font-weight: 400;
+}
+
+.site-card-company {
+  margin-left: 6px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  font-size: 10px;
+  opacity: 0.7;
 }
 
 .jobsite-status-badge {
