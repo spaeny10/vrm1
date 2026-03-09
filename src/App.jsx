@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useLocation } from 'react-router-dom'
 import { useAuth } from './components/AuthProvider'
 import Sidebar from './components/Sidebar'
 import PortalSidebar from './components/PortalSidebar'
@@ -8,7 +8,13 @@ import LoginPage from './pages/LoginPage'
 import FleetOverview from './pages/FleetOverview'
 import JobSiteDetail from './pages/JobSiteDetail'
 import NotFound from './pages/NotFound'
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useState, useEffect } from 'react'
+
+function ScrollToTop() {
+    const { pathname } = useLocation()
+    useEffect(() => { window.scrollTo(0, 0) }, [pathname])
+    return null
+}
 
 // Lazy-load heavy pages (Chart.js, Leaflet, jsPDF, etc.)
 const TrailerDetail = lazy(() => import('./pages/TrailerDetail'))
@@ -59,6 +65,7 @@ function App() {
                 <PortalSidebar className={mobileOpen ? 'sidebar-open' : ''} />
                 {mobileOpen && <div className="sidebar-overlay visible" onClick={() => setMobileOpen(false)} />}
                 <main className="main-content">
+                    <ScrollToTop />
                     <ErrorBoundary>
                         <Suspense fallback={<PageLoader />}>
                             <Routes>
@@ -79,6 +86,7 @@ function App() {
             <Sidebar mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
             {mobileOpen && <div className="sidebar-overlay visible" onClick={() => setMobileOpen(false)} />}
             <main className="main-content">
+                <ScrollToTop />
                 <ErrorBoundary>
                     <Suspense fallback={<PageLoader />}>
                         <Routes>
