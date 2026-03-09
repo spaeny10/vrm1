@@ -19,6 +19,7 @@ export default function Companies() {
     const [jobSites, setJobSites] = useState([])
     const [inviting, setInviting] = useState(null) // contactId currently being invited
     const [inviteResult, setInviteResult] = useState(null) // { username, temp_password, sites_linked }
+    const [editingContact, setEditingContact] = useState(null)
 
     const loadCompanies = useCallback(async () => {
         try {
@@ -114,6 +115,21 @@ export default function Companies() {
             loadContacts(expandedId)
         } catch (err) {
             console.error('Failed to delete contact:', err)
+        }
+    }
+
+    const handleUpdateContact = async (e) => {
+        e.preventDefault()
+        if (!editingContact) return
+        setSaving(true)
+        try {
+            await updateContactApi(editingContact.id, editingContact)
+            setEditingContact(null)
+            loadContacts(expandedId)
+        } catch (err) {
+            console.error('Failed to update contact:', err)
+        } finally {
+            setSaving(false)
         }
     }
 
@@ -264,6 +280,9 @@ export default function Companies() {
                                                         </div>
                                                         {canEdit && (
                                                             <div className="contact-card-actions">
+                                                                <button className="btn btn-xs btn-ghost" onClick={() => setEditingContact({ ...c })} title="Edit contact">
+                                                                    ✏️ Edit
+                                                                </button>
                                                                 {c.email && !c.portal_user_id && (
                                                                     <button
                                                                         className="btn btn-xs btn-accent"
@@ -497,6 +516,50 @@ export default function Companies() {
                                 }}>Copy Credentials & Close</button>
                             </div>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Contact Modal */}
+            {editingContact && (
+                <div className="modal-overlay" onClick={() => setEditingContact(null)}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+                        <div className="modal-header">
+                            <h2>Edit Contact</h2>
+                            <button className="modal-close" onClick={() => setEditingContact(null)}>&times;</button>
+                        </div>
+                        <form onSubmit={handleUpdateContact} style={{ padding: '20px' }}>
+                            <div style={{ display: 'grid', gap: '14px' }}>
+                                <div>
+                                    <label className="form-label">Name *</label>
+                                    <input className="input" required value={editingContact.name} onChange={e => setEditingContact(s => ({ ...s, name: e.target.value }))} />
+                                </div>
+                                <div>
+                                    <label className="form-label">Title</label>
+                                    <input className="input" value={editingContact.title || ''} onChange={e => setEditingContact(s => ({ ...s, title: e.target.value }))} />
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                    <div>
+                                        <label className="form-label">Phone</label>
+                                        <input className="input" value={editingContact.phone || ''} onChange={e => setEditingContact(s => ({ ...s, phone: e.target.value }))} />
+                                    </div>
+                                    <div>
+                                        <label className="form-label">Email</label>
+                                        <input className="input" type="email" value={editingContact.email || ''} onChange={e => setEditingContact(s => ({ ...s, email: e.target.value }))} />
+                                    </div>
+                                </div>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                                    <input type="checkbox" checked={editingContact.is_primary || false} onChange={e => setEditingContact(s => ({ ...s, is_primary: e.target.checked }))} />
+                                    Primary contact
+                                </label>
+                            </div>
+                            <div className="modal-footer">
+                                <button type="button" className="btn btn-secondary" onClick={() => setEditingContact(null)}>Cancel</button>
+                                <button type="submit" className="btn btn-primary" disabled={!editingContact.name?.trim() || saving}>
+                                    {saving ? 'Saving...' : 'Save Changes'}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}
