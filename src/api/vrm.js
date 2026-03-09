@@ -259,6 +259,10 @@ export async function createJobSite(data) {
     });
 }
 
+export async function deleteJobSiteApi(id) {
+    return apiFetch(`${API_BASE}/job-sites/${id}`, { method: 'DELETE' });
+}
+
 // Companies
 export async function fetchCompanies() {
     return apiFetch(`${API_BASE}/companies`);

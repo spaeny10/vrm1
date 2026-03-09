@@ -1045,7 +1045,7 @@ export async function updateJobSite(id, updates) {
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-        if (['name', 'latitude', 'longitude', 'address', 'status', 'notes', 'is_headquarters', 'delivery_date', 'active_date', 'calloff_date', 'pickup_date', 'geofence_radius_m', 'uid', 'customer_name', 'primary_contact_name', 'primary_contact_phone', 'primary_contact_email', 'secondary_contact_name', 'secondary_contact_phone', 'secondary_contact_email'].includes(key)) {
+        if (['name', 'latitude', 'longitude', 'address', 'status', 'notes', 'is_headquarters', 'delivery_date', 'active_date', 'calloff_date', 'pickup_date', 'geofence_radius_m', 'uid', 'customer_name', 'primary_contact_name', 'primary_contact_phone', 'primary_contact_email', 'secondary_contact_name', 'secondary_contact_phone', 'secondary_contact_email', 'company_id'].includes(key)) {
             fields.push(`${key} = $${idx}`);
             values.push(value);
             idx++;
@@ -1062,6 +1062,12 @@ export async function updateJobSite(id, updates) {
         `UPDATE job_sites SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
         values
     );
+    return result.rows[0] || null;
+}
+
+export async function deleteJobSite(id) {
+    if (!pool) return null;
+    const result = await pool.query('DELETE FROM job_sites WHERE id = $1 RETURNING *', [id]);
     return result.rows[0] || null;
 }
 

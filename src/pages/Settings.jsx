@@ -2,7 +2,7 @@
 import { Link } from 'react-router-dom'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings, fetchCommunications, fetchGpsChanges, approveGpsChange, rejectGpsChange } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, deleteJobSiteApi, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings, fetchCommunications, fetchGpsChanges, approveGpsChange, rejectGpsChange, fetchCompanies } from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
 import { useAuth } from '../components/AuthProvider'
 
@@ -681,6 +681,11 @@ function Settings() {
     const [gpsSuggestions, setGpsSuggestions] = useState([])
     const [loadingSuggestions, setLoadingSuggestions] = useState(false)
 
+    // Company linking state
+    const [companies, setCompanies] = useState([])
+    const [removingSiteId, setRemovingSiteId] = useState(null)
+    const [removeConfirmText, setRemoveConfirmText] = useState('')
+
     const loadGpsData = async () => {
         setGpsLoading(true)
         try {
@@ -816,6 +821,32 @@ function Settings() {
             return () => clearInterval(interval)
         }
     }, [user])
+
+    // Load companies for company column
+    useEffect(() => {
+        fetchCompanies().then(data => setCompanies(data?.companies || [])).catch(() => {})
+    }, [])
+
+    const handleCompanyChange = async (siteId, companyId) => {
+        try {
+            await updateJobSite(siteId, { company_id: companyId || null })
+            refetchJobSites()
+        } catch (err) {
+            toast.error('Error updating company: ' + err.message)
+        }
+    }
+
+    const handleRemoveSite = async (siteId) => {
+        try {
+            await deleteJobSiteApi(siteId)
+            setRemovingSiteId(null)
+            setRemoveConfirmText('')
+            refetchJobSites()
+            toast.success('Site removed successfully')
+        } catch (err) {
+            toast.error('Error removing site: ' + err.message)
+        }
+    }
 
     const handleCreateUser = async (e) => {
         e.preventDefault()
@@ -1361,6 +1392,7 @@ function Settings() {
                                     <thead>
                                         <tr>
                                             <th>Name</th>
+                                            <th>Company</th>
                                             <th>Status</th>
                                             <th>Delivery</th>
                                             <th>Active</th>
@@ -1368,6 +1400,7 @@ function Settings() {
                                             <th>Pickup</th>
                                             <th>Geofence</th>
                                             <th>Address</th>
+                                            {isAdmin && <th>Actions</th>}
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -1387,6 +1420,12 @@ function Settings() {
                                                     {!js.is_headquarters && user?.role === 'admin' && <button className="btn-hq-toggle" onClick={() => handleToggleHq(js.id, js.is_headquarters)} title="Mark as headquarters">set HQ</button>}
                                                     {js.is_headquarters && user?.role === 'admin' && <button className="btn-hq-toggle" onClick={() => handleToggleHq(js.id, js.is_headquarters)} title="Remove headquarters flag">unset</button>}
                                                 </td>
+                                                <td className="jobsite-mgmt-company">
+                                                    <select className="company-select" value={js.company_id || ''} onChange={e => handleCompanyChange(js.id, e.target.value ? parseInt(e.target.value) : null)} disabled={!canEdit}>
+                                                        <option value="">None</option>
+                                                        {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                                    </select>
+                                                </td>
                                                 <td><select className={`status-select status-select-${js.status}`} value={js.status} onChange={e => handleStatusChange(js.id, e.target.value)} disabled={!canEdit}><option value="active">Active</option><option value="standby">Standby</option><option value="completed">Completed</option></select></td>
                                                 <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.delivery_date || ''} onChange={e => updateJobSite(js.id, { delivery_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
                                                 <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.active_date || ''} onChange={e => updateJobSite(js.id, { active_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
@@ -1394,6 +1433,33 @@ function Settings() {
                                                 <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.pickup_date || ''} onChange={e => updateJobSite(js.id, { pickup_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
                                                 <td><input type="number" className="geofence-input" value={js.geofence_radius_m || 300} min={100} step={50} disabled={!canEdit} onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 100) updateJobSite(js.id, { geofence_radius_m: v }).then(() => refetchJobSites()) }} /></td>
                                                 <td className="jobsite-mgmt-address">{js.address || '—'}</td>
+                                                {isAdmin && (
+                                                    <td className="jobsite-mgmt-actions">
+                                                        {removingSiteId === js.id ? (
+                                                            <div className="site-remove-confirm">
+                                                                <span className="site-remove-label">Type REMOVE to confirm:</span>
+                                                                <input
+                                                                    type="text"
+                                                                    className="site-remove-input"
+                                                                    value={removeConfirmText}
+                                                                    onChange={e => setRemoveConfirmText(e.target.value)}
+                                                                    placeholder="REMOVE"
+                                                                    autoFocus
+                                                                />
+                                                                <button
+                                                                    className="btn btn-sm btn-danger"
+                                                                    disabled={removeConfirmText !== 'REMOVE'}
+                                                                    onClick={() => handleRemoveSite(js.id)}
+                                                                >
+                                                                    Confirm
+                                                                </button>
+                                                                <button className="btn btn-sm btn-ghost" onClick={() => { setRemovingSiteId(null); setRemoveConfirmText('') }}>Cancel</button>
+                                                            </div>
+                                                        ) : (
+                                                            <button className="btn btn-sm site-remove-btn" onClick={() => { setRemovingSiteId(js.id); setRemoveConfirmText('') }}>Remove</button>
+                                                        )}
+                                                    </td>
+                                                )}
                                             </tr>
                                         ))}
                                     </tbody>

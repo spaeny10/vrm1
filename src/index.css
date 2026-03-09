@@ -8519,6 +8519,104 @@ tr:hover .btn-hq-toggle {
   color: var(--text-muted);
 }
 
+/* Link Site Picker (Companies page) */
+.link-site-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.link-site-picker select {
+  min-width: 200px;
+  font-size: 13px;
+}
+
+/* Unlink button on site mini cards */
+.site-mini-unlink {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.site-mini-card:hover .site-mini-unlink {
+  opacity: 0.6;
+}
+
+.site-mini-unlink:hover {
+  opacity: 1 !important;
+  color: var(--danger);
+}
+
+/* Company select in Settings table */
+.company-select {
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  min-width: 120px;
+}
+
+.company-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.jobsite-mgmt-company {
+  min-width: 140px;
+}
+
+.jobsite-mgmt-actions {
+  min-width: 120px;
+}
+
+/* Site Remove Button */
+.site-remove-btn {
+  color: var(--danger) !important;
+  border-color: var(--danger) !important;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.site-remove-btn:hover {
+  opacity: 1;
+  background: rgba(231, 76, 60, 0.1) !important;
+}
+
+/* Site Remove Confirmation */
+.site-remove-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.site-remove-label {
+  font-size: 11px;
+  color: var(--danger);
+  white-space: nowrap;
+}
+
+.site-remove-input {
+  width: 80px;
+  padding: 3px 6px;
+  font-size: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  text-transform: uppercase;
+}
+
 /* Modal / Form Shared */
 .modal-footer {
   display: flex;

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { fetchCompanies, createCompany, updateCompanyApi, fetchContacts, createContact, updateContactApi, deleteContactApi, fetchJobSites, inviteContactToPortal } from '../api/vrm'
+import { fetchCompanies, createCompany, updateCompanyApi, fetchContacts, createContact, updateContactApi, deleteContactApi, fetchJobSites, updateJobSite, inviteContactToPortal } from '../api/vrm'
 import { useAuth } from '../components/AuthProvider'
 
 export default function Companies() {
@@ -20,6 +20,7 @@ export default function Companies() {
     const [inviting, setInviting] = useState(null) // contactId currently being invited
     const [inviteResult, setInviteResult] = useState(null) // { username, temp_password, sites_linked }
     const [editingContact, setEditingContact] = useState(null)
+    const [linkingSiteForCompany, setLinkingSiteForCompany] = useState(null)
 
     const loadCompanies = useCallback(async () => {
         try {
@@ -149,6 +150,27 @@ export default function Companies() {
             alert(msg)
         } finally {
             setInviting(null)
+        }
+    }
+
+    const handleLinkSite = async (siteId, companyId) => {
+        try {
+            await updateJobSite(siteId, { company_id: companyId })
+            setLinkingSiteForCompany(null)
+            loadJobSites()
+            loadCompanies()
+        } catch (err) {
+            console.error('Failed to link site:', err)
+        }
+    }
+
+    const handleUnlinkSite = async (siteId) => {
+        try {
+            await updateJobSite(siteId, { company_id: null })
+            loadJobSites()
+            loadCompanies()
+        } catch (err) {
+            console.error('Failed to unlink site:', err)
         }
     }
 
@@ -311,16 +333,50 @@ export default function Companies() {
                                     <div className="company-section">
                                         <div className="company-section-header">
                                             <h4>Linked Sites</h4>
+                                            {canEdit && (
+                                                linkingSiteForCompany === company.id ? (
+                                                    <div className="link-site-picker">
+                                                        <select
+                                                            className="input"
+                                                            value=""
+                                                            onChange={e => { if (e.target.value) handleLinkSite(parseInt(e.target.value), company.id) }}
+                                                        >
+                                                            <option value="">Select a site...</option>
+                                                            {jobSites
+                                                                .filter(js => !js.company_id)
+                                                                .sort((a, b) => a.name.localeCompare(b.name))
+                                                                .map(js => (
+                                                                    <option key={js.id} value={js.id}>{js.name}</option>
+                                                                ))
+                                                            }
+                                                        </select>
+                                                        <button className="btn btn-sm btn-ghost" onClick={() => setLinkingSiteForCompany(null)}>Cancel</button>
+                                                    </div>
+                                                ) : (
+                                                    <button className="btn btn-sm btn-ghost" onClick={() => setLinkingSiteForCompany(company.id)}>
+                                                        + Link Site
+                                                    </button>
+                                                )
+                                            )}
                                         </div>
                                         {companySites.length === 0 ? (
                                             <p className="company-empty">No sites linked to this company yet.</p>
                                         ) : (
                                             <div className="sites-mini-list">
                                                 {companySites.map(s => (
-                                                    <div key={s.id} className="site-mini-card" onClick={() => window.location.hash = `/site/${s.id}`}>
-                                                        <span className="site-mini-name">{s.name}</span>
+                                                    <div key={s.id} className="site-mini-card">
+                                                        <span className="site-mini-name" onClick={() => window.location.hash = `/site/${s.id}`} style={{ cursor: 'pointer' }}>{s.name}</span>
                                                         <span className={`site-mini-status site-status-${s.status}`}>{s.status}</span>
                                                         <span className="site-mini-trailers">{s.trailer_count || 0} trailers</span>
+                                                        {canEdit && (
+                                                            <button
+                                                                className="site-mini-unlink"
+                                                                onClick={() => handleUnlinkSite(s.id)}
+                                                                title="Unlink from company"
+                                                            >
+                                                                &times;
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 ))}
                                             </div>

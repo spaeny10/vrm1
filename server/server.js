@@ -13,7 +13,7 @@ import {
     getRetentionDays, setRetentionDays, getSetting, setSetting, pruneOldData, getDbStats,
     insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
     upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding,
-    getJobSites, getJobSite, getJobSiteByPhone, insertJobSite, updateJobSite,
+    getJobSites, getJobSite, getJobSiteByPhone, insertJobSite, updateJobSite, deleteJobSite,
     getSiteNotes, insertSiteNote, getAllSiteNotes,
     insertAuditLog, getAuditLog,
     getCompanies, getCompany, insertCompany, updateCompany,
@@ -1759,6 +1759,20 @@ app.put('/api/job-sites/:id', requireRole('admin', 'technician'), async (req, re
         const actor = req.user ? req.user.display_name : 'system';
         insertAuditLog('site', siteId, 'site_updated', { fields: Object.keys(req.body) }, actor).catch(() => { });
         res.json({ success: true, job_site: updated });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// DELETE job site (admin only — unassigns trailers, cascades notes)
+app.delete('/api/job-sites/:id', requireRole('admin'), async (req, res) => {
+    try {
+        const siteId = parseInt(req.params.id);
+        const deleted = await deleteJobSite(siteId);
+        if (!deleted) return res.status(404).json({ success: false, error: 'Job site not found' });
+        const actor = req.user ? req.user.display_name : 'system';
+        insertAuditLog('site', siteId, 'site_deleted', { name: deleted.name }, actor).catch(() => { });
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
