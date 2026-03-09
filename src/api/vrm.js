@@ -353,6 +353,23 @@ export async function fetchUnlinkedIc2Devices() {
     return apiFetch(`${API_BASE}/gps/unlinked-devices`);
 }
 
+export async function fetchGpsChanges() {
+    return apiFetch(`${API_BASE}/gps-changes`);
+}
+
+export async function approveGpsChange(suggestionId, createNewSiteName = null) {
+    return apiFetch(`${API_BASE}/gps-changes/${suggestionId}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ create_new_site_name: createNewSiteName })
+    });
+}
+
+export async function rejectGpsChange(suggestionId) {
+    return apiFetch(`${API_BASE}/gps-changes/${suggestionId}/reject`, {
+        method: 'POST'
+    });
+}
+
 export async function linkIc2Device(siteId, ic2DeviceId) {
     return apiFetch(`${API_BASE}/gps/link-device`, {
         method: 'POST',

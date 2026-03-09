@@ -240,7 +240,6 @@ let bandwidthLoggedOnce = false;
 
 // GPS cache: siteId -> { latitude, longitude, updatedAt }
 const gpsCache = new Map();
-let initialClusteringDone = false;
 
 // Trailer to job site mapping: siteId -> job_site_name
 const trailerJobSiteMap = new Map();
@@ -1873,6 +1872,99 @@ app.get('/api/communications', requireRole('admin'), async (req, res) => {
 });
 
 // ============================================================
+// GPS Change Suggestions
+// ============================================================
+
+// GET pending GPS change suggestions
+app.get('/api/gps-changes', requireAuth, requireRole(['admin', 'technician']), async (req, res) => {
+    try {
+        const suggestions = await getGpsSuggestions('pending');
+        res.json({ suggestions });
+    } catch (err) {
+        console.error('Get GPS changes error:', err);
+        res.status(500).json({ error: 'Failed to fetch GPS change suggestions' });
+    }
+});
+
+// POST approve GPS change suggestion
+app.post('/api/gps-changes/:id/approve', requireAuth, requireRole(['admin', 'technician']), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { create_new_site_name } = req.body;
+
+        // Get suggestion
+        const suggestionResult = await query('SELECT * FROM gps_change_suggestions WHERE id = $1', [id]);
+        if (suggestionResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Suggestion not found' });
+        }
+
+        const suggestion = suggestionResult.rows[0];
+        if (suggestion.status !== 'pending') {
+            return res.status(400).json({ error: 'Suggestion already resolved' });
+        }
+
+        let targetJobSiteId = suggestion.suggested_job_site_id;
+
+        // If creating new site, create it first
+        if (suggestion.suggestion_type === 'create_new') {
+            const siteName = create_new_site_name || `New Site ${new Date().toISOString().slice(0, 10)}`;
+            const newSite = await insertJobSite({
+                name: siteName,
+                latitude: suggestion.new_latitude,
+                longitude: suggestion.new_longitude,
+                address: null,
+            });
+            targetJobSiteId = newSite.id;
+        }
+
+        // Update trailer assignment
+        await upsertTrailerAssignment(
+            suggestion.site_id,
+            suggestion.site_name,
+            suggestion.new_latitude,
+            suggestion.new_longitude,
+            targetJobSiteId
+        );
+
+        // Update GPS tracking
+        await updateTrailerGps(suggestion.site_id, suggestion.new_latitude, suggestion.new_longitude);
+
+        // Mark suggestion as approved
+        await updateGpsSuggestionStatus(id, 'approved', req.user.id);
+
+        // Log to audit
+        await logAudit('gps_suggestion', id, 'approved', {
+            site_name: suggestion.site_name,
+            target_job_site_id: targetJobSiteId,
+            distance_km: suggestion.distance_km
+        }, req.user.display_name);
+
+        res.json({ success: true, target_job_site_id: targetJobSiteId });
+    } catch (err) {
+        console.error('Approve GPS change error:', err);
+        res.status(500).json({ error: 'Failed to approve GPS change' });
+    }
+});
+
+// POST reject GPS change suggestion
+app.post('/api/gps-changes/:id/reject', requireAuth, requireRole(['admin', 'technician']), async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const result = await updateGpsSuggestionStatus(id, 'rejected', req.user.id);
+
+        if (!result) {
+            return res.status(404).json({ error: 'Suggestion not found or already resolved' });
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Reject GPS change error:', err);
+        res.status(500).json({ error: 'Failed to reject GPS change' });
+    }
+});
+
+// ============================================================
 // Notifications
 // ============================================================
 app.get('/api/notifications', async (req, res) => {
@@ -3325,11 +3417,10 @@ async function pollAllSites() {
             );
         }
 
-        // Run GPS clustering on first poll (async, don't block)
-        if (dbAvailable && !initialClusteringDone && gpsCache.size > 0) {
-            initialClusteringDone = true;
-            runClustering().catch(err =>
-                console.error('  Initial clustering failed:', err.message)
+        // GPS change detection runs continuously during polling
+        if (dbAvailable && gpsCache.size > 0) {
+            detectGpsChanges().catch(err =>
+                console.error('  GPS change detection failed:', err.message)
             );
         }
 
@@ -3576,11 +3667,10 @@ async function pollIc2Devices() {
             }
         }
 
-        // Run clustering if we have GPS data and haven't clustered yet
-        if (dbAvailable && !initialClusteringDone && gpsCache.size > 0) {
-            initialClusteringDone = true;
-            runClustering().catch(err =>
-                console.error('  IC2-triggered clustering failed:', err.message)
+        // GPS change detection runs continuously during IC2 polling
+        if (dbAvailable && gpsCache.size > 0) {
+            detectGpsChanges().catch(err =>
+                console.error('  GPS change detection failed:', err.message)
             );
         }
 
@@ -3699,6 +3789,118 @@ async function checkGeofences() {
         }
     } catch (err) {
         console.error('  Geofence check error:', err.message);
+    }
+}
+
+// ============================================================
+// GPS Change Detection
+// ============================================================
+
+/**
+ * Detects significant GPS changes (>1km) and creates suggestions for reassignment.
+ * Runs during IC2 polling cycle after GPS cache is updated.
+ * Respects manual_override flag.
+ */
+async function detectGpsChanges() {
+    if (!dbAvailable) return;
+
+    try {
+        const assignments = await getTrailerAssignments();
+        const jobSites = await getJobSites();
+
+        for (const assignment of assignments) {
+            // Skip manual overrides
+            if (assignment.manual_override) continue;
+
+            // Get current GPS from cache
+            const currentGps = gpsCache.get(assignment.site_id);
+            if (!currentGps) continue;
+
+            // Get last known GPS from assignment
+            const lastLat = assignment.last_gps_lat;
+            const lastLon = assignment.last_gps_lon;
+
+            // First GPS reading or no previous data - just update
+            if (!lastLat || !lastLon) {
+                await updateTrailerGps(assignment.site_id, currentGps.latitude, currentGps.longitude);
+                continue;
+            }
+
+            // Calculate distance moved
+            const distanceMeters = haversineMeters(lastLat, lastLon, currentGps.latitude, currentGps.longitude);
+            const distanceKm = distanceMeters / 1000;
+
+            // Threshold: 1km for significant movement
+            if (distanceKm >= 1.0) {
+                // Check if suggestion already exists and is pending
+                const existing = await query(
+                    'SELECT id FROM gps_change_suggestions WHERE site_id = $1 AND status = $2',
+                    [assignment.site_id, 'pending']
+                );
+
+                if (existing.rows.length > 0) continue; // Already has pending suggestion
+
+                // Find nearest job site to new location
+                let nearestSite = null;
+                let nearestDistance = Infinity;
+
+                for (const jobSite of jobSites) {
+                    if (!jobSite.latitude || !jobSite.longitude) continue;
+                    if (jobSite.id === assignment.job_site_id) continue; // Skip current site
+
+                    const dist = haversineMeters(
+                        currentGps.latitude, currentGps.longitude,
+                        jobSite.latitude, jobSite.longitude
+                    );
+
+                    if (dist < nearestDistance) {
+                        nearestDistance = dist;
+                        nearestSite = jobSite;
+                    }
+                }
+
+                // Determine suggestion type
+                let suggestionType = 'create_new';
+                let suggestedSiteId = null;
+                let suggestedSiteName = null;
+
+                // If nearest site is within 500m, suggest reassignment
+                if (nearestSite && nearestDistance < 500) {
+                    suggestionType = 'reassign_existing';
+                    suggestedSiteId = nearestSite.id;
+                    suggestedSiteName = nearestSite.name;
+                }
+
+                // Create suggestion
+                await query(
+                    `INSERT INTO gps_change_suggestions (
+                        site_id, site_name, old_latitude, old_longitude,
+                        new_latitude, new_longitude, distance_km,
+                        current_job_site_id, current_job_site_name,
+                        suggested_job_site_id, suggested_job_site_name,
+                        suggestion_type
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+                    [
+                        assignment.site_id,
+                        assignment.site_name,
+                        lastLat,
+                        lastLon,
+                        currentGps.latitude,
+                        currentGps.longitude,
+                        distanceKm,
+                        assignment.job_site_id,
+                        jobSites.find(js => js.id === assignment.job_site_id)?.name || null,
+                        suggestedSiteId,
+                        suggestedSiteName,
+                        suggestionType
+                    ]
+                );
+
+                console.log(`  📍 GPS change detected: ${assignment.site_name} moved ${distanceKm.toFixed(2)}km`);
+            }
+        }
+    } catch (err) {
+        console.error('  GPS change detection error:', err.message);
     }
 }
 

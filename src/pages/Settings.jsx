@@ -2,7 +2,7 @@
 import { Link } from 'react-router-dom'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings, fetchCommunications } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings, fetchCommunications, fetchGpsChanges, approveGpsChange, rejectGpsChange } from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
 import { useAuth } from '../components/AuthProvider'
 
@@ -623,6 +623,17 @@ function SolarScoreTuningSection({ settings, toast, refetchSettings }) {
     )
 }
 
+function SettingsTabIcon({ type }) {
+    const icons = {
+        user: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+        map: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>,
+        people: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+        bell: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
+        database: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>,
+    }
+    return icons[type] || null
+}
+
 function Settings() {
     const { user, updateDisplayName } = useAuth()
     const canEdit = user?.role === 'admin' || user?.role === 'technician'
@@ -643,12 +654,32 @@ function Settings() {
     const [activeDrag, setActiveDrag] = useState(null)
     const [overJobSiteId, setOverJobSiteId] = useState(null)
 
+    // Tab navigation
+    const [activeTab, setActiveTab] = useState(() => {
+        return localStorage.getItem('vrm_settings_tab') || 'general'
+    })
+    const handleTabChange = (tab) => {
+        setActiveTab(tab)
+        localStorage.setItem('vrm_settings_tab', tab)
+    }
+    const settingsTabs = [
+        { id: 'general', label: 'General', icon: 'user' },
+        { id: 'sites', label: 'Sites & GPS', icon: 'map' },
+        ...(isAdmin ? [{ id: 'users', label: 'Users', icon: 'people' }] : []),
+        ...(isAdmin ? [{ id: 'notifications', label: 'Notifications', icon: 'bell' }] : []),
+        { id: 'system', label: 'System', icon: 'database' },
+    ]
+
     // GPS Verification state
     const [gpsTrailers, setGpsTrailers] = useState(null)
     const [gpsLoading, setGpsLoading] = useState(false)
     const [gpsRefreshing, setGpsRefreshing] = useState(false)
     const [unlinkedDevices, setUnlinkedDevices] = useState([])
     const [linkingTrailerId, setLinkingTrailerId] = useState(null)
+
+    // GPS Change Suggestions state
+    const [gpsSuggestions, setGpsSuggestions] = useState([])
+    const [loadingSuggestions, setLoadingSuggestions] = useState(false)
 
     const loadGpsData = async () => {
         setGpsLoading(true)
@@ -686,6 +717,51 @@ function Settings() {
             await loadGpsData()
         } catch (err) {
             toast.error('Error linking device: ' + err.message)
+        }
+    }
+
+    // GPS Change Suggestions handlers
+    const loadGpsSuggestions = async () => {
+        try {
+            const data = await fetchGpsChanges()
+            setGpsSuggestions(data.suggestions || [])
+        } catch (err) {
+            toast.error('Error loading GPS suggestions: ' + err.message)
+        }
+    }
+
+    const handleApproveSuggestion = async (suggestionId, suggestionType) => {
+        let siteName = null
+        if (suggestionType === 'create_new') {
+            siteName = prompt('Enter name for new site:')
+            if (!siteName) return
+        }
+
+        setLoadingSuggestions(true)
+        try {
+            await approveGpsChange(suggestionId, siteName)
+            toast.success('GPS change approved successfully!')
+            await loadGpsSuggestions()
+            refetchJobSites()
+        } catch (err) {
+            toast.error('Error approving GPS change: ' + err.message)
+        } finally {
+            setLoadingSuggestions(false)
+        }
+    }
+
+    const handleRejectSuggestion = async (suggestionId) => {
+        if (!confirm('Reject this GPS change suggestion? The trailer will stay at its current site.')) return
+
+        setLoadingSuggestions(true)
+        try {
+            await rejectGpsChange(suggestionId)
+            toast.success('GPS change rejected')
+            await loadGpsSuggestions()
+        } catch (err) {
+            toast.error('Error rejecting GPS change: ' + err.message)
+        } finally {
+            setLoadingSuggestions(false)
         }
     }
 
@@ -730,6 +806,16 @@ function Settings() {
     useEffect(() => {
         if (user?.role === 'admin') loadUsers()
     }, [user, loadUsers])
+
+    // Load GPS suggestions on mount for admin/technician
+    useEffect(() => {
+        if (user?.role === 'admin' || user?.role === 'technician') {
+            loadGpsSuggestions()
+            // Refresh every 5 minutes
+            const interval = setInterval(loadGpsSuggestions, 5 * 60 * 1000)
+            return () => clearInterval(interval)
+        }
+    }, [user])
 
     const handleCreateUser = async (e) => {
         e.preventDefault()
@@ -960,10 +1046,25 @@ function Settings() {
         <div className="settings-page">
             <div className="page-header">
                 <h1>Settings</h1>
-                <p className="page-subtitle">Job site management, data retention, and storage</p>
+                <p className="page-subtitle">Manage sites, users, notifications, and system configuration</p>
+            </div>
+
+            <div className="settings-tabs">
+                {settingsTabs.map(tab => (
+                    <button
+                        key={tab.id}
+                        className={`settings-tab ${activeTab === tab.id ? 'active' : ''}`}
+                        onClick={() => handleTabChange(tab.id)}
+                    >
+                        <SettingsTabIcon type={tab.icon} />
+                        <span>{tab.label}</span>
+                    </button>
+                ))}
             </div>
 
             <div className="settings-grid">
+                {/* ====== TAB: General ====== */}
+                {activeTab === 'general' && <>
                 {/* My Profile */}
                 <div className="settings-card">
                     <h2>My Profile</h2>
@@ -1008,11 +1109,27 @@ function Settings() {
                     </div>
                 </div>
 
-                {/* User Management (admin only) */}
-                {user?.role === 'admin' && (
-                    <div className="settings-card settings-card-wide">
-                        <div className="settings-card-header">
-                            <h2>User Management</h2>
+                {/* Documentation */}
+                <div className="settings-card">
+                    <h2>📚 Documentation & Help</h2>
+                    <p className="settings-desc">
+                        Complete guide to the Intelligence Analysis & Alerting System, including energy deficit detection,
+                        solar performance scoring, action queue, morning digest, and troubleshooting scenarios.
+                    </p>
+                    <div className="settings-actions">
+                        <Link to="/help" className="btn btn-primary" style={{ textDecoration: 'none' }}>
+                            📖 View Documentation
+                        </Link>
+                    </div>
+                </div>
+                </>}
+
+                {/* ====== TAB: Users ====== */}
+                {activeTab === 'users' && isAdmin && <>
+                {/* User Management */}
+                <div className="settings-card settings-card-wide">
+                    <div className="settings-card-header">
+                        <h2>User Management</h2>
                             <button
                                 className="btn btn-primary"
                                 onClick={() => setShowCreateUser(true)}
@@ -1199,28 +1316,25 @@ function Settings() {
                             </div>
                         )}
                     </div>
-                )}
 
                 {/* Customer Accounts */}
-                {isAdmin && (
-                    <CustomerAccountsSection jobSites={jobSites} toast={toast} loadUsers={loadUsers} />
-                )}
+                <CustomerAccountsSection jobSites={jobSites} toast={toast} loadUsers={loadUsers} />
+                </>}
 
+                {/* ====== TAB: Notifications ====== */}
+                {activeTab === 'notifications' && isAdmin && <>
                 {/* Communication Log */}
-                {isAdmin && (
-                    <CommunicationLogSection jobSites={jobSites} toast={toast} />
-                )}
+                <CommunicationLogSection jobSites={jobSites} toast={toast} />
 
                 {/* Email Digest Settings */}
-                {isAdmin && (
-                    <DigestSettingsSection toast={toast} />
-                )}
+                <DigestSettingsSection toast={toast} />
 
                 {/* Solar Score Tuning */}
-                {isAdmin && (
-                    <SolarScoreTuningSection settings={settings} toast={toast} refetchSettings={refetch} />
-                )}
+                <SolarScoreTuningSection settings={settings} toast={toast} refetchSettings={refetch} />
+                </>}
 
+                {/* ====== TAB: Sites & GPS ====== */}
+                {activeTab === 'sites' && <>
                 {/* Job Sites Management */}
                 <div className="settings-card settings-card-wide">
                     <div className="settings-card-header">
@@ -1349,6 +1463,83 @@ function Settings() {
                     )}
                 </div>
 
+                {/* GPS Change Suggestions */}
+                {canEdit && (
+                    <div className="settings-card">
+                        <h2>🗺️ GPS Change Suggestions</h2>
+                        <p className="settings-desc">
+                            System automatically detects when trailers move more than 1km from their last known location.
+                            Review and approve/reject suggested reassignments.
+                        </p>
+
+                        {gpsSuggestions.length === 0 ? (
+                            <p style={{ color: 'var(--text-secondary)', marginTop: '12px' }}>
+                                ✓ No pending GPS change suggestions.
+                            </p>
+                        ) : (
+                            <div className="gps-suggestions-list">
+                                {gpsSuggestions.map(suggestion => (
+                                    <div key={suggestion.id} className="gps-suggestion-card">
+                                        <div className="suggestion-header">
+                                            <div>
+                                                <strong>{suggestion.site_name}</strong>
+                                                <span className="suggestion-distance">
+                                                    📍 Moved {suggestion.distance_km.toFixed(2)} km
+                                                </span>
+                                            </div>
+                                            <span className="suggestion-date">
+                                                {new Date(suggestion.created_at).toLocaleString()}
+                                            </span>
+                                        </div>
+
+                                        <div className="suggestion-details">
+                                            <div className="suggestion-row">
+                                                <span className="label">From:</span>
+                                                <span>{suggestion.current_job_site_name || 'Unknown site'}</span>
+                                            </div>
+                                            <div className="suggestion-row">
+                                                <span className="label">To:</span>
+                                                <span>
+                                                    {suggestion.suggestion_type === 'reassign_existing'
+                                                        ? `${suggestion.suggested_job_site_name} (existing site)`
+                                                        : '🆕 New site (to be created)'}
+                                                </span>
+                                            </div>
+                                            <div className="suggestion-coords">
+                                                <div>
+                                                    <span className="label">Old GPS:</span>
+                                                    {suggestion.old_latitude?.toFixed(6)}, {suggestion.old_longitude?.toFixed(6)}
+                                                </div>
+                                                <div>
+                                                    <span className="label">New GPS:</span>
+                                                    {suggestion.new_latitude.toFixed(6)}, {suggestion.new_longitude.toFixed(6)}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="suggestion-actions">
+                                            <button
+                                                className="btn btn-success"
+                                                onClick={() => handleApproveSuggestion(suggestion.id, suggestion.suggestion_type)}
+                                                disabled={loadingSuggestions}
+                                            >
+                                                ✓ Approve
+                                            </button>
+                                            <button
+                                                className="btn btn-secondary"
+                                                onClick={() => handleRejectSuggestion(suggestion.id)}
+                                                disabled={loadingSuggestions}
+                                            >
+                                                ✗ Reject
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* GPS Verification */}
                 <div className="settings-card settings-card-wide">
                     <div className="settings-card-header">
@@ -1442,7 +1633,10 @@ function Settings() {
                         </div>
                     )}
                 </div>
+                </>}
 
+                {/* ====== TAB: System ====== */}
+                {activeTab === 'system' && <>
                 {/* Database Info */}
                 <div className="settings-card">
                     <h2>Database Status</h2>
@@ -1492,20 +1686,6 @@ function Settings() {
                     </div>
                 )}
 
-                {/* Documentation */}
-                <div className="settings-card">
-                    <h2>📚 Documentation & Help</h2>
-                    <p className="settings-desc">
-                        Complete guide to the Intelligence Analysis & Alerting System, including energy deficit detection,
-                        solar performance scoring, action queue, morning digest, and troubleshooting scenarios.
-                    </p>
-                    <div className="settings-actions">
-                        <Link to="/help" className="btn btn-primary" style={{ textDecoration: 'none' }}>
-                            📖 View Documentation
-                        </Link>
-                    </div>
-                </div>
-
                 {/* Danger Zone — admin only */}
                 {isAdmin && (
                     <div className="settings-card settings-card-danger">
@@ -1524,6 +1704,7 @@ function Settings() {
                         </div>
                     </div>
                 )}
+                </>}
             </div>
 
         </div>

@@ -145,6 +145,11 @@ export async function initDb() {
       ON trailer_assignments(ic2_device_id) WHERE ic2_device_id IS NOT NULL
     `);
 
+        // Add GPS tracking columns for change detection
+        await client.query(`ALTER TABLE trailer_assignments ADD COLUMN IF NOT EXISTS last_gps_lat DOUBLE PRECISION`);
+        await client.query(`ALTER TABLE trailer_assignments ADD COLUMN IF NOT EXISTS last_gps_lon DOUBLE PRECISION`);
+        await client.query(`ALTER TABLE trailer_assignments ADD COLUMN IF NOT EXISTS last_gps_update BIGINT`);
+
         console.log('  ✓ Job sites and trailer assignments tables ready');
 
         // Add deployment management columns to job_sites
@@ -236,9 +241,36 @@ export async function initDb() {
       )
     `);
 
+        // GPS change suggestions table for automatic relocation detection
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS gps_change_suggestions (
+        id SERIAL PRIMARY KEY,
+        site_id INTEGER NOT NULL,
+        site_name TEXT NOT NULL,
+        old_latitude DOUBLE PRECISION,
+        old_longitude DOUBLE PRECISION,
+        new_latitude DOUBLE PRECISION NOT NULL,
+        new_longitude DOUBLE PRECISION NOT NULL,
+        distance_km REAL NOT NULL,
+        current_job_site_id INTEGER REFERENCES job_sites(id),
+        current_job_site_name TEXT,
+        suggested_job_site_id INTEGER REFERENCES job_sites(id),
+        suggested_job_site_name TEXT,
+        suggestion_type TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        resolved_at BIGINT,
+        resolved_by INTEGER REFERENCES users(id)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_gps_suggestions_status ON gps_change_suggestions(status)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_gps_suggestions_site ON gps_change_suggestions(site_id)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_gps_suggestions_created ON gps_change_suggestions(created_at DESC)`);
+
         // Add company_id FK to job_sites
         await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL`);
         console.log('  ✓ Company/Contact tables ready');
+        console.log('  ✓ GPS change detection tables ready');
 
         // Auto-flag Big View HQ as headquarters
         await client.query(`UPDATE job_sites SET is_headquarters = TRUE WHERE name ILIKE '%big view hq%' AND (is_headquarters IS NULL OR is_headquarters = FALSE)`);
@@ -1378,6 +1410,51 @@ export async function getTrailersWithGps() {
          ORDER BY site_name`
     );
     return result.rows;
+}
+
+/**
+ * Updates trailer GPS tracking data (last known position)
+ * Used for GPS change detection
+ */
+export async function updateTrailerGps(siteId, latitude, longitude) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `UPDATE trailer_assignments
+         SET last_gps_lat = $2,
+             last_gps_lon = $3,
+             last_gps_update = $4
+         WHERE site_id = $1
+         RETURNING *`,
+        [siteId, latitude, longitude, Date.now()]
+    );
+    return result.rows[0] || null;
+}
+
+/**
+ * Gets GPS change suggestions filtered by status
+ */
+export async function getGpsSuggestions(status = 'pending') {
+    if (!pool) return [];
+    const result = await pool.query(
+        'SELECT * FROM gps_change_suggestions WHERE status = $1 ORDER BY created_at DESC',
+        [status]
+    );
+    return result.rows;
+}
+
+/**
+ * Updates GPS suggestion status (approve/reject)
+ */
+export async function updateGpsSuggestionStatus(suggestionId, status, resolvedBy) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `UPDATE gps_change_suggestions
+         SET status = $2, resolved_at = $3, resolved_by = $4
+         WHERE id = $1
+         RETURNING *`,
+        [suggestionId, status, Date.now(), resolvedBy]
+    );
+    return result.rows[0] || null;
 }
 
 // ============================================================

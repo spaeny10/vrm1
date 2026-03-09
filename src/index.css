@@ -9301,3 +9301,151 @@ tr:hover .btn-hq-toggle {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   transform: scale(1.05);
 }
+/* ============================================================
+   GPS Change Suggestions
+   ============================================================ */
+
+.gps-suggestions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-top: 16px;
+}
+
+.gps-suggestion-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.suggestion-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.suggestion-header strong {
+    display: block;
+    font-size: 16px;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.suggestion-distance {
+    display: inline-block;
+    background: #3498db;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    margin-left: 8px;
+}
+
+.suggestion-date {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.suggestion-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+
+.suggestion-row {
+    display: flex;
+    gap: 8px;
+}
+
+.suggestion-row .label,
+.suggestion-coords .label {
+    font-weight: 600;
+    color: var(--text-secondary);
+    min-width: 60px;
+}
+
+.suggestion-coords {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-color);
+    font-size: 13px;
+    font-family: 'Courier New', monospace;
+}
+
+.suggestion-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.suggestion-actions .btn {
+    flex: 1;
+    font-size: 14px;
+}
+
+/* ============================================================
+   Settings Tab Navigation
+   ============================================================ */
+
+.settings-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.settings-tab {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+    margin-bottom: -1px;
+}
+
+.settings-tab:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.settings-tab.active {
+    color: #3498db;
+    border-bottom-color: #3498db;
+}
+
+.settings-tab svg {
+    flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+    .settings-tabs {
+        gap: 0;
+    }
+    .settings-tab {
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+    .settings-tab span {
+        display: none;
+    }
+}
