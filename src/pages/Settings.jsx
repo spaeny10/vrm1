@@ -1,4 +1,4 @@
-import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
+﻿import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
@@ -1237,21 +1237,16 @@ function Settings() {
                     </div>
                     <p className="settings-desc">
                         Manage construction sites. Trailers are automatically grouped by GPS proximity (300m threshold).
-                        Click a name to rename. Expand a site to reassign trailers via dropdown or drag-and-drop.
+                        Click a name to rename. Use the Trailer Board below to drag trailers between sites.
                     </p>
                     {sortedJobSites.length > 0 ? (
-                        <DndContext
-                            sensors={sensors}
-                            onDragStart={handleDragStart}
-                            onDragOver={handleDragOver}
-                            onDragEnd={handleDragEnd}
-                        >
+                        <>
+                            {/* Site Management Table */}
                             <div className="jobsite-mgmt-table-wrapper">
                                 <table className="jobsite-mgmt-table">
                                     <thead>
                                         <tr>
                                             <th>Name</th>
-                                            <th>Trailers</th>
                                             <th>Status</th>
                                             <th>Delivery</th>
                                             <th>Active</th>
@@ -1262,169 +1257,91 @@ function Settings() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {sortedJobSites.map(js => {
-                                            const isExpanded = expandedSite === js.id
-                                            const trailers = js.trailers || []
-                                            const isDropTarget = overJobSiteId === js.id && activeDrag?.fromJobSiteId !== js.id
-                                            return (
-                                                <Fragment key={js.id}>
-                                                    <DroppableJobSiteRow jobSiteId={js.id} isOver={isDropTarget}>
-                                                        <td className={`jobsite-mgmt-name jobsite-mgmt-${js.status}`}>
-                                                            {editingSiteId === js.id ? (
-                                                                <div className="inline-edit-compact">
-                                                                    <input
-                                                                        type="text"
-                                                                        value={editName}
-                                                                        onChange={e => setEditName(e.target.value)}
-                                                                        onKeyDown={e => {
-                                                                            if (e.key === 'Enter') handleSaveSiteName(js.id)
-                                                                            if (e.key === 'Escape') setEditingSiteId(null)
-                                                                        }}
-                                                                        autoFocus
-                                                                    />
-                                                                    <button onClick={() => handleSaveSiteName(js.id)} className="btn btn-sm">Save</button>
-                                                                    <button onClick={() => setEditingSiteId(null)} className="btn btn-sm btn-ghost">Cancel</button>
-                                                                </div>
-                                                            ) : (
-                                                                <span
-                                                                    className={canEdit ? 'clickable-name' : ''}
-                                                                    onClick={canEdit ? () => { setEditingSiteId(js.id); setEditName(js.name) } : undefined}
-                                                                    title={canEdit ? 'Click to rename' : undefined}
-                                                                >
-                                                                    {js.name}
-                                                                </span>
-                                                            )}
-                                                            {js.is_headquarters && <span className="hq-badge">HQ</span>}
-                                                            {!js.is_headquarters && user?.role === 'admin' && (
-                                                                <button
-                                                                    className="btn-hq-toggle"
-                                                                    onClick={() => handleToggleHq(js.id, js.is_headquarters)}
-                                                                    title="Mark as headquarters"
-                                                                >
-                                                                    set HQ
-                                                                </button>
-                                                            )}
-                                                            {js.is_headquarters && user?.role === 'admin' && (
-                                                                <button
-                                                                    className="btn-hq-toggle"
-                                                                    onClick={() => handleToggleHq(js.id, js.is_headquarters)}
-                                                                    title="Remove headquarters flag"
-                                                                >
-                                                                    unset
-                                                                </button>
-                                                            )}
-                                                        </td>
-                                                        <td className="jobsite-mgmt-trailers">
-                                                            <span
-                                                                className="trailer-count-badge clickable"
-                                                                onClick={() => setExpandedSite(isExpanded ? null : js.id)}
-                                                                title="Click to expand trailers"
-                                                            >
-                                                                {js.trailer_count} {isExpanded ? '▾' : '▸'}
-                                                            </span>
-                                                        </td>
-                                                        <td>
-                                                            <select
-                                                                className={`status-select status-select-${js.status}`}
-                                                                value={js.status}
-                                                                onChange={e => handleStatusChange(js.id, e.target.value)}
-                                                                disabled={!canEdit}
-                                                            >
-                                                                <option value="active">Active</option>
-                                                                <option value="standby">Standby</option>
-                                                                <option value="completed">Completed</option>
-                                                            </select>
-                                                        </td>
-                                                        <td className="jobsite-mgmt-date">
-                                                            <input
-                                                                type="date"
-                                                                className="date-input" disabled={!canEdit}
-                                                                value={js.delivery_date ? js.delivery_date.split('T')[0] : ''}
-                                                                onChange={e => handleDateChange(js.id, 'delivery_date', e.target.value)}
-                                                            />
-                                                        </td>
-                                                        <td className="jobsite-mgmt-date">
-                                                            <input
-                                                                type="date"
-                                                                className="date-input" disabled={!canEdit}
-                                                                value={js.active_date ? js.active_date.split('T')[0] : ''}
-                                                                onChange={e => handleDateChange(js.id, 'active_date', e.target.value)}
-                                                            />
-                                                        </td>
-                                                        <td className="jobsite-mgmt-date">
-                                                            <input
-                                                                type="date"
-                                                                className="date-input" disabled={!canEdit}
-                                                                value={js.calloff_date ? js.calloff_date.split('T')[0] : ''}
-                                                                onChange={e => handleDateChange(js.id, 'calloff_date', e.target.value)}
-                                                            />
-                                                        </td>
-                                                        <td className="jobsite-mgmt-date">
-                                                            <input
-                                                                type="date"
-                                                                className="date-input" disabled={!canEdit}
-                                                                value={js.pickup_date ? js.pickup_date.split('T')[0] : ''}
-                                                                onChange={e => handleDateChange(js.id, 'pickup_date', e.target.value)}
-                                                            />
-                                                        </td>
-                                                        <td className="jobsite-mgmt-date">
-                                                            <input
-                                                                type="number"
-                                                                className="date-input"
-                                                                style={{ width: 80 }}
-                                                                disabled={!canEdit}
-                                                                min={100}
-                                                                max={5000}
-                                                                step={100}
-                                                                value={js.geofence_radius_m || 500}
-                                                                onChange={e => {
-                                                                    const val = parseInt(e.target.value)
-                                                                    if (!isNaN(val) && val >= 100) {
-                                                                        updateJobSite(js.id, { geofence_radius_m: val })
-                                                                            .then(() => refetchJobSites())
-                                                                    }
-                                                                }}
-                                                            />
-                                                            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>m</span>
-                                                        </td>
-                                                        <td className="jobsite-mgmt-address">
-                                                            {js.address || '—'}
-                                                        </td>
-                                                    </DroppableJobSiteRow>
-                                                    {isExpanded && trailers.map(t => (
-                                                        <DraggableTrailerRow key={t.site_id} trailer={t} jobSite={js}>
-                                                            <td className="trailer-assign-name">⠿ {t.site_name}</td>
-                                                            <td colSpan={8}>
-                                                                <select
-                                                                    className="reassign-select"
-                                                                    value={js.id}
-                                                                    onChange={e => handleReassignTrailer(t.site_id, parseInt(e.target.value))}
-                                                                    onClick={e => e.stopPropagation()}
-                                                                    disabled={!canEdit}
-                                                                >
-                                                                    {sortedJobSites.map(target => (
-                                                                        <option key={target.id} value={target.id}>
-                                                                            {target.name}
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                            </td>
-                                                        </DraggableTrailerRow>
-                                                    ))}
-                                                </Fragment>
-                                            )
-                                        })}
+                                        {sortedJobSites.map(js => (
+                                            <tr key={js.id} className="jobsite-mgmt-row">
+                                                <td className={`jobsite-mgmt-name jobsite-mgmt-${js.status}`}>
+                                                    {editingSiteId === js.id ? (
+                                                        <div className="inline-edit-compact">
+                                                            <input type="text" value={editName} onChange={e => setEditName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSaveSiteName(js.id); if (e.key === 'Escape') setEditingSiteId(null) }} autoFocus />
+                                                            <button onClick={() => handleSaveSiteName(js.id)} className="btn btn-sm">Save</button>
+                                                            <button onClick={() => setEditingSiteId(null)} className="btn btn-sm btn-ghost">Cancel</button>
+                                                        </div>
+                                                    ) : (
+                                                        <span className={canEdit ? 'clickable-name' : ''} onClick={canEdit ? () => { setEditingSiteId(js.id); setEditName(js.name) } : undefined} title={canEdit ? 'Click to rename' : undefined}>{js.name}</span>
+                                                    )}
+                                                    {js.is_headquarters && <span className="hq-badge">HQ</span>}
+                                                    {!js.is_headquarters && user?.role === 'admin' && <button className="btn-hq-toggle" onClick={() => handleToggleHq(js.id, js.is_headquarters)} title="Mark as headquarters">set HQ</button>}
+                                                    {js.is_headquarters && user?.role === 'admin' && <button className="btn-hq-toggle" onClick={() => handleToggleHq(js.id, js.is_headquarters)} title="Remove headquarters flag">unset</button>}
+                                                </td>
+                                                <td><select className={`status-select status-select-${js.status}`} value={js.status} onChange={e => handleStatusChange(js.id, e.target.value)} disabled={!canEdit}><option value="active">Active</option><option value="standby">Standby</option><option value="completed">Completed</option></select></td>
+                                                <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.delivery_date || ''} onChange={e => updateJobSite(js.id, { delivery_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
+                                                <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.active_date || ''} onChange={e => updateJobSite(js.id, { active_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
+                                                <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.calloff_date || ''} onChange={e => updateJobSite(js.id, { calloff_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
+                                                <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.pickup_date || ''} onChange={e => updateJobSite(js.id, { pickup_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
+                                                <td><input type="number" className="geofence-input" value={js.geofence_radius_m || 300} min={100} step={50} disabled={!canEdit} onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 100) updateJobSite(js.id, { geofence_radius_m: v }).then(() => refetchJobSites()) }} /></td>
+                                                <td className="jobsite-mgmt-address">{js.address || '—'}</td>
+                                            </tr>
+                                        ))}
                                     </tbody>
                                 </table>
                             </div>
-                            <DragOverlay>
-                                {activeDrag ? (
-                                    <div className="drag-overlay-trailer">
-                                        {activeDrag.trailerName}
+
+                            {/* Trailer Board — Card-based drag-and-drop */}
+                            <div className="trailer-board-section">
+                                <div className="trailer-board-header">
+                                    <h3>🚛 Trailer Board</h3>
+                                    <span className="trailer-board-hint">Drag trailers between site cards to reassign</span>
+                                </div>
+                                <DndContext sensors={sensors} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
+                                    <div className="trailer-board-grid">
+                                        {sortedJobSites.filter(js => js.status === 'active' || (js.trailers && js.trailers.length > 0)).map(js => {
+                                            const trailers = js.trailers || []
+                                            const isDropTarget = overJobSiteId === js.id && activeDrag?.fromJobSiteId !== js.id
+                                            return (
+                                                <DroppableJobSiteRow key={js.id} jobSiteId={js.id} isOver={isDropTarget}>
+                                                    <td colSpan={99} style={{ padding: 0, border: 'none', display: 'contents' }}>
+                                                        <div className={`trailer-board-card ${isDropTarget ? 'trailer-board-card-drop' : ''}`}>
+                                                            <div className="trailer-board-card-header">
+                                                                <span className="trailer-board-card-name">{js.name}</span>
+                                                                <span className="trailer-board-card-count">{trailers.length}</span>
+                                                            </div>
+                                                            <div className="trailer-board-card-body">
+                                                                {trailers.length === 0 ? (
+                                                                    <span className="trailer-board-empty">No trailers</span>
+                                                                ) : trailers.map(t => {
+                                                                    const soc = t.battery_soc
+                                                                    const socColor = soc != null ? (soc >= 70 ? '#2ecc71' : soc >= 40 ? '#f39c12' : '#e74c3c') : 'var(--text-muted)'
+                                                                    return (
+                                                                        <DraggableTrailerRow key={t.site_id} trailer={t} jobSite={js}>
+                                                                            <td style={{ padding: 0, border: 'none' }}>
+                                                                                <div className="trailer-chip">
+                                                                                    <span className="trailer-chip-grip">⠿</span>
+                                                                                    <span className="trailer-chip-name">{t.site_name}</span>
+                                                                                    {soc != null && <span className="trailer-chip-soc" style={{ color: socColor }}>{Math.round(soc)}%</span>}
+                                                                                </div>
+                                                                            </td>
+                                                                        </DraggableTrailerRow>
+                                                                    )
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                </DroppableJobSiteRow>
+                                            )
+                                        })}
                                     </div>
-                                ) : null}
-                            </DragOverlay>
-                        </DndContext>
+                                    <DragOverlay>
+                                        {activeDrag ? (
+                                            <div className="trailer-chip trailer-chip-dragging">
+                                                <span className="trailer-chip-grip">⠿</span>
+                                                <span className="trailer-chip-name">{activeDrag.trailerName}</span>
+                                            </div>
+                                        ) : null}
+                                    </DragOverlay>
+                                </DndContext>
+                            </div>
+                        </>
+
                     ) : (
                         <div className="empty-section">
                             <p>No job sites yet. Sites are created automatically after the first VRM poll with GPS data.</p>
