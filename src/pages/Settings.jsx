@@ -1394,10 +1394,6 @@ function Settings() {
                                             <th>Name</th>
                                             <th>Company</th>
                                             <th>Status</th>
-                                            <th>Delivery</th>
-                                            <th>Active</th>
-                                            <th>Call-off</th>
-                                            <th>Pickup</th>
                                             <th>Geofence</th>
                                             <th>Address</th>
                                             {isAdmin && <th>Actions</th>}
@@ -1427,10 +1423,6 @@ function Settings() {
                                                     </select>
                                                 </td>
                                                 <td><select className={`status-select status-select-${js.status}`} value={js.status} onChange={e => handleStatusChange(js.id, e.target.value)} disabled={!canEdit}><option value="active">Active</option><option value="standby">Standby</option><option value="completed">Completed</option></select></td>
-                                                <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.delivery_date || ''} onChange={e => updateJobSite(js.id, { delivery_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
-                                                <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.active_date || ''} onChange={e => updateJobSite(js.id, { active_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
-                                                <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.calloff_date || ''} onChange={e => updateJobSite(js.id, { calloff_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
-                                                <td className="jobsite-mgmt-date"><input type="date" className="date-input" value={js.pickup_date || ''} onChange={e => updateJobSite(js.id, { pickup_date: e.target.value || null }).then(() => refetchJobSites())} disabled={!canEdit} /></td>
                                                 <td><input type="number" className="geofence-input" value={js.geofence_radius_m || 300} min={100} step={50} disabled={!canEdit} onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 100) updateJobSite(js.id, { geofence_radius_m: v }).then(() => refetchJobSites()) }} /></td>
                                                 <td className="jobsite-mgmt-address">{js.address || '—'}</td>
                                                 {isAdmin && (

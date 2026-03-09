@@ -7,7 +7,7 @@ import {
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchJobSite, fetchSiteMaintenance, fetchSiteContacts, assignContact, removeContact, fetchSiteNotes, addSiteNote, fetchCompanies, fetchContacts, fetchMentionableUsers } from '../api/vrm'
+import { fetchJobSite, updateJobSite, fetchSiteMaintenance, fetchSiteContacts, assignContact, removeContact, fetchSiteNotes, addSiteNote, fetchCompanies, fetchContacts, fetchMentionableUsers } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import Breadcrumbs from '../components/Breadcrumbs'
@@ -318,6 +318,26 @@ function JobSiteDetail() {
                 {kpis.netTotal > 0 && (
                     <KpiCard title="Network" value={`${kpis.netOnline}/${kpis.netTotal}`} color="blue" />
                 )}
+            </div>
+
+            {/* Site Lifecycle */}
+            <div className="site-lifecycle-bar">
+                <div className="lifecycle-item">
+                    <span className="lifecycle-label">Delivery</span>
+                    <input type="date" className="lifecycle-date" value={jobSite.delivery_date || ''} onChange={e => updateJobSite(jobSite.id, { delivery_date: e.target.value || null }).then(() => refetch())} disabled={!canEdit} />
+                </div>
+                <div className="lifecycle-item">
+                    <span className="lifecycle-label">Active</span>
+                    <input type="date" className="lifecycle-date" value={jobSite.active_date || ''} onChange={e => updateJobSite(jobSite.id, { active_date: e.target.value || null }).then(() => refetch())} disabled={!canEdit} />
+                </div>
+                <div className="lifecycle-item">
+                    <span className="lifecycle-label">Call-off</span>
+                    <input type="date" className="lifecycle-date" value={jobSite.calloff_date || ''} onChange={e => updateJobSite(jobSite.id, { calloff_date: e.target.value || null }).then(() => refetch())} disabled={!canEdit} />
+                </div>
+                <div className="lifecycle-item">
+                    <span className="lifecycle-label">Pickup</span>
+                    <input type="date" className="lifecycle-date" value={jobSite.pickup_date || ''} onChange={e => updateJobSite(jobSite.id, { pickup_date: e.target.value || null }).then(() => refetch())} disabled={!canEdit} />
+                </div>
             </div>
 
             {/* Assigned Contacts */}
