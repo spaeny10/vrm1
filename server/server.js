@@ -16,6 +16,9 @@ import {
     getJobSites, getJobSite, getJobSiteByPhone, insertJobSite, updateJobSite,
     getSiteNotes, insertSiteNote,
     insertAuditLog, getAuditLog,
+    getCompanies, getCompany, insertCompany, updateCompany,
+    getContacts, insertContact, updateContact, deleteContact,
+    getSiteContacts, assignContactToSite, removeContactFromSite,
     getTrailerAssignments, getTrailersByJobSite, upsertTrailerAssignment, linkIc2Device,
     assignTrailerToJobSite, getTrailersWithGps,
     getMaintenanceLogs, getMaintenanceLog, insertMaintenanceLog,
@@ -1912,6 +1915,131 @@ app.get('/api/audit-log', requireRole('admin'), async (req, res) => {
     }
 });
 
+
+// ============================================================
+// Companies API
+// ============================================================
+app.get('/api/companies', async (req, res) => {
+    try {
+        const companies = await getCompanies();
+        res.json({ success: true, companies });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/companies/:id', async (req, res) => {
+    try {
+        const company = await getCompany(parseInt(req.params.id));
+        if (!company) return res.status(404).json({ success: false, error: 'Company not found' });
+        const contacts = await getContacts(company.id);
+        const jobSites = await getJobSites();
+        const sites = jobSites.filter(js => js.company_id === company.id);
+        res.json({ success: true, company, contacts, sites });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/companies', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        const { name } = req.body;
+        if (!name?.trim()) return res.status(400).json({ success: false, error: 'Company name is required' });
+        const created = await insertCompany(req.body);
+        const actor = req.user ? req.user.display_name : 'system';
+        insertAuditLog('company', created.id, 'company_created', { name: created.name }, actor).catch(() => { });
+        res.status(201).json({ success: true, company: created });
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ success: false, error: 'A company with that name already exists' });
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/companies/:id', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        const updated = await updateCompany(parseInt(req.params.id), req.body);
+        if (!updated) return res.status(404).json({ success: false, error: 'Company not found' });
+        const actor = req.user ? req.user.display_name : 'system';
+        insertAuditLog('company', updated.id, 'company_updated', { fields: Object.keys(req.body) }, actor).catch(() => { });
+        res.json({ success: true, company: updated });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Contacts API
+// ============================================================
+app.get('/api/companies/:id/contacts', async (req, res) => {
+    try {
+        const contacts = await getContacts(parseInt(req.params.id));
+        res.json({ success: true, contacts });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/companies/:id/contacts', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        const { name } = req.body;
+        if (!name?.trim()) return res.status(400).json({ success: false, error: 'Contact name is required' });
+        const created = await insertContact({ ...req.body, company_id: parseInt(req.params.id) });
+        res.status(201).json({ success: true, contact: created });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/contacts/:id', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        const updated = await updateContact(parseInt(req.params.id), req.body);
+        if (!updated) return res.status(404).json({ success: false, error: 'Contact not found' });
+        res.json({ success: true, contact: updated });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.delete('/api/contacts/:id', requireRole('admin'), async (req, res) => {
+    try {
+        await deleteContact(parseInt(req.params.id));
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Site-Contact Assignments API
+// ============================================================
+app.get('/api/job-sites/:id/contacts', async (req, res) => {
+    try {
+        const contacts = await getSiteContacts(parseInt(req.params.id));
+        res.json({ success: true, contacts });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/job-sites/:id/contacts', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        const { contact_id, role } = req.body;
+        if (!contact_id) return res.status(400).json({ success: false, error: 'contact_id is required' });
+        const result = await assignContactToSite(parseInt(req.params.id), contact_id, role || 'on-site');
+        res.status(201).json({ success: true, assignment: result });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.delete('/api/job-sites/:siteId/contacts/:contactId', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        await removeContactFromSite(parseInt(req.params.siteId), parseInt(req.params.contactId));
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 // POST manually assign a trailer to a job site
 app.post('/api/job-sites/:id/assign', requireRole('admin', 'technician'), async (req, res) => {

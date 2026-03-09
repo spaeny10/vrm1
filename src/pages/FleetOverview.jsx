@@ -1,7 +1,7 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchTechStatus, fetchDeploymentSummary, createJobSite } from '../api/vrm'
+import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchTechStatus, fetchDeploymentSummary, createJobSite, fetchCompanies } from '../api/vrm'
 import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
 import QueryBar from '../components/QueryBar'
@@ -27,8 +27,16 @@ function FleetOverview() {
     const [techStatusFilter, setTechStatusFilter] = useState(null) // null | 'good' | 'watch' | 'attention'
     const [generatingPdf, setGeneratingPdf] = useState(false)
     const [showAddSiteModal, setShowAddSiteModal] = useState(false)
-    const [newSite, setNewSite] = useState({ name: '', address: '', customer_name: '', primary_contact_name: '', primary_contact_phone: '', primary_contact_email: '' })
+    const [newSite, setNewSite] = useState({ name: '', address: '', company_id: '' })
     const [addingSite, setAddingSite] = useState(false)
+    const [companiesList, setCompaniesList] = useState([])
+
+    // Load companies when Add Site modal opens
+    useEffect(() => {
+        if (showAddSiteModal) {
+            fetchCompanies().then(d => setCompaniesList(d?.companies || [])).catch(() => { })
+        }
+    }, [showAddSiteModal])
 
     // Action queue data
     const fetchActionQueueFn = useCallback(() => fetchActionQueue(), [])
@@ -823,9 +831,12 @@ function FleetOverview() {
                             if (!newSite.name.trim()) return
                             setAddingSite(true)
                             try {
-                                await createJobSite(newSite)
+                                const payload = { ...newSite }
+                                if (payload.company_id) payload.company_id = parseInt(payload.company_id)
+                                else delete payload.company_id
+                                await createJobSite(payload)
                                 setShowAddSiteModal(false)
-                                setNewSite({ name: '', address: '', customer_name: '', primary_contact_name: '', primary_contact_phone: '', primary_contact_email: '' })
+                                setNewSite({ name: '', address: '', company_id: '' })
                                 refetch()
                             } catch (err) {
                                 console.error('Failed to create site:', err)
@@ -835,33 +846,24 @@ function FleetOverview() {
                         }} style={{ padding: '20px' }}>
                             <div style={{ display: 'grid', gap: '14px' }}>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Site Name *</label>
+                                    <label className="form-label">Site Name *</label>
                                     <input className="input" required value={newSite.name} onChange={e => setNewSite(s => ({ ...s, name: e.target.value }))} placeholder="e.g. Downtown Construction" />
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Address</label>
+                                    <label className="form-label">Address</label>
                                     <input className="input" value={newSite.address} onChange={e => setNewSite(s => ({ ...s, address: e.target.value }))} placeholder="123 Main St, Kansas City, KS" />
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Customer Name</label>
-                                    <input className="input" value={newSite.customer_name} onChange={e => setNewSite(s => ({ ...s, customer_name: e.target.value }))} placeholder="ABC Construction LLC" />
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Contact Name</label>
-                                        <input className="input" value={newSite.primary_contact_name} onChange={e => setNewSite(s => ({ ...s, primary_contact_name: e.target.value }))} placeholder="John Smith" />
-                                    </div>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Contact Phone</label>
-                                        <input className="input" value={newSite.primary_contact_phone} onChange={e => setNewSite(s => ({ ...s, primary_contact_phone: e.target.value }))} placeholder="(555) 123-4567" />
-                                    </div>
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Contact Email</label>
-                                    <input className="input" type="email" value={newSite.primary_contact_email} onChange={e => setNewSite(s => ({ ...s, primary_contact_email: e.target.value }))} placeholder="john@example.com" />
+                                    <label className="form-label">Company</label>
+                                    <select className="input" value={newSite.company_id} onChange={e => setNewSite(s => ({ ...s, company_id: e.target.value }))}>
+                                        <option value="">— No company —</option>
+                                        {companiesList.map(c => (
+                                            <option key={c.id} value={c.id}>{c.name}</option>
+                                        ))}
+                                    </select>
                                 </div>
                             </div>
-                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '20px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                            <div className="modal-footer">
                                 <button type="button" className="btn btn-secondary" onClick={() => setShowAddSiteModal(false)}>Cancel</button>
                                 <button type="submit" className="btn btn-primary" disabled={!newSite.name.trim() || addingSite}>
                                     {addingSite ? 'Creating...' : 'Create Site'}

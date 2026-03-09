@@ -235,6 +235,68 @@ export async function createJobSite(data) {
     });
 }
 
+// Companies
+export async function fetchCompanies() {
+    return apiFetch(`${API_BASE}/companies`);
+}
+
+export async function fetchCompany(id) {
+    return apiFetch(`${API_BASE}/companies/${id}`);
+}
+
+export async function createCompany(data) {
+    return apiFetch(`${API_BASE}/companies`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
+export async function updateCompanyApi(id, data) {
+    return apiFetch(`${API_BASE}/companies/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+    });
+}
+
+// Contacts
+export async function fetchContacts(companyId) {
+    return apiFetch(`${API_BASE}/companies/${companyId}/contacts`);
+}
+
+export async function createContact(companyId, data) {
+    return apiFetch(`${API_BASE}/companies/${companyId}/contacts`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
+export async function updateContactApi(id, data) {
+    return apiFetch(`${API_BASE}/contacts/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+    });
+}
+
+export async function deleteContactApi(id) {
+    return apiFetch(`${API_BASE}/contacts/${id}`, { method: 'DELETE' });
+}
+
+// Site-Contact Assignments
+export async function fetchSiteContacts(siteId) {
+    return apiFetch(`${API_BASE}/job-sites/${siteId}/contacts`);
+}
+
+export async function assignContact(siteId, contactId, role) {
+    return apiFetch(`${API_BASE}/job-sites/${siteId}/contacts`, {
+        method: 'POST',
+        body: JSON.stringify({ contact_id: contactId, role }),
+    });
+}
+
+export async function removeContact(siteId, contactId) {
+    return apiFetch(`${API_BASE}/job-sites/${siteId}/contacts/${contactId}`, { method: 'DELETE' });
+}
+
 export async function assignTrailer(jobSiteId, siteId) {
     return apiFetch(`${API_BASE}/job-sites/${jobSiteId}/assign`, {
         method: 'POST',

@@ -19,6 +19,7 @@ const Settings = lazy(() => import('./pages/Settings'))
 const HelpPage = lazy(() => import('./pages/HelpPage'))
 const PortalDashboard = lazy(() => import('./pages/PortalDashboard'))
 const PortalSiteDetail = lazy(() => import('./pages/PortalSiteDetail'))
+const Companies = lazy(() => import('./pages/Companies'))
 
 function PageLoader() {
     return (
@@ -87,6 +88,7 @@ function App() {
                             <Route path="/map" element={<MapView />} />
                             <Route path="/fleet" element={<FleetDetailsPage />} />
                             <Route path="/maintenance" element={<MaintenancePage />} />
+                            <Route path="/companies" element={<Companies />} />
                             <Route path="/settings" element={<Settings />} />
                             <Route path="/help" element={<HelpPage />} />
                             <Route path="*" element={<NotFound />} />
