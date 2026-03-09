@@ -3109,6 +3109,14 @@ body {
   color: var(--text-muted);
 }
 
+.fleet-table-site {
+  cursor: pointer;
+}
+
+.fleet-table-site:hover {
+  color: var(--accent);
+}
+
 .fleet-table-company {
   display: block;
   font-size: 11px;

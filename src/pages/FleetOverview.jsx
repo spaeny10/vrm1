@@ -730,13 +730,13 @@ function FleetOverview() {
                             {(viewMode === 'sites'
                                 ? filteredJobSites.flatMap(js => (js.trailers || []).map(t => {
                                     const site = sites.find(s => s.idSite === t.site_id) || { idSite: t.site_id, name: t.site_name }
-                                    return { site, jobSiteName: js.name, companyName: js.company_name }
+                                    return { site, jobSiteName: js.name, jobSiteId: js.id, companyName: js.company_name }
                                 }))
                                 : filteredSites.map(site => {
                                     const js = jobSites.find(j => (j.trailers || []).some(t => t.site_id === site.idSite))
-                                    return { site, jobSiteName: trailerJobSiteMap[site.idSite], companyName: js?.company_name }
+                                    return { site, jobSiteName: trailerJobSiteMap[site.idSite], jobSiteId: js?.id, companyName: js?.company_name }
                                 })
-                            ).map(({ site, jobSiteName, companyName }) => {
+                            ).map(({ site, jobSiteName, jobSiteId, companyName }) => {
                                 const snap = snapshotMap[site.idSite]
                                 const pw = pepwaveMap[site.name]
                                 const grade = healthGradesMap[site.idSite]
@@ -751,7 +751,7 @@ function FleetOverview() {
                                             ) : '—'}
                                         </td>
                                         <td className="fleet-table-name">{site.name}</td>
-                                        <td className="fleet-table-muted">
+                                        <td className="fleet-table-muted fleet-table-site" onClick={jobSiteId ? (e) => { e.stopPropagation(); navigate(`/site/${jobSiteId}`) } : undefined}>
                                             {jobSiteName || '—'}
                                             {companyName && <span className="fleet-table-company">{companyName}</span>}
                                         </td>
