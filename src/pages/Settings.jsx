@@ -148,50 +148,91 @@ function CustomerAccountsSection({ jobSites, toast, loadUsers }) {
                 </div>
             )}
 
-            {editingSites && (
-                <div className="maint-form-overlay" onClick={() => { setEditingSites(null); setSiteSearch('') }}>
-                    <div className="maint-form-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 540 }}>
-                        <div className="maint-form-header">
-                            <h2>Assign Sites</h2>
-                            <button className="detail-close" onClick={() => { setEditingSites(null); setSiteSearch('') }}>✕</button>
-                        </div>
-                        <div style={{ padding: '12px 24px 0' }}>
-                            <input
-                                type="text"
-                                className="input"
-                                placeholder="Search sites by name, address, or UID..."
-                                value={siteSearch}
-                                onChange={e => setSiteSearch(e.target.value)}
-                                autoFocus
-                                style={{ width: '100%' }}
-                            />
-                        </div>
-                        <div style={{ padding: '8px 24px 16px', maxHeight: 380, overflowY: 'auto' }}>
-                            {jobSites
-                                .filter(js => js.status === 'active')
-                                .filter(js => {
-                                    if (!siteSearch.trim()) return true
-                                    const q = siteSearch.toLowerCase()
-                                    return js.name.toLowerCase().includes(q) ||
-                                        (js.address || '').toLowerCase().includes(q) ||
-                                        String(js.id).includes(q)
-                                })
-                                .map(js => (
-                                    <label key={js.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
-                                        <input type="checkbox" checked={selectedSites.includes(js.id)} onChange={() => toggleSite(js.id)} />
-                                        <span style={{ fontWeight: 500 }}>{js.name}</span>
-                                        <span style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.04)', padding: '1px 5px', borderRadius: 3 }}>UID {js.id}</span>
-                                        {js.address && <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 'auto', textAlign: 'right', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{js.address}</span>}
-                                    </label>
-                                ))}
-                        </div>
-                        <div className="maint-form-actions">
-                            <button className="btn btn-ghost" onClick={() => { setEditingSites(null); setSiteSearch('') }}>Cancel</button>
-                            <button className="btn btn-primary" onClick={handleSaveSites}>Save ({selectedSites.length} sites)</button>
+            {editingSites && (() => {
+                const activeSites = jobSites
+                    .filter(js => js.status === 'active')
+                    .filter(js => {
+                        if (!siteSearch.trim()) return true
+                        const q = siteSearch.toLowerCase()
+                        return js.name.toLowerCase().includes(q) ||
+                            (js.address || '').toLowerCase().includes(q) ||
+                            String(js.id).includes(q)
+                    })
+                return (
+                    <div className="modal-overlay" onClick={() => { setEditingSites(null); setSiteSearch('') }}>
+                        <div className="modal-content assign-sites-modal" onClick={e => e.stopPropagation()}>
+                            <div className="modal-header">
+                                <div>
+                                    <h2>Assign Sites</h2>
+                                    <span className="assign-sites-count">
+                                        {selectedSites.length} of {jobSites.filter(js => js.status === 'active').length} selected
+                                    </span>
+                                </div>
+                                <button className="modal-close" onClick={() => { setEditingSites(null); setSiteSearch('') }}>&times;</button>
+                            </div>
+
+                            <div className="assign-sites-search">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}>
+                                    <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                                </svg>
+                                <input
+                                    type="text"
+                                    className="input"
+                                    placeholder="Search by name, address, or UID..."
+                                    value={siteSearch}
+                                    onChange={e => setSiteSearch(e.target.value)}
+                                    autoFocus
+                                    style={{ paddingLeft: 36, width: '100%' }}
+                                />
+                            </div>
+
+                            <div className="assign-sites-list">
+                                {activeSites.length === 0 ? (
+                                    <div className="empty-section" style={{ padding: 20 }}>
+                                        <p>No sites match "{siteSearch}"</p>
+                                    </div>
+                                ) : activeSites.map(js => {
+                                    const isChecked = selectedSites.includes(js.id)
+                                    return (
+                                        <div
+                                            key={js.id}
+                                            className={`assign-site-card ${isChecked ? 'assign-site-card-selected' : ''}`}
+                                            onClick={() => toggleSite(js.id)}
+                                        >
+                                            <div className={`assign-site-check ${isChecked ? 'assign-site-check-on' : ''}`}>
+                                                {isChecked && (
+                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3">
+                                                        <polyline points="20 6 9 17 4 12" />
+                                                    </svg>
+                                                )}
+                                            </div>
+                                            <div className="assign-site-info">
+                                                <div className="assign-site-name-row">
+                                                    <span className="assign-site-name">{js.name}</span>
+                                                    <span className="assign-site-uid">UID {js.id}</span>
+                                                </div>
+                                                {js.address && (
+                                                    <span className="assign-site-address">{js.address}</span>
+                                                )}
+                                            </div>
+                                            <span className="assign-site-trailer-count">
+                                                {js.trailer_count || 0} trailer{(js.trailer_count || 0) !== 1 ? 's' : ''}
+                                            </span>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+
+                            <div className="modal-footer">
+                                <button className="btn btn-secondary" onClick={() => { setEditingSites(null); setSiteSearch('') }}>Cancel</button>
+                                <button className="btn btn-primary" onClick={handleSaveSites}>
+                                    Save Access ({selectedSites.length} site{selectedSites.length !== 1 ? 's' : ''})
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            })()}
 
             {loading ? (
                 <div className="empty-section"><p>Loading customers...</p></div>

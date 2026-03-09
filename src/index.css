@@ -8730,3 +8730,122 @@ tr:hover .btn-hq-toggle {
   padding: 2px 8px;
   border-radius: 3px;
 }
+
+/* ========== Assign Sites Dialog ========== */
+.assign-sites-modal {
+  max-width: 540px;
+  width: 100%;
+}
+
+.assign-sites-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-top: 2px;
+  display: block;
+}
+
+.assign-sites-search {
+  position: relative;
+  padding: 16px 24px 8px;
+}
+
+.assign-sites-list {
+  padding: 8px 24px 16px;
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assign-site-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.assign-site-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.assign-site-card-selected {
+  background: rgba(52, 152, 219, 0.08);
+  border-color: rgba(52, 152, 219, 0.3);
+}
+
+.assign-site-card-selected:hover {
+  background: rgba(52, 152, 219, 0.12);
+  border-color: rgba(52, 152, 219, 0.4);
+}
+
+.assign-site-check {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.assign-site-check-on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.assign-site-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.assign-site-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assign-site-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assign-site-uid {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.assign-site-address {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: block;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assign-site-trailer-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
