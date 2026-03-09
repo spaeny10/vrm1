@@ -40,6 +40,7 @@ import {
     getIssueTemplates, insertIssueTemplate, updateIssueTemplate,
     getMaintenanceCalendar,
     getCustomerSiteAccess, upsertCustomerSiteAccess,
+    updateTrailerGps, getGpsSuggestions, updateGpsSuggestionStatus, getPool,
 } from './db.js';
 import {
     generateQueryEmbedding, embedSiteSnapshots, embedPepwaveDevices,
@@ -1876,7 +1877,7 @@ app.get('/api/communications', requireRole('admin'), async (req, res) => {
 // ============================================================
 
 // GET pending GPS change suggestions
-app.get('/api/gps-changes', requireAuth, requireRole(['admin', 'technician']), async (req, res) => {
+app.get('/api/gps-changes', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const suggestions = await getGpsSuggestions('pending');
         res.json({ suggestions });
@@ -1887,13 +1888,13 @@ app.get('/api/gps-changes', requireAuth, requireRole(['admin', 'technician']), a
 });
 
 // POST approve GPS change suggestion
-app.post('/api/gps-changes/:id/approve', requireAuth, requireRole(['admin', 'technician']), async (req, res) => {
+app.post('/api/gps-changes/:id/approve', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const { id } = req.params;
         const { create_new_site_name } = req.body;
 
         // Get suggestion
-        const suggestionResult = await query('SELECT * FROM gps_change_suggestions WHERE id = $1', [id]);
+        const suggestionResult = await getPool().query('SELECT * FROM gps_change_suggestions WHERE id = $1', [id]);
         if (suggestionResult.rows.length === 0) {
             return res.status(404).json({ error: 'Suggestion not found' });
         }
@@ -1933,7 +1934,7 @@ app.post('/api/gps-changes/:id/approve', requireAuth, requireRole(['admin', 'tec
         await updateGpsSuggestionStatus(id, 'approved', req.user.id);
 
         // Log to audit
-        await logAudit('gps_suggestion', id, 'approved', {
+        await insertAuditLog('gps_suggestion', id, 'approved', {
             site_name: suggestion.site_name,
             target_job_site_id: targetJobSiteId,
             distance_km: suggestion.distance_km
@@ -1947,7 +1948,7 @@ app.post('/api/gps-changes/:id/approve', requireAuth, requireRole(['admin', 'tec
 });
 
 // POST reject GPS change suggestion
-app.post('/api/gps-changes/:id/reject', requireAuth, requireRole(['admin', 'technician']), async (req, res) => {
+app.post('/api/gps-changes/:id/reject', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -3833,7 +3834,7 @@ async function detectGpsChanges() {
             // Threshold: 1km for significant movement
             if (distanceKm >= 1.0) {
                 // Check if suggestion already exists and is pending
-                const existing = await query(
+                const existing = await getPool().query(
                     'SELECT id FROM gps_change_suggestions WHERE site_id = $1 AND status = $2',
                     [assignment.site_id, 'pending']
                 );
@@ -3872,7 +3873,7 @@ async function detectGpsChanges() {
                 }
 
                 // Create suggestion
-                await query(
+                await getPool().query(
                     `INSERT INTO gps_change_suggestions (
                         site_id, site_name, old_latitude, old_longitude,
                         new_latitude, new_longitude, distance_km,
