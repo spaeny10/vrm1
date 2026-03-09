@@ -119,6 +119,15 @@ function TrailerDetail() {
     // Parse diagnostics
     const records = diagData?.records || [];
 
+    // Extract real VRM timestamp (when data was last collected by the Cerbo)
+    const vrmLastUpdated = useMemo(() => {
+        let latest = 0
+        for (const r of records) {
+            if (r.timestamp && r.timestamp > latest) latest = r.timestamp
+        }
+        return latest > 0 ? latest * 1000 : null  // VRM uses Unix seconds, convert to ms
+    }, [records])
+
     // Find matching Pepwave device by site name (MUST be before useEffect that uses it)
     // We need the site name — get it from the diagnostics data or system data
     const siteName = useMemo(() => {
@@ -353,7 +362,7 @@ function TrailerDetail() {
                         {parentJobSite && <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: '0.7em', marginLeft: 10 }}>({parentJobSite.name})</span>}
                     </h1>
                     <button className="btn btn-secondary btn-sm" onClick={() => setShowReport(true)}>Export Report</button>
-                    <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
+                    <DataFreshness lastUpdated={vrmLastUpdated || lastUpdated} refetch={refetch} />
                 </div>
             </div>
 

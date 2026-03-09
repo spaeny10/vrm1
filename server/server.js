@@ -259,8 +259,13 @@ const consumptionAccumulator = new Map();
 // excluded from energy/solar/battery KPIs.
 function hasVrmData(snapshot) {
     if (!snapshot) return false;
-    return snapshot.battery_voltage != null || snapshot.solar_watts != null
+    // Must have actual data fields
+    const hasData = snapshot.battery_voltage != null || snapshot.solar_watts != null
         || (snapshot.battery_soc != null && snapshot.battery_soc > 0);
+    if (!hasData) return false;
+    // If we have a VRM timestamp, check staleness (>30 min = stale)
+    if (snapshot.vrm_timestamp && (Date.now() - snapshot.vrm_timestamp) > VRM_STALE_MS) return false;
+    return true;
 }
 
 // Trailer Hardware Specifications
@@ -1705,20 +1710,22 @@ app.get('/api/job-sites', async (req, res) => {
                     const snap = snapshotCache.get(t.site_id);
                     const pw = pepwaveCache.get(t.site_name);
                     const isIc2Only = t.site_id < 0;
+                    const fresh = hasVrmData(snap);
                     return {
                         site_id: t.site_id,
                         site_name: t.site_name,
-                        battery_soc: snap?.battery_soc ?? null,
-                        solar_watts: snap?.solar_watts ?? null,
-                        solar_yield_today: snap?.solar_yield_today ?? null,
-                        charge_state: snap?.charge_state ?? null,
-                        online: isIc2Only ? (pw?.online ?? false) : (hasVrmData(snap) || pw?.online || false),
+                        battery_soc: fresh ? (snap?.battery_soc ?? null) : null,
+                        solar_watts: fresh ? (snap?.solar_watts ?? null) : null,
+                        solar_yield_today: fresh ? (snap?.solar_yield_today ?? null) : null,
+                        charge_state: fresh ? (snap?.charge_state ?? null) : null,
+                        online: isIc2Only ? (pw?.online ?? false) : (fresh || pw?.online || false),
                         ic2_only: isIc2Only,
                         network_online: pw?.online ?? false,
-                        dc_load_watts: snap?.dc_load_watts ?? null,
-                        alarm_reason: snap?.alarm_reason ?? null,
-                        error_code: snap?.error_code ?? null,
-                        inverter_mode: snap?.inverter_mode ?? null,
+                        dc_load_watts: fresh ? (snap?.dc_load_watts ?? null) : null,
+                        alarm_reason: fresh ? (snap?.alarm_reason ?? null) : null,
+                        error_code: fresh ? (snap?.error_code ?? null) : null,
+                        inverter_mode: fresh ? (snap?.inverter_mode ?? null) : null,
+                        vrm_timestamp: snap?.vrm_timestamp ?? null,
                     };
                 }),
             };
@@ -3240,6 +3247,18 @@ function extractDiagValue(records, code) {
     return isNaN(num) ? val : num;
 }
 
+// Extract the most recent VRM record timestamp (Unix seconds → ms)
+function extractVrmTimestamp(records) {
+    let latest = 0;
+    for (const r of records) {
+        if (r.timestamp && r.timestamp > latest) latest = r.timestamp;
+    }
+    return latest > 0 ? latest * 1000 : null;  // convert to ms
+}
+
+// VRM data staleness threshold (30 minutes)
+const VRM_STALE_MS = 30 * 60 * 1000;
+
 // --- Background polling: VRM ---
 let isPolling = false;
 
@@ -3314,10 +3333,13 @@ async function pollAllSites() {
                         }
                     }
 
+                    const vrmTs = extractVrmTimestamp(records);
+
                     const snapshot = {
                         site_id: site.idSite,
                         site_name: site.name,
                         timestamp: Date.now(),
+                        vrm_timestamp: vrmTs,
                         battery_soc: extractDiagValue(records, 'SOC') ?? extractDiagValue(records, 'bs'),
                         battery_voltage: batteryVoltage,
                         battery_current: extractDiagValue(records, 'I') ?? extractDiagValue(records, 'bc'),

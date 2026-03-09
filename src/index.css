@@ -4645,6 +4645,14 @@ tr:hover .btn-hq-toggle {
   flex-shrink: 0;
 }
 
+.freshness-dot-stale {
+  background: #e67e22;
+}
+
+.freshness-stale .freshness-text {
+  color: #e67e22;
+}
+
 .freshness-pulse .freshness-dot {
   animation: freshness-pulse-anim 1s ease-out;
 }

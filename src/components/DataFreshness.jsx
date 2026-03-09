@@ -6,7 +6,9 @@ function formatAgo(ts) {
     if (diff < 10) return 'just now'
     if (diff < 60) return `${diff}s ago`
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-    return `${Math.floor(diff / 3600)}h ago`
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+    if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`
+    return `${Math.floor(diff / 2592000)}mo ago`
 }
 
 export default function DataFreshness({ lastUpdated, refetch }) {
@@ -22,6 +24,7 @@ export default function DataFreshness({ lastUpdated, refetch }) {
 
     const ago = formatAgo(lastUpdated)
     const isRefreshing = refreshing || Date.now() - lastUpdated < 2000
+    const isStale = Date.now() - lastUpdated > 30 * 60 * 1000  // >30 min
 
     const handleRefresh = async () => {
         if (!refetch || refreshing) return
@@ -34,8 +37,8 @@ export default function DataFreshness({ lastUpdated, refetch }) {
     }
 
     return (
-        <div className={`data-freshness ${isRefreshing ? 'freshness-pulse' : ''}`}>
-            <span className="freshness-dot" />
+        <div className={`data-freshness ${isRefreshing ? 'freshness-pulse' : ''} ${isStale ? 'freshness-stale' : ''}`}>
+            <span className={`freshness-dot ${isStale ? 'freshness-dot-stale' : ''}`} />
             <span className="freshness-text">Updated {ago}</span>
             {refetch && (
                 <button
