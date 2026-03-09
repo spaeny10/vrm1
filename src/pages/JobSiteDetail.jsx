@@ -238,6 +238,9 @@ function JobSiteDetail() {
                         <span className={`jobsite-status-badge jobsite-status-${jobSite.status}`}>
                             {jobSite.status}
                         </span>
+                        <span style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.04)', padding: '2px 6px', borderRadius: 3 }}>
+                            UID {jobSite.id}
+                        </span>
                         <span className="detail-trailer-count">
                             {trailers.length} trailer{trailers.length !== 1 ? 's' : ''}
                         </span>

@@ -44,6 +44,7 @@ function CustomerAccountsSection({ jobSites, toast, loadUsers }) {
     const [creating, setCreating] = useState(false)
     const [editingSites, setEditingSites] = useState(null) // userId
     const [selectedSites, setSelectedSites] = useState([])
+    const [siteSearch, setSiteSearch] = useState('')
 
     const loadCustomers = useCallback(async () => {
         setLoading(true)
@@ -148,23 +149,44 @@ function CustomerAccountsSection({ jobSites, toast, loadUsers }) {
             )}
 
             {editingSites && (
-                <div className="maint-form-overlay" onClick={() => setEditingSites(null)}>
-                    <div className="maint-form-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
+                <div className="maint-form-overlay" onClick={() => { setEditingSites(null); setSiteSearch('') }}>
+                    <div className="maint-form-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 540 }}>
                         <div className="maint-form-header">
                             <h2>Assign Sites</h2>
-                            <button className="detail-close" onClick={() => setEditingSites(null)}>✕</button>
+                            <button className="detail-close" onClick={() => { setEditingSites(null); setSiteSearch('') }}>✕</button>
                         </div>
-                        <div style={{ padding: '16px 24px', maxHeight: 400, overflowY: 'auto' }}>
-                            {jobSites.filter(js => js.status === 'active').map(js => (
-                                <label key={js.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
-                                    <input type="checkbox" checked={selectedSites.includes(js.id)} onChange={() => toggleSite(js.id)} />
-                                    <span>{js.name}</span>
-                                    {js.address && <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 'auto' }}>{js.address}</span>}
-                                </label>
-                            ))}
+                        <div style={{ padding: '12px 24px 0' }}>
+                            <input
+                                type="text"
+                                className="input"
+                                placeholder="Search sites by name, address, or UID..."
+                                value={siteSearch}
+                                onChange={e => setSiteSearch(e.target.value)}
+                                autoFocus
+                                style={{ width: '100%' }}
+                            />
+                        </div>
+                        <div style={{ padding: '8px 24px 16px', maxHeight: 380, overflowY: 'auto' }}>
+                            {jobSites
+                                .filter(js => js.status === 'active')
+                                .filter(js => {
+                                    if (!siteSearch.trim()) return true
+                                    const q = siteSearch.toLowerCase()
+                                    return js.name.toLowerCase().includes(q) ||
+                                        (js.address || '').toLowerCase().includes(q) ||
+                                        String(js.id).includes(q)
+                                })
+                                .map(js => (
+                                    <label key={js.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
+                                        <input type="checkbox" checked={selectedSites.includes(js.id)} onChange={() => toggleSite(js.id)} />
+                                        <span style={{ fontWeight: 500 }}>{js.name}</span>
+                                        <span style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.04)', padding: '1px 5px', borderRadius: 3 }}>UID {js.id}</span>
+                                        {js.address && <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 'auto', textAlign: 'right', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{js.address}</span>}
+                                    </label>
+                                ))}
                         </div>
                         <div className="maint-form-actions">
-                            <button className="btn btn-ghost" onClick={() => setEditingSites(null)}>Cancel</button>
+                            <button className="btn btn-ghost" onClick={() => { setEditingSites(null); setSiteSearch('') }}>Cancel</button>
                             <button className="btn btn-primary" onClick={handleSaveSites}>Save ({selectedSites.length} sites)</button>
                         </div>
                     </div>
@@ -742,7 +764,7 @@ function Settings() {
                     <div className="skeleton skeleton-text" style={{ width: 320, height: 16, marginTop: 8 }}></div>
                 </div>
                 <div className="settings-grid">
-                    {[1,2,3].map(i => (
+                    {[1, 2, 3].map(i => (
                         <div key={i} className="settings-card skeleton-card">
                             <div className="skeleton skeleton-text" style={{ width: '50%', height: 18 }}></div>
                             <div className="skeleton skeleton-text" style={{ width: '80%', height: 14, marginTop: 12 }}></div>
