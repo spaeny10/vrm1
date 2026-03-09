@@ -20,6 +20,7 @@ import {
     getContacts, insertContact, updateContact, deleteContact,
     getContactById, getContactSiteIds, setContactPortalUserId,
     getSiteContacts, assignContactToSite, removeContactFromSite,
+    insertNotification, getUserNotifications, getUnreadNotificationCount, markNotificationRead, markAllNotificationsRead,
     getTrailerAssignments, getTrailersByJobSite, upsertTrailerAssignment, linkIc2Device,
     assignTrailerToJobSite, getTrailersWithGps,
     getMaintenanceLogs, getMaintenanceLog, insertMaintenanceLog,
@@ -1820,6 +1821,16 @@ app.post('/api/job-sites/:id/notes', async (req, res) => {
                         noteText: note,
                     }).catch(err => console.error('[Mention] Notification failed:', err.message));
                 }
+                // In-app notification
+                if (user) {
+                    insertNotification(
+                        user.id,
+                        'mention',
+                        `${author} mentioned you`,
+                        `"${note.length > 80 ? note.slice(0, 80) + '…' : note}" on ${site?.name || `Site #${siteId}`}`,
+                        `/sites/${siteId}`
+                    ).catch(err => console.error('[Notification] Insert failed:', err.message));
+                }
             }
         }
 
@@ -1839,6 +1850,41 @@ app.get('/api/users/mentionable', async (req, res) => {
         res.json({ success: true, users: mentionable });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Notifications
+// ============================================================
+app.get('/api/notifications', async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+        const notifications = await getUserNotifications(userId);
+        const unread = await getUnreadNotificationCount(userId);
+        res.json({ success: true, notifications, unread_count: unread });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/notifications/:id/read', async (req, res) => {
+    try {
+        await markNotificationRead(parseInt(req.params.id));
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/notifications/read-all', async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+        await markAllNotificationsRead(userId);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 

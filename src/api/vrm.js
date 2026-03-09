@@ -221,6 +221,18 @@ export async function fetchMentionableUsers() {
     return apiFetch(`${API_BASE}/users/mentionable`);
 }
 
+export async function fetchNotifications() {
+    return apiFetch(`${API_BASE}/notifications`);
+}
+
+export async function markNotifRead(id) {
+    return apiFetch(`${API_BASE}/notifications/${id}/read`, { method: 'PUT' });
+}
+
+export async function markAllNotifsRead() {
+    return apiFetch(`${API_BASE}/notifications/read-all`, { method: 'PUT' });
+}
+
 export async function updateJobSite(id, data) {
     return apiFetch(`${API_BASE}/job-sites/${id}`, {
         method: 'PUT',

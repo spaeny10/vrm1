@@ -7,7 +7,7 @@ import {
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchJobSite, fetchSiteMaintenance, fetchSiteContacts, assignContact, removeContact, fetchSiteNotes, addSiteNote, fetchCompanies, fetchContacts } from '../api/vrm'
+import { fetchJobSite, fetchSiteMaintenance, fetchSiteContacts, assignContact, removeContact, fetchSiteNotes, addSiteNote, fetchCompanies, fetchContacts, fetchMentionableUsers } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import Breadcrumbs from '../components/Breadcrumbs'
@@ -41,6 +41,13 @@ function JobSiteDetail() {
     const [newNoteText, setNewNoteText] = useState('')
     const [addingNote, setAddingNote] = useState(false)
 
+    // @mention state
+    const [mentionUsers, setMentionUsers] = useState([])
+    const [showMentionList, setShowMentionList] = useState(false)
+    const [mentionFilter, setMentionFilter] = useState('')
+    const [mentionCursorPos, setMentionCursorPos] = useState(0)
+    const noteInputRef = { current: null }
+
     const fetchFn = useCallback(() => fetchJobSite(id), [id])
     const fetchMaintenanceFn = useCallback(() => fetchSiteMaintenance(id), [id])
     const { data, loading, refetch } = useApiPolling(fetchFn, 30000)
@@ -57,6 +64,13 @@ function JobSiteDetail() {
             loadNotes()
         }
     }, [id])
+
+    // Load mentionable users once
+    useEffect(() => {
+        fetchMentionableUsers()
+            .then(data => setMentionUsers(data?.users || []))
+            .catch(() => { })
+    }, [])
 
     const loadContacts = async () => {
         try {
@@ -96,13 +110,54 @@ function JobSiteDetail() {
         e.preventDefault()
         if (!newNoteText.trim()) return
         setAddingNote(true)
+        // Extract @mentions from note text
+        const mentionMatches = newNoteText.match(/@([\w\s]+?)(?=\s@|\s[^@]|$)/g) || []
+        const mentions = mentionMatches.map(m => m.slice(1).trim()).filter(Boolean)
         try {
-            await addSiteNote(id, newNoteText)
+            await addSiteNote(id, newNoteText, mentions)
             setNewNoteText('')
             loadNotes()
         } catch (err) { console.error(err) }
         finally { setAddingNote(false) }
     }
+
+    const handleNoteInputChange = (e) => {
+        const val = e.target.value
+        const cursorPos = e.target.selectionStart
+        setNewNoteText(val)
+        setMentionCursorPos(cursorPos)
+
+        // Find if we're in an @mention context
+        const textBeforeCursor = val.slice(0, cursorPos)
+        const atIndex = textBeforeCursor.lastIndexOf('@')
+        if (atIndex >= 0) {
+            const textAfterAt = textBeforeCursor.slice(atIndex + 1)
+            // Only show if no space-then-non-alpha between @ and cursor (still typing a single mention)
+            if (!/\s{2}/.test(textAfterAt)) {
+                setMentionFilter(textAfterAt.toLowerCase())
+                setShowMentionList(true)
+                return
+            }
+        }
+        setShowMentionList(false)
+    }
+
+    const insertMention = (displayName) => {
+        const textBeforeCursor = newNoteText.slice(0, mentionCursorPos)
+        const atIndex = textBeforeCursor.lastIndexOf('@')
+        const before = newNoteText.slice(0, atIndex)
+        const after = newNoteText.slice(mentionCursorPos)
+        const inserted = `${before}@${displayName} ${after}`
+        setNewNoteText(inserted)
+        setShowMentionList(false)
+        // Refocus the input
+        setTimeout(() => noteInputRef.current?.focus(), 0)
+    }
+
+    const filteredMentionUsers = mentionUsers.filter(u =>
+        u.display_name?.toLowerCase().includes(mentionFilter) &&
+        u.role !== 'customer'
+    )
 
     // Load available contacts for assignment modal
     const loadAvailableContacts = async () => {
@@ -398,14 +453,32 @@ function JobSiteDetail() {
 
                 {/* Add Note Form */}
                 {canEdit && (
-                    <form className="add-note-form" onSubmit={handleAddNote}>
-                        <input
-                            className="input"
-                            value={newNoteText}
-                            onChange={e => setNewNoteText(e.target.value)}
-                            placeholder="Add a note..."
-                            style={{ flex: 1 }}
-                        />
+                    <form className="add-note-form" onSubmit={handleAddNote} style={{ position: 'relative' }}>
+                        <div style={{ flex: 1, position: 'relative' }}>
+                            <input
+                                ref={el => noteInputRef.current = el}
+                                className="input"
+                                value={newNoteText}
+                                onChange={handleNoteInputChange}
+                                onBlur={() => setTimeout(() => setShowMentionList(false), 150)}
+                                placeholder="Add a note... use @ to mention a user"
+                                style={{ width: '100%' }}
+                            />
+                            {showMentionList && filteredMentionUsers.length > 0 && (
+                                <div className="mention-dropdown">
+                                    {filteredMentionUsers.slice(0, 6).map(u => (
+                                        <div
+                                            key={u.id}
+                                            className="mention-item"
+                                            onMouseDown={e => { e.preventDefault(); insertMention(u.display_name) }}
+                                        >
+                                            <span className="mention-name">{u.display_name}</span>
+                                            <span className={`mention-role mention-role-${u.role}`}>{u.role}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                         <button className="btn btn-sm btn-primary" type="submit" disabled={!newNoteText.trim() || addingNote}>
                             {addingNote ? '...' : 'Add'}
                         </button>

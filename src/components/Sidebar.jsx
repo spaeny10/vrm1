@@ -1,15 +1,23 @@
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useCallback, useState, useEffect } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchFleetAlerts } from '../api/vrm'
+import { fetchFleetAlerts, fetchNotifications, markNotifRead, markAllNotifsRead } from '../api/vrm'
 import { useAuth } from './AuthProvider'
 
 function Sidebar({ mobileOpen, onCloseMobile }) {
     const { user, logout } = useAuth()
     const location = useLocation()
+    const navigate = useNavigate()
     const fetchAlertsFn = useCallback(() => fetchFleetAlerts(), [])
     const { data: alertsData } = useApiPolling(fetchAlertsFn, 60000)
     const alertCount = alertsData?.alerts?.length || 0
+
+    // Notifications
+    const fetchNotifsFn = useCallback(() => fetchNotifications(), [])
+    const { data: notifsData, refetch: refetchNotifs } = useApiPolling(fetchNotifsFn, 30000)
+    const notifications = notifsData?.notifications || []
+    const unreadCount = notifsData?.unread_count || 0
+    const [showNotifs, setShowNotifs] = useState(false)
 
     const [theme, setTheme] = useState(() => localStorage.getItem('vrm_theme') || 'dark')
     const [collapsed, setCollapsed] = useState(() => {
@@ -35,6 +43,17 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
 
     const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
     const toggleCollapsed = () => setCollapsed(c => !c)
+
+    const formatNotifTime = (ts) => {
+        if (!ts) return ''
+        const diff = Date.now() - Number(ts)
+        const mins = Math.floor(diff / 60000)
+        if (mins < 1) return 'Just now'
+        if (mins < 60) return `${mins}m ago`
+        const hrs = Math.floor(mins / 60)
+        if (hrs < 24) return `${hrs}h ago`
+        return `${Math.floor(hrs / 24)}d ago`
+    }
 
     return (
         <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''} ${collapsed ? 'sidebar-collapsed' : ''}`}>
@@ -123,6 +142,45 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
                             <span className={`role-badge role-badge-${user.role}`}>{user.role}</span>
                         </div>
                         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                            <div className="notif-bell-wrapper">
+                                <button className="notif-bell-btn" onClick={() => setShowNotifs(v => !v)} title="Notifications">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                                        <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                                    </svg>
+                                    {unreadCount > 0 && <span className="notif-bell-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
+                                </button>
+                                {showNotifs && (
+                                    <div className="notif-dropdown">
+                                        <div className="notif-dropdown-header">
+                                            <h3>Notifications</h3>
+                                            {unreadCount > 0 && (
+                                                <button onClick={() => { markAllNotifsRead().then(() => refetchNotifs()) }}>Mark all read</button>
+                                            )}
+                                        </div>
+                                        {notifications.length === 0 ? (
+                                            <div className="notif-empty">No notifications yet</div>
+                                        ) : notifications.map(n => (
+                                            <div
+                                                key={n.id}
+                                                className={`notif-item ${!n.read ? 'notif-item-unread' : ''}`}
+                                                onClick={() => {
+                                                    if (!n.read) markNotifRead(n.id).then(() => refetchNotifs())
+                                                    if (n.link) navigate(n.link)
+                                                    setShowNotifs(false)
+                                                }}
+                                            >
+                                                <div className={`notif-dot ${n.read ? 'notif-dot-read' : ''}`} />
+                                                <div className="notif-item-content">
+                                                    <div className="notif-item-title">{n.title}</div>
+                                                    {n.body && <div className="notif-item-body">{n.body}</div>}
+                                                    <div className="notif-item-time">{formatNotifTime(n.created_at)}</div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                             <button className="theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
                                 {theme === 'dark' ? (
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
