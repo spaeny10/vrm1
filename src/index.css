@@ -7307,6 +7307,16 @@ tr:hover .btn-hq-toggle {
   border-top: 1px solid var(--border);
 }
 
+.stale-data-banner {
+  background: rgba(230, 126, 34, 0.1);
+  border: 1px solid #e67e22;
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  color: #e67e22;
+  font-size: 0.85rem;
+}
+
 /* Alert banner + alarm indicators */
 .trailer-alert-banner {
   background: rgba(231, 76, 60, 0.1);

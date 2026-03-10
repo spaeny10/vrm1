@@ -128,6 +128,9 @@ function TrailerDetail() {
         return latest > 0 ? latest * 1000 : null  // VRM uses Unix seconds, convert to ms
     }, [records])
 
+    // VRM data is stale if older than 30 minutes
+    const isVrmStale = vrmLastUpdated && (Date.now() - vrmLastUpdated) > 30 * 60 * 1000
+
     // Find matching Pepwave device by site name (MUST be before useEffect that uses it)
     // We need the site name — get it from the diagnostics data or system data
     const siteName = useMemo(() => {
@@ -150,7 +153,14 @@ function TrailerDetail() {
         )
     }, [jobSitesData, id])
 
-    const battery = useMemo(() => ({
+    const battery = useMemo(() => {
+        if (isVrmStale) return {
+            soc: null, voltage: null, current: null, temp: null, power: null,
+            consumed: null, ttg: null, minCell: null, maxCell: null,
+            dcLoadWatts: null, loadCurrent: null, consumedAh: null,
+            alarmReason: null, errorCode: null, inverterMode: null,
+        }
+        return {
         soc: diagValue(records, 'SOC') ?? diagValue(records, 'bs'),
         voltage: diagValue(records, 'V') ?? diagValue(records, 'bv'),
         current: diagValue(records, 'I') ?? diagValue(records, 'bc'),
@@ -166,9 +176,14 @@ function TrailerDetail() {
         alarmReason: diagFormatted(records, 'AR'),
         errorCode: diagFormatted(records, 'ERR'),
         inverterMode: diagFormatted(records, 'MODE'),
-    }), [records]);
+    }}, [records, isVrmStale]);
 
-    const solar = useMemo(() => ({
+    const solar = useMemo(() => {
+        if (isVrmStale) return {
+            watts: null, voltage: null, yieldToday: null, yieldYesterday: null,
+            chargeState: null, temp: null, mpptState: null, lifetimeYield: null,
+        }
+        return {
         watts: diagValue(records, 'ScW') ?? diagValue(records, 'Pdc'),
         voltage: diagValue(records, 'ScV') ?? diagValue(records, 'PVV'),
         yieldToday: diagValue(records, 'YT'),
@@ -177,7 +192,7 @@ function TrailerDetail() {
         temp: diagValue(records, 'ScT'),
         mpptState: diagFormatted(records, 'MPPT'),
         lifetimeYield: diagValue(records, 'H19'),
-    }), [records]);
+    }}, [records, isVrmStale]);
 
     // Fetch Pepwave history when device name is known
     useEffect(() => {
@@ -365,6 +380,12 @@ function TrailerDetail() {
                     <DataFreshness lastUpdated={vrmLastUpdated || lastUpdated} refetch={refetch} />
                 </div>
             </div>
+
+            {isVrmStale && (
+                <div className="stale-data-banner">
+                    VRM data is stale — Cerbo GX last reported {vrmLastUpdated ? new Date(vrmLastUpdated).toLocaleDateString() : 'unknown'}. Live values unavailable.
+                </div>
+            )}
 
             {/* KPI Cards */}
             <div className="kpi-row">
