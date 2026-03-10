@@ -7,7 +7,7 @@ import {
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchJobSite, updateJobSite, fetchSiteMaintenance, fetchSiteContacts, assignContact, removeContact, fetchSiteNotes, addSiteNote, fetchReplies, fetchCompanies, fetchContacts, fetchMentionableUsers } from '../api/vrm'
+import { fetchJobSite, updateJobSite, fetchSiteMaintenance, fetchSiteContacts, assignContact, removeContact, fetchSiteNotes, addSiteNote, editSiteNote, deleteSiteNote, toggleNotePin, markNoteAsRead, fetchReplies, fetchCompanies, fetchContacts, fetchMentionableUsers } from '../api/vrm'
 import TagPicker from '../components/TagPicker'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
@@ -48,6 +48,12 @@ function JobSiteDetail() {
     const [replyingTo, setReplyingTo] = useState(null)
     const [replyText, setReplyText] = useState('')
     const [selectedTags, setSelectedTags] = useState([])
+    const [editingNoteId, setEditingNoteId] = useState(null)
+    const [editNoteText, setEditNoteText] = useState('')
+    const [noteSearch, setNoteSearch] = useState('')
+    const [noteTagFilter, setNoteTagFilter] = useState('')
+    const [noteAuthorFilter, setNoteAuthorFilter] = useState('')
+    const [searchTimeout, setSearchTimeout] = useState(null)
     const [mentionUsers, setMentionUsers] = useState([])
     const [showMentionList, setShowMentionList] = useState(false)
     const [mentionFilter, setMentionFilter] = useState('')
@@ -85,11 +91,33 @@ function JobSiteDetail() {
         } catch (err) { console.error(err) }
     }
 
-    const loadNotes = async () => {
+    const loadNotes = async (filters = {}) => {
         try {
-            const data = await fetchSiteNotes(id)
-            setNotes(data?.notes || [])
+            const f = {
+                search: filters.search ?? noteSearch,
+                tag: filters.tag ?? noteTagFilter,
+                author: filters.author ?? noteAuthorFilter,
+            }
+            // Only pass non-empty filters
+            const clean = {}
+            if (f.search) clean.search = f.search
+            if (f.tag) clean.tag = f.tag
+            if (f.author) clean.author = f.author
+            const data = await fetchSiteNotes(id, clean)
+            const fetchedNotes = data?.notes || []
+            setNotes(fetchedNotes)
             setNotesTotal(data?.total || 0)
+            // Auto-mark read for notes that @mention current user
+            if (user?.display_name) {
+                for (const n of fetchedNotes) {
+                    const mentions = typeof n.mentions === 'string' ? JSON.parse(n.mentions) : (n.mentions || [])
+                    const isMentioned = mentions.some(m => m.toLowerCase() === user.display_name.toLowerCase())
+                    const alreadyRead = (n.readers || []).some(r => r.user_id === user.id)
+                    if (isMentioned && !alreadyRead) {
+                        markNoteAsRead(id, n.id).catch(() => {})
+                    }
+                }
+            }
         } catch (err) { console.error(err) }
     }
 
@@ -127,6 +155,62 @@ function JobSiteDetail() {
         } catch (err) { console.error(err) }
         finally { setAddingNote(false) }
     }
+
+    const handleEditNote = async (noteId) => {
+        if (!editNoteText.trim()) return
+        try {
+            await editSiteNote(id, noteId, editNoteText)
+            setEditingNoteId(null)
+            setEditNoteText('')
+            loadNotes()
+        } catch (err) { console.error(err) }
+    }
+
+    const handleDeleteNote = async (noteId) => {
+        if (!confirm('Delete this note? Replies will also be deleted.')) return
+        try {
+            await deleteSiteNote(id, noteId)
+            loadNotes()
+        } catch (err) { console.error(err) }
+    }
+
+    const handleTogglePin = async (noteId, currentPinned) => {
+        try {
+            await toggleNotePin(id, noteId, !currentPinned)
+            loadNotes()
+        } catch (err) { console.error(err) }
+    }
+
+    const handleSearchChange = (val) => {
+        setNoteSearch(val)
+        if (searchTimeout) clearTimeout(searchTimeout)
+        setSearchTimeout(setTimeout(() => loadNotes({ search: val }), 300))
+    }
+
+    const handleTagFilterChange = (val) => {
+        setNoteTagFilter(val)
+        loadNotes({ tag: val })
+    }
+
+    const handleAuthorFilterChange = (val) => {
+        setNoteAuthorFilter(val)
+        loadNotes({ author: val })
+    }
+
+    const clearNoteFilters = () => {
+        setNoteSearch('')
+        setNoteTagFilter('')
+        setNoteAuthorFilter('')
+        loadNotes({ search: '', tag: '', author: '' })
+    }
+
+    const hasActiveFilters = noteSearch || noteTagFilter || noteAuthorFilter
+
+    // Unique authors for filter dropdown
+    const noteAuthors = useMemo(() => {
+        const authors = new Set(notes.map(n => n.author).filter(Boolean))
+        return [...authors].sort()
+    }, [notes])
 
     const handleNoteInputChange = (e) => {
         const val = e.target.value
@@ -541,33 +625,109 @@ function JobSiteDetail() {
                     </form>
                 )}
 
+                {/* Search & Filter Bar */}
+                <div className="notes-filter-bar">
+                    <div className="notes-filter-search">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                        <input
+                            className="notes-filter-input"
+                            value={noteSearch}
+                            onChange={e => handleSearchChange(e.target.value)}
+                            placeholder="Search notes..."
+                        />
+                    </div>
+                    <select className="notes-filter-select" value={noteTagFilter} onChange={e => handleTagFilterChange(e.target.value)}>
+                        <option value="">All tags</option>
+                        <option value="battery">battery</option>
+                        <option value="solar">solar</option>
+                        <option value="network">network</option>
+                        <option value="maintenance">maintenance</option>
+                        <option value="security">security</option>
+                        <option value="general">general</option>
+                    </select>
+                    <select className="notes-filter-select" value={noteAuthorFilter} onChange={e => handleAuthorFilterChange(e.target.value)}>
+                        <option value="">All authors</option>
+                        {noteAuthors.map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
+                    {hasActiveFilters && (
+                        <button className="notes-filter-clear" onClick={clearNoteFilters}>Clear</button>
+                    )}
+                </div>
+
                 {notes.length > 0 ? (
                     <div className="notes-timeline">
-                        {notes.map(n => (
-                            <div key={n.id} className="note-item">
-                                <div className="note-dot"></div>
+                        {notes.map(n => {
+                            const isAuthor = n.author === user?.display_name
+                            const isAdmin = user?.role === 'admin'
+                            const canModify = isAuthor || isAdmin
+                            const parsedMentions = typeof n.mentions === 'string' ? JSON.parse(n.mentions) : (n.mentions || [])
+                            const parsedTags = typeof n.tags === 'string' ? JSON.parse(n.tags) : (n.tags || [])
+                            return (
+                            <div key={n.id} className={`note-item${n.pinned ? ' note-item-pinned' : ''}`}>
+                                <div className={`note-dot${n.pinned ? ' note-dot-pinned' : ''}`}></div>
                                 <div className="note-content">
                                     <div className="note-header">
                                         <span className="note-author">{n.author || 'System'}</span>
                                         <span className="note-time">{formatNoteDate(n.created_at)}</span>
+                                        {n.updated_at && <span className="note-edited">(edited)</span>}
+                                        <div className="note-header-actions">
+                                            {canEdit && (
+                                                <button className={`note-icon-btn${n.pinned ? ' note-icon-active' : ''}`}
+                                                    title={n.pinned ? 'Unpin' : 'Pin'}
+                                                    onClick={() => handleTogglePin(n.id, n.pinned)}>
+                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill={n.pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2"><path d="M12 17v5M9 2h6l-1 7h4l-6 8h-4l1-7H5l4-8z"/></svg>
+                                                </button>
+                                            )}
+                                            {canModify && (
+                                                <>
+                                                    <button className="note-icon-btn" title="Edit"
+                                                        onClick={() => { setEditingNoteId(n.id); setEditNoteText(n.note) }}>
+                                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                                    </button>
+                                                    <button className="note-icon-btn note-icon-delete" title="Delete"
+                                                        onClick={() => handleDeleteNote(n.id)}>
+                                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
                                     </div>
-                                    <p className="note-text">{n.note}</p>
-                                    {n.mentions && n.mentions.length > 0 && (
+                                    {editingNoteId === n.id ? (
+                                        <div className="note-edit-form">
+                                            <input className="input note-edit-input" value={editNoteText}
+                                                onChange={e => setEditNoteText(e.target.value)}
+                                                onKeyDown={e => { if (e.key === 'Enter') handleEditNote(n.id); if (e.key === 'Escape') setEditingNoteId(null) }}
+                                                autoFocus />
+                                            <div className="note-edit-actions">
+                                                <button className="btn btn-sm btn-primary" onClick={() => handleEditNote(n.id)} disabled={!editNoteText.trim()}>Save</button>
+                                                <button className="btn btn-sm btn-ghost" onClick={() => setEditingNoteId(null)}>Cancel</button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <p className="note-text">{n.note}</p>
+                                    )}
+                                    {parsedMentions.length > 0 && (
                                         <div className="note-mentions">
-                                            {(typeof n.mentions === 'string' ? JSON.parse(n.mentions) : n.mentions).map((m, i) => (
+                                            {parsedMentions.map((m, i) => (
                                                 <span key={i} className="mention-tag">@{m}</span>
                                             ))}
                                         </div>
                                     )}
-                                    {n.tags && (typeof n.tags === 'string' ? JSON.parse(n.tags) : n.tags).length > 0 && (
+                                    {parsedTags.length > 0 && (
                                         <div className="note-tags">
-                                            {(typeof n.tags === 'string' ? JSON.parse(n.tags) : n.tags).map((tag, i) => (
+                                            {parsedTags.map((tag, i) => (
                                                 <span key={i} className={`tag-badge tag-badge-${tag.type}`}
                                                     onClick={tag.type === 'trailer' ? () => navigate(`/trailer/${tag.id}`) : undefined}
                                                     style={tag.type === 'trailer' ? { cursor: 'pointer' } : undefined}>
                                                     {tag.label}
                                                 </span>
                                             ))}
+                                        </div>
+                                    )}
+                                    {n.readers && n.readers.length > 0 && parsedMentions.length > 0 && (
+                                        <div className="note-seen-by">
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                            Seen by {n.readers.map(r => r.display_name).join(', ')}
                                         </div>
                                     )}
                                     <div className="note-actions">
@@ -626,11 +786,12 @@ function JobSiteDetail() {
                                     )}
                                 </div>
                             </div>
-                        ))}
+                            )
+                        })}
                     </div>
                 ) : (
                     <div className="empty-section">
-                        <p>No notes yet</p>
+                        <p>{hasActiveFilters ? 'No notes match your filters' : 'No notes yet'}</p>
                     </div>
                 )}
             </div>

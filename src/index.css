@@ -9100,6 +9100,179 @@ tr:hover .btn-hq-toggle {
   background: rgba(139, 92, 246, 0.25);
 }
 
+/* Notes filter bar */
+.notes-filter-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+
+.notes-filter-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 160px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 0 10px;
+  transition: border-color 0.15s;
+  color: var(--text-muted);
+}
+
+.notes-filter-search:focus-within {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.notes-filter-input {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 7px 0;
+  width: 100%;
+}
+
+.notes-filter-input::placeholder {
+  color: var(--text-muted);
+}
+
+.notes-filter-select {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 7px 10px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  appearance: auto;
+}
+
+.notes-filter-select:focus {
+  border-color: var(--accent);
+}
+
+.notes-filter-clear {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 7px 8px;
+  transition: opacity 0.15s;
+}
+
+.notes-filter-clear:hover {
+  opacity: 0.7;
+}
+
+/* Note header actions (pin, edit, delete icons) */
+.note-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.note-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.note-item:hover .note-header-actions {
+  opacity: 1;
+}
+
+.note-icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.note-icon-btn:hover {
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.note-icon-btn.note-icon-active {
+  color: var(--accent);
+}
+
+.note-icon-delete:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+/* Edited label */
+.note-edited {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Note edit form */
+.note-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.note-edit-input {
+  font-size: 14px !important;
+  padding: 8px 10px !important;
+}
+
+.note-edit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Pinned note styling */
+.note-item-pinned {
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+  margin-left: -10px;
+}
+
+.note-dot-pinned {
+  background: var(--accent) !important;
+}
+
+/* Seen by / read receipts */
+.note-seen-by {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  font-style: italic;
+}
+
+.note-seen-by svg {
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
 .contact-role-badge {
   font-size: 10px;
   font-weight: 600;

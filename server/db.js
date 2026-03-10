@@ -186,6 +186,20 @@ export async function initDb() {
         await client.query(`CREATE INDEX IF NOT EXISTS idx_site_notes_parent ON site_notes(parent_id)`);
         await client.query(`ALTER TABLE site_notes ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_site_notes_tags ON site_notes USING GIN (tags)`);
+        await client.query(`ALTER TABLE site_notes ADD COLUMN IF NOT EXISTS updated_at BIGINT`);
+        await client.query(`ALTER TABLE site_notes ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE`);
+
+        // Note read receipts
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS note_reads (
+        id SERIAL PRIMARY KEY,
+        note_id INTEGER NOT NULL REFERENCES site_notes(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL,
+        read_at BIGINT NOT NULL,
+        UNIQUE(note_id, user_id)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_note_reads_note ON note_reads(note_id)`);
 
         // Audit log table
         await client.query(`
@@ -1065,19 +1079,36 @@ export async function deleteJobSite(id) {
 // ============================================================
 // Site Notes
 // ============================================================
-export async function getSiteNotes(jobSiteId, { limit = 50, offset = 0 } = {}) {
+export async function getSiteNotes(jobSiteId, { limit = 50, offset = 0, search, tag, author } = {}) {
     if (!pool) return { notes: [], total: 0 };
+    const conditions = ['sn.job_site_id = $1', 'sn.parent_id IS NULL'];
+    const params = [jobSiteId];
+    let paramIdx = 2;
+    if (search) {
+        conditions.push(`sn.note ILIKE $${paramIdx++}`);
+        params.push(`%${search}%`);
+    }
+    if (tag) {
+        conditions.push(`sn.tags @> $${paramIdx++}::jsonb`);
+        params.push(JSON.stringify([{ label: tag }]));
+    }
+    if (author) {
+        conditions.push(`sn.author = $${paramIdx++}`);
+        params.push(author);
+    }
+    const where = 'WHERE ' + conditions.join(' AND ');
     const countResult = await pool.query(
-        `SELECT COUNT(*) as total FROM site_notes WHERE job_site_id = $1 AND parent_id IS NULL`,
-        [jobSiteId]
+        `SELECT COUNT(*) as total FROM site_notes sn ${where}`, params
     );
     const total = parseInt(countResult.rows[0].total);
+    const dataParams = [...params, limit, offset];
     const result = await pool.query(
         `SELECT sn.*, (SELECT COUNT(*) FROM site_notes r WHERE r.parent_id = sn.id) as reply_count
          FROM site_notes sn
-         WHERE sn.job_site_id = $1 AND sn.parent_id IS NULL
-         ORDER BY sn.created_at DESC LIMIT $2 OFFSET $3`,
-        [jobSiteId, limit, offset]
+         ${where}
+         ORDER BY sn.pinned DESC NULLS LAST, sn.created_at DESC
+         LIMIT $${paramIdx++} OFFSET $${paramIdx}`,
+        dataParams
     );
     return { notes: result.rows, total };
 }
@@ -1146,6 +1177,56 @@ export async function insertSiteNote(jobSiteId, noteText, author = 'system', men
         [jobSiteId, noteText, author, JSON.stringify(mentions), parentId, JSON.stringify(tags), Date.now()]
     );
     return result.rows[0];
+}
+
+export async function updateSiteNote(noteId, newText) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `UPDATE site_notes SET note = $1, updated_at = $2 WHERE id = $3 RETURNING *`,
+        [newText, Date.now(), noteId]
+    );
+    return result.rows[0];
+}
+
+export async function deleteSiteNote(noteId) {
+    if (!pool) return;
+    await pool.query('DELETE FROM site_notes WHERE id = $1', [noteId]);
+}
+
+export async function togglePinNote(noteId, pinned) {
+    if (!pool) return null;
+    const result = await pool.query(
+        'UPDATE site_notes SET pinned = $1 WHERE id = $2 RETURNING *',
+        [pinned, noteId]
+    );
+    return result.rows[0];
+}
+
+export async function markNoteRead(noteId, userId) {
+    if (!pool) return;
+    await pool.query(
+        `INSERT INTO note_reads (note_id, user_id, read_at) VALUES ($1, $2, $3)
+         ON CONFLICT (note_id, user_id) DO NOTHING`,
+        [noteId, userId, Date.now()]
+    );
+}
+
+export async function getNoteReaders(noteIds) {
+    if (!pool || !noteIds.length) return {};
+    const result = await pool.query(
+        `SELECT nr.note_id, nr.read_at, u.id as user_id, u.display_name
+         FROM note_reads nr
+         JOIN users u ON u.id = nr.user_id
+         WHERE nr.note_id = ANY($1)
+         ORDER BY nr.read_at ASC`,
+        [noteIds]
+    );
+    const grouped = {};
+    for (const row of result.rows) {
+        if (!grouped[row.note_id]) grouped[row.note_id] = [];
+        grouped[row.note_id].push({ user_id: row.user_id, display_name: row.display_name, read_at: row.read_at });
+    }
+    return grouped;
 }
 
 export async function getNotesByTrailer(siteId, { limit = 20, offset = 0 } = {}) {

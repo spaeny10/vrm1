@@ -206,8 +206,13 @@ export async function fetchJobSite(id) {
     return apiFetch(`${API_BASE}/job-sites/${id}`);
 }
 
-export async function fetchSiteNotes(id) {
-    return apiFetch(`${API_BASE}/job-sites/${id}/notes`);
+export async function fetchSiteNotes(id, { search, tag, author } = {}) {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (tag) params.set('tag', tag);
+    if (author) params.set('author', author);
+    const qs = params.toString();
+    return apiFetch(`${API_BASE}/job-sites/${id}/notes${qs ? '?' + qs : ''}`);
 }
 
 export async function addSiteNote(id, noteText, mentions = [], parentId = null, tags = []) {
@@ -215,6 +220,28 @@ export async function addSiteNote(id, noteText, mentions = [], parentId = null, 
         method: 'POST',
         body: JSON.stringify({ note: noteText, mentions, parent_id: parentId, tags }),
     });
+}
+
+export async function editSiteNote(siteId, noteId, noteText) {
+    return apiFetch(`${API_BASE}/job-sites/${siteId}/notes/${noteId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ note: noteText }),
+    });
+}
+
+export async function deleteSiteNote(siteId, noteId) {
+    return apiFetch(`${API_BASE}/job-sites/${siteId}/notes/${noteId}`, { method: 'DELETE' });
+}
+
+export async function toggleNotePin(siteId, noteId, pinned) {
+    return apiFetch(`${API_BASE}/job-sites/${siteId}/notes/${noteId}/pin`, {
+        method: 'PUT',
+        body: JSON.stringify({ pinned }),
+    });
+}
+
+export async function markNoteAsRead(siteId, noteId) {
+    return apiFetch(`${API_BASE}/job-sites/${siteId}/notes/${noteId}/read`, { method: 'POST' });
 }
 
 export async function fetchReplies(siteId, noteId) {

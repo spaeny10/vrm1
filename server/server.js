@@ -14,7 +14,8 @@ import {
     insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
     upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding,
     getJobSites, getJobSite, getJobSiteByPhone, insertJobSite, updateJobSite, deleteJobSite,
-    getSiteNotes, insertSiteNote, getAllSiteNotes, getReplies, getNotesByTrailer,
+    getSiteNotes, insertSiteNote, updateSiteNote, deleteSiteNote, getAllSiteNotes, getReplies, getNotesByTrailer,
+    togglePinNote, markNoteRead, getNoteReaders,
     insertAuditLog, getAuditLog,
     getCompanies, getCompany, insertCompany, updateCompany,
     getContacts, insertContact, updateContact, deleteContact,
@@ -1808,13 +1809,18 @@ app.post('/api/job-sites', requireRole('admin', 'technician'), async (req, res) 
     }
 });
 
-// GET site notes (paginated)
+// GET site notes (paginated, filterable)
 app.get('/api/job-sites/:id/notes', async (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit) || 50, 200);
         const offset = parseInt(req.query.offset) || 0;
-        const result = await getSiteNotes(parseInt(req.params.id), { limit, offset });
-        res.json({ success: true, notes: result.notes, total: result.total, limit, offset });
+        const { search, tag, author } = req.query;
+        const result = await getSiteNotes(parseInt(req.params.id), { limit, offset, search, tag, author });
+        // Attach read receipts
+        const noteIds = result.notes.map(n => n.id);
+        const readers = noteIds.length ? await getNoteReaders(noteIds) : {};
+        const notes = result.notes.map(n => ({ ...n, readers: readers[n.id] || [] }));
+        res.json({ success: true, notes, total: result.total, limit, offset });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -1886,6 +1892,65 @@ app.post('/api/job-sites/:id/notes', async (req, res) => {
         }
 
         res.status(201).json({ success: true, note: created });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// PUT edit a site note (author or admin only)
+app.put('/api/job-sites/:id/notes/:noteId', async (req, res) => {
+    try {
+        const noteId = parseInt(req.params.noteId);
+        const { note } = req.body;
+        if (!note) return res.status(400).json({ success: false, error: 'Note text is required' });
+        // Verify ownership: fetch note and check author
+        const existing = await pool.query('SELECT * FROM site_notes WHERE id = $1', [noteId]);
+        if (!existing.rows[0]) return res.status(404).json({ success: false, error: 'Note not found' });
+        const isAuthor = existing.rows[0].author === req.user?.display_name;
+        const isAdmin = req.user?.role === 'admin';
+        if (!isAuthor && !isAdmin) return res.status(403).json({ success: false, error: 'Not authorized' });
+        const updated = await updateSiteNote(noteId, note);
+        insertAuditLog('site', parseInt(req.params.id), 'note_edited', { note_id: noteId }, req.user?.display_name).catch(() => { });
+        res.json({ success: true, note: updated });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// DELETE a site note (author or admin only)
+app.delete('/api/job-sites/:id/notes/:noteId', async (req, res) => {
+    try {
+        const noteId = parseInt(req.params.noteId);
+        const existing = await pool.query('SELECT * FROM site_notes WHERE id = $1', [noteId]);
+        if (!existing.rows[0]) return res.status(404).json({ success: false, error: 'Note not found' });
+        const isAuthor = existing.rows[0].author === req.user?.display_name;
+        const isAdmin = req.user?.role === 'admin';
+        if (!isAuthor && !isAdmin) return res.status(403).json({ success: false, error: 'Not authorized' });
+        await deleteSiteNote(noteId);
+        insertAuditLog('site', parseInt(req.params.id), 'note_deleted', { note_id: noteId }, req.user?.display_name).catch(() => { });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// PUT toggle pin on a note (admin/tech only)
+app.put('/api/job-sites/:id/notes/:noteId/pin', async (req, res) => {
+    try {
+        const noteId = parseInt(req.params.noteId);
+        const { pinned } = req.body;
+        const updated = await togglePinNote(noteId, !!pinned);
+        res.json({ success: true, note: updated });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST mark note as read
+app.post('/api/job-sites/:id/notes/:noteId/read', async (req, res) => {
+    try {
+        await markNoteRead(parseInt(req.params.noteId), req.user.id);
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
