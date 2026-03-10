@@ -8828,6 +8828,118 @@ tr:hover .btn-hq-toggle {
   color: var(--accent);
 }
 
+/* Reply threading */
+.note-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.note-reply-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+  transition: color 0.15s;
+}
+
+.note-reply-btn:hover {
+  color: var(--accent);
+}
+
+.note-thread-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+
+.note-thread-toggle:hover {
+  opacity: 0.8;
+}
+
+.note-thread {
+  border-left: 2px solid rgba(255, 255, 255, 0.08);
+  padding-left: 16px;
+  margin-top: 8px;
+  margin-left: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.note-reply {
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+}
+
+.note-reply .note-header {
+  margin-bottom: 2px;
+}
+
+.note-reply .note-author {
+  font-size: 12px;
+}
+
+.note-reply .note-time {
+  font-size: 11px;
+}
+
+.note-reply .note-text {
+  font-size: 13px;
+}
+
+.note-reply-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.note-reply-input input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.note-reply-input input:focus {
+  border-color: var(--accent);
+}
+
+.note-reply-input input::placeholder {
+  color: var(--text-muted);
+}
+
+.note-reply-input button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+
+.note-reply-input button:hover {
+  opacity: 0.85;
+}
+
 .contact-role-badge {
   font-size: 10px;
   font-weight: 600;

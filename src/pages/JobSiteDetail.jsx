@@ -7,7 +7,7 @@ import {
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchJobSite, updateJobSite, fetchSiteMaintenance, fetchSiteContacts, assignContact, removeContact, fetchSiteNotes, addSiteNote, fetchCompanies, fetchContacts, fetchMentionableUsers } from '../api/vrm'
+import { fetchJobSite, updateJobSite, fetchSiteMaintenance, fetchSiteContacts, assignContact, removeContact, fetchSiteNotes, addSiteNote, fetchReplies, fetchCompanies, fetchContacts, fetchMentionableUsers } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import Breadcrumbs from '../components/Breadcrumbs'
@@ -42,6 +42,10 @@ function JobSiteDetail() {
     const [addingNote, setAddingNote] = useState(false)
 
     // @mention state
+    const [expandedNote, setExpandedNote] = useState(null)
+    const [replies, setReplies] = useState({})
+    const [replyingTo, setReplyingTo] = useState(null)
+    const [replyText, setReplyText] = useState('')
     const [mentionUsers, setMentionUsers] = useState([])
     const [showMentionList, setShowMentionList] = useState(false)
     const [mentionFilter, setMentionFilter] = useState('')
@@ -158,6 +162,34 @@ function JobSiteDetail() {
         u.display_name?.toLowerCase().includes(mentionFilter) &&
         u.role !== 'customer'
     )
+
+    const toggleThread = async (noteId) => {
+        if (expandedNote === noteId) {
+            setExpandedNote(null)
+            return
+        }
+        setExpandedNote(noteId)
+        setReplyingTo(noteId)
+        if (!replies[noteId]) {
+            try {
+                const data = await fetchReplies(id, noteId)
+                setReplies(prev => ({ ...prev, [noteId]: data?.replies || [] }))
+            } catch (err) { console.error(err) }
+        }
+    }
+
+    const handleReply = async (parentId) => {
+        if (!replyText.trim()) return
+        const mentionMatches = replyText.match(/@([\w\s]+?)(?=\s@|\s[^@]|$)/g) || []
+        const mentions = mentionMatches.map(m => m.slice(1).trim()).filter(Boolean)
+        try {
+            await addSiteNote(id, replyText, mentions, parentId)
+            setReplyText('')
+            const data = await fetchReplies(id, parentId)
+            setReplies(prev => ({ ...prev, [parentId]: data?.replies || [] }))
+            loadNotes()
+        } catch (err) { console.error(err) }
+    }
 
     // Load available contacts for assignment modal
     const loadAvailableContacts = async () => {
@@ -521,6 +553,53 @@ function JobSiteDetail() {
                                             {(typeof n.mentions === 'string' ? JSON.parse(n.mentions) : n.mentions).map((m, i) => (
                                                 <span key={i} className="mention-tag">@{m}</span>
                                             ))}
+                                        </div>
+                                    )}
+                                    <div className="note-actions">
+                                        {canEdit && (
+                                            <button className="note-reply-btn" onClick={() => { setReplyingTo(n.id); setExpandedNote(n.id); if (!replies[n.id]) toggleThread(n.id) }}>
+                                                Reply
+                                            </button>
+                                        )}
+                                        {parseInt(n.reply_count) > 0 && (
+                                            <button className="note-thread-toggle" onClick={() => toggleThread(n.id)}>
+                                                {expandedNote === n.id ? 'Hide replies' : `${n.reply_count} ${parseInt(n.reply_count) === 1 ? 'reply' : 'replies'}`}
+                                            </button>
+                                        )}
+                                    </div>
+                                    {expandedNote === n.id && (
+                                        <div className="note-thread">
+                                            {(replies[n.id] || []).map(r => (
+                                                <div key={r.id} className="note-reply">
+                                                    <div className="note-header">
+                                                        <span className="note-author">{r.author || 'System'}</span>
+                                                        <span className="note-time">{formatNoteDate(r.created_at)}</span>
+                                                    </div>
+                                                    <p className="note-text">{r.note}</p>
+                                                    {r.mentions && r.mentions.length > 0 && (
+                                                        <div className="note-mentions">
+                                                            {(typeof r.mentions === 'string' ? JSON.parse(r.mentions) : r.mentions).map((m, i) => (
+                                                                <span key={i} className="mention-tag">@{m}</span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                            {canEdit && replyingTo === n.id && (
+                                                <div className="note-reply-input">
+                                                    <input
+                                                        className="input"
+                                                        value={replyText}
+                                                        onChange={e => setReplyText(e.target.value)}
+                                                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleReply(n.id) } }}
+                                                        placeholder="Write a reply..."
+                                                        autoFocus
+                                                    />
+                                                    <button className="btn btn-sm btn-primary" onClick={() => handleReply(n.id)} disabled={!replyText.trim()}>
+                                                        Reply
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>

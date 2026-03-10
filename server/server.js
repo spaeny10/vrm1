@@ -14,7 +14,7 @@ import {
     insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
     upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding,
     getJobSites, getJobSite, getJobSiteByPhone, insertJobSite, updateJobSite, deleteJobSite,
-    getSiteNotes, insertSiteNote, getAllSiteNotes,
+    getSiteNotes, insertSiteNote, getAllSiteNotes, getReplies,
     insertAuditLog, getAuditLog,
     getCompanies, getCompany, insertCompany, updateCompany,
     getContacts, insertContact, updateContact, deleteContact,
@@ -1820,14 +1820,24 @@ app.get('/api/job-sites/:id/notes', async (req, res) => {
     }
 });
 
+// GET replies for a specific note
+app.get('/api/job-sites/:id/notes/:noteId/replies', async (req, res) => {
+    try {
+        const replies = await getReplies(parseInt(req.params.noteId));
+        res.json({ success: true, replies });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // POST new site note (with @mention notifications + audit log)
 app.post('/api/job-sites/:id/notes', async (req, res) => {
     try {
-        const { note, mentions } = req.body;
+        const { note, mentions, parent_id } = req.body;
         if (!note) return res.status(400).json({ success: false, error: 'Note is required' });
         const author = req.user ? req.user.display_name : 'system';
         const siteId = parseInt(req.params.id);
-        const created = await insertSiteNote(siteId, note, author, mentions || []);
+        const created = await insertSiteNote(siteId, note, author, mentions || [], parent_id || null);
 
         // Audit log
         insertAuditLog('site', siteId, 'note_added', { note_id: created.id, mentions }, author).catch(() => { });
