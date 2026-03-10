@@ -2050,10 +2050,15 @@ app.post('/api/job-sites/:id/sms', requireRole('admin', 'technician'), async (re
         const site = await getJobSite(siteId);
         if (!site) return res.status(404).json({ success: false, error: 'Site not found' });
 
-        // Determine recipient: explicit `to` param or primary contact phone
-        const recipient = to || site.primary_contact_phone;
+        // Determine recipient: explicit `to` param or primary CRM contact phone
+        let recipient = to;
         if (!recipient) {
-            return res.status(400).json({ success: false, error: 'No recipient phone number. Provide `to` or add a primary contact phone to the site.' });
+            const siteContacts = await getSiteContacts(siteId);
+            const primary = siteContacts.find(c => c.is_primary) || siteContacts[0];
+            recipient = primary?.phone;
+        }
+        if (!recipient) {
+            return res.status(400).json({ success: false, error: 'No recipient phone number. Provide `to` or assign a contact with a phone number to this site.' });
         }
 
         // Send SMS via Twilio REST API (no SDK dependency)
@@ -3319,16 +3324,7 @@ async function pollAllSites() {
                     const firmwareVersion = extractDiagValue(records, 'FW');
                     const timeToGoMin = extractDiagValue(records, 'TTG');
 
-                    // GPS: only use IC2 Peplink as authoritative source.
-                    // VRM coordinates are often stale/default. Only seed gpsCache
-                    // from VRM if IC2 hasn't provided coordinates yet.
-                    if (!gpsCache.has(site.idSite)) {
-                        const latitude = extractDiagValue(records, 'lt') ?? site.latitude ?? null;
-                        const longitude = extractDiagValue(records, 'lg') ?? site.longitude ?? null;
-                        if (latitude != null && longitude != null) {
-                            gpsCache.set(site.idSite, { latitude, longitude, updatedAt: Date.now() });
-                        }
-                    }
+                    // GPS: IC2 Peplink is the sole source (populated in pollIc2Devices)
 
                     // Battery power: P (from BMV) or derive from V × I
                     const solarW = extractDiagValue(records, 'ScW') ?? extractDiagValue(records, 'Pdc');
@@ -5224,9 +5220,15 @@ app.get('/api/portal/site/:id', async (req, res) => {
             ? Math.round(onlineTrailers.reduce((s, t) => s + t.battery_soc, 0) / onlineTrailers.length)
             : null;
 
+        // Source contact info from CRM instead of legacy job_sites columns
+        const siteContacts = await getSiteContacts(siteId);
+        const primaryContact = siteContacts.find(c => c.is_primary) || siteContacts[0];
+
         res.json({
             site: {
                 ...js,
+                primary_contact_name: primaryContact?.name || null,
+                primary_contact_phone: primaryContact?.phone || null,
                 trailer_count: trailers.length,
                 trailers_online: onlineTrailers.length,
                 avg_soc: avgSoc,

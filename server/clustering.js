@@ -139,11 +139,16 @@ export async function runClustering(thresholdMeters = 300) {
             // Update existing job site centroid coordinates
             jobSiteId = bestMatch;
             const existingSite = existingJobSites.find(s => s.id === bestMatch);
-            if (existingSite && (!existingSite.latitude || !existingSite.longitude)) {
-                await updateJobSite(bestMatch, {
-                    latitude: cluster.centroid_lat,
-                    longitude: cluster.centroid_lng,
-                });
+            if (existingSite) {
+                const needsUpdate = !existingSite.latitude || !existingSite.longitude
+                    || haversineMeters(existingSite.latitude, existingSite.longitude,
+                        cluster.centroid_lat, cluster.centroid_lng) > 200;
+                if (needsUpdate) {
+                    await updateJobSite(bestMatch, {
+                        latitude: cluster.centroid_lat,
+                        longitude: cluster.centroid_lng,
+                    });
+                }
             }
             updated++;
         } else {

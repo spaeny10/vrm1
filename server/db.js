@@ -977,23 +977,16 @@ export async function getJobSite(id) {
 
 export async function getJobSiteByPhone(phone) {
     if (!pool || !phone) return null;
-    // Strip non-numeric characters for comparison just in case, or do a loose match
     const cleanPhone = phone.replace(/\D/g, '');
-    if (!cleanPhone && phone) {
-        // fallback if it's alphanumeric
-        const result = await pool.query(
-            `SELECT * FROM job_sites WHERE primary_contact_phone ILIKE $1 OR secondary_contact_phone ILIKE $1`,
-            [`%${phone}%`]
-        );
-        return result.rows[0] || null;
-    }
-
-    const result = await pool.query(
-        `SELECT * FROM job_sites WHERE 
-         REPLACE(REPLACE(REPLACE(REPLACE(primary_contact_phone, '-', ''), ' ', ''), '(', ''), ')', '') LIKE $1
-         OR REPLACE(REPLACE(REPLACE(REPLACE(secondary_contact_phone, '-', ''), ' ', ''), '(', ''), ')', '') LIKE $1`,
-        [`%${cleanPhone}%`]
-    );
+    if (!cleanPhone) return null;
+    // Search CRM contacts linked to job sites via site_contacts
+    const result = await pool.query(`
+        SELECT js.* FROM job_sites js
+        JOIN site_contacts sc ON sc.job_site_id = js.id
+        JOIN contacts c ON c.id = sc.contact_id
+        WHERE regexp_replace(c.phone, '[^0-9]', '', 'g') LIKE '%' || $1 || '%'
+        LIMIT 1
+    `, [cleanPhone.slice(-10)]);
     return result.rows[0] || null;
 }
 
@@ -1013,12 +1006,10 @@ export async function insertJobSite(site) {
 
     const result = await pool.query(
         `INSERT INTO job_sites (
-            name, latitude, longitude, address, status, notes, 
-            uid, customer_name, primary_contact_name, primary_contact_phone, primary_contact_email,
-            secondary_contact_name, secondary_contact_phone, secondary_contact_email,
+            name, latitude, longitude, address, status, notes, uid,
             created_at, updated_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
          RETURNING *`,
         [
             site.name,
@@ -1028,13 +1019,6 @@ export async function insertJobSite(site) {
             site.status || 'active',
             site.notes || null,
             uid,
-            site.customer_name || null,
-            site.primary_contact_name || null,
-            site.primary_contact_phone || null,
-            site.primary_contact_email || null,
-            site.secondary_contact_name || null,
-            site.secondary_contact_phone || null,
-            site.secondary_contact_email || null,
             Date.now()
         ]
     );
@@ -1048,7 +1032,7 @@ export async function updateJobSite(id, updates) {
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-        if (['name', 'latitude', 'longitude', 'address', 'status', 'notes', 'is_headquarters', 'delivery_date', 'active_date', 'calloff_date', 'pickup_date', 'geofence_radius_m', 'uid', 'customer_name', 'primary_contact_name', 'primary_contact_phone', 'primary_contact_email', 'secondary_contact_name', 'secondary_contact_phone', 'secondary_contact_email', 'company_id'].includes(key)) {
+        if (['name', 'latitude', 'longitude', 'address', 'status', 'notes', 'is_headquarters', 'delivery_date', 'active_date', 'calloff_date', 'pickup_date', 'geofence_radius_m', 'uid', 'company_id'].includes(key)) {
             fields.push(`${key} = $${idx}`);
             values.push(value);
             idx++;
