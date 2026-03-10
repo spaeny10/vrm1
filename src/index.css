@@ -8940,6 +8940,166 @@ tr:hover .btn-hq-toggle {
   opacity: 0.85;
 }
 
+/* Tag Picker */
+.tag-picker {
+  position: relative;
+}
+
+.tag-picker-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.tag-picker-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.tag-picker-dropdown {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  min-width: 200px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  padding: 6px 0;
+}
+
+.tag-picker-section:not(:last-child) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.tag-picker-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 6px 12px 4px;
+}
+
+.tag-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: background 0.1s;
+}
+
+.tag-picker-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tag-picker-item input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.tag-picker-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.tag-chip:hover { opacity: 0.8; }
+
+.tag-chip-trailer {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.tag-chip-category {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+}
+
+.tag-chip-remove {
+  font-size: 14px;
+  font-weight: 700;
+  opacity: 0.6;
+}
+
+.tag-chip:hover .tag-chip-remove { opacity: 1; }
+
+/* Tag badges on notes */
+.note-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.tag-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.tag-badge-trailer {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+}
+
+.tag-badge-trailer:hover {
+  background: rgba(16, 185, 129, 0.22);
+}
+
+.tag-badge-category {
+  background: rgba(249, 115, 22, 0.12);
+  color: #f97316;
+}
+
+/* Site badge on trailer detail related notes */
+.note-site-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: rgba(139, 92, 246, 0.15);
+  color: #8b5cf6;
+  cursor: pointer;
+  margin-left: auto;
+  transition: background 0.15s;
+}
+
+.note-site-badge:hover {
+  background: rgba(139, 92, 246, 0.25);
+}
+
 .contact-role-badge {
   font-size: 10px;
   font-weight: 600;

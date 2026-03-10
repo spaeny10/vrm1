@@ -184,6 +184,8 @@ export async function initDb() {
         await client.query(`ALTER TABLE site_notes ADD COLUMN IF NOT EXISTS mentions JSONB DEFAULT '[]'`);
         await client.query(`ALTER TABLE site_notes ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES site_notes(id) ON DELETE CASCADE`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_site_notes_parent ON site_notes(parent_id)`);
+        await client.query(`ALTER TABLE site_notes ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_site_notes_tags ON site_notes USING GIN (tags)`);
 
         // Audit log table
         await client.query(`
@@ -1136,14 +1138,37 @@ export async function getAllSiteNotes({ limit = 100, offset = 0, siteId, author,
     return { notes: result.rows, total };
 }
 
-export async function insertSiteNote(jobSiteId, noteText, author = 'system', mentions = [], parentId = null) {
+export async function insertSiteNote(jobSiteId, noteText, author = 'system', mentions = [], parentId = null, tags = []) {
     if (!pool) return null;
     const result = await pool.query(
-        `INSERT INTO site_notes (job_site_id, note, author, mentions, parent_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [jobSiteId, noteText, author, JSON.stringify(mentions), parentId, Date.now()]
+        `INSERT INTO site_notes (job_site_id, note, author, mentions, parent_id, tags, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [jobSiteId, noteText, author, JSON.stringify(mentions), parentId, JSON.stringify(tags), Date.now()]
     );
     return result.rows[0];
+}
+
+export async function getNotesByTrailer(siteId, { limit = 20, offset = 0 } = {}) {
+    if (!pool) return { notes: [], total: 0 };
+    const tagFilter = `EXISTS (
+        SELECT 1 FROM jsonb_array_elements(sn.tags) tag
+        WHERE tag->>'type' = 'trailer' AND (tag->>'id')::integer = $1
+    ) AND sn.parent_id IS NULL`;
+    const countResult = await pool.query(
+        `SELECT COUNT(*) as total FROM site_notes sn WHERE ${tagFilter}`,
+        [siteId]
+    );
+    const total = parseInt(countResult.rows[0].total);
+    const result = await pool.query(
+        `SELECT sn.*, js.name as job_site_name,
+                (SELECT COUNT(*) FROM site_notes r WHERE r.parent_id = sn.id) as reply_count
+         FROM site_notes sn
+         LEFT JOIN job_sites js ON sn.job_site_id = js.id
+         WHERE ${tagFilter}
+         ORDER BY sn.created_at DESC LIMIT $2 OFFSET $3`,
+        [siteId, limit, offset]
+    );
+    return { notes: result.rows, total };
 }
 
 // ============================================================

@@ -9,7 +9,7 @@ import 'chartjs-adapter-date-fns'
 import zoomPlugin from 'chartjs-plugin-zoom'
 import { Line, Bar } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent, fetchBatteryHealth, fetchTrailerIntelligence, analyzeTrailer, fetchSites, fetchJobSites } from '../api/vrm'
+import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent, fetchBatteryHealth, fetchTrailerIntelligence, analyzeTrailer, fetchSites, fetchJobSites, fetchTrailerNotes, fetchReplies } from '../api/vrm'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import AlarmBadge from '../components/AlarmBadge'
@@ -91,6 +91,10 @@ function TrailerDetail() {
     const [analysisResult, setAnalysisResult] = useState(null)
     const [analysisLoading, setAnalysisLoading] = useState(false)
     const [analysisError, setAnalysisError] = useState(null)
+    const [relatedNotes, setRelatedNotes] = useState([])
+    const [notesTotal, setNotesTotal] = useState(0)
+    const [expandedNote, setExpandedNote] = useState(null)
+    const [noteReplies, setNoteReplies] = useState({})
 
     const handleAnalyze = async () => {
         setAnalysisLoading(true)
@@ -115,6 +119,37 @@ function TrailerDetail() {
             .then(res => setHistoryData(res.records || []))
             .catch(() => setHistoryData([]))
     }, [id, range])
+
+    // Load related notes (tagged with this trailer)
+    useEffect(() => {
+        fetchTrailerNotes(id)
+            .then(data => {
+                setRelatedNotes(data?.notes || [])
+                setNotesTotal(data?.total || 0)
+            })
+            .catch(() => setRelatedNotes([]))
+    }, [id])
+
+    const toggleNoteThread = async (noteId) => {
+        if (expandedNote === noteId) { setExpandedNote(null); return }
+        setExpandedNote(noteId)
+        if (!noteReplies[noteId] && parentJobSite) {
+            try {
+                const data = await fetchReplies(parentJobSite.id, noteId)
+                setNoteReplies(prev => ({ ...prev, [noteId]: data?.replies || [] }))
+            } catch (err) { console.error(err) }
+        }
+    }
+
+    const formatNoteDate = (ts) => {
+        const d = new Date(Number(ts))
+        const diff = Date.now() - d.getTime()
+        if (diff < 60000) return 'just now'
+        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
+        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
+        if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`
+        return d.toLocaleDateString()
+    }
 
     // Parse diagnostics
     const records = diagData?.records || [];
@@ -1036,6 +1071,80 @@ function TrailerDetail() {
                     </div>
                 )}
             </div>
+
+            {/* Related Notes (tagged with this trailer) */}
+            {relatedNotes.length > 0 && (
+                <div className="detail-section">
+                    <div className="detail-section-header">
+                        <h2>Related Notes</h2>
+                        <span className="detail-trailer-count">{notesTotal} tagged</span>
+                    </div>
+                    <div className="notes-timeline">
+                        {relatedNotes.map(n => (
+                            <div key={n.id} className="note-item">
+                                <div className="note-dot"></div>
+                                <div className="note-content">
+                                    <div className="note-header">
+                                        <span className="note-author">{n.author || 'System'}</span>
+                                        <span className="note-time">{formatNoteDate(n.created_at)}</span>
+                                        {n.job_site_name && (
+                                            <span className="note-site-badge" onClick={() => navigate(`/site/${n.job_site_id}`)}>
+                                                {n.job_site_name}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <p className="note-text">{n.note}</p>
+                                    {n.mentions && (typeof n.mentions === 'string' ? JSON.parse(n.mentions) : n.mentions).length > 0 && (
+                                        <div className="note-mentions">
+                                            {(typeof n.mentions === 'string' ? JSON.parse(n.mentions) : n.mentions).map((m, i) => (
+                                                <span key={i} className="mention-tag">@{m}</span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {n.tags && (typeof n.tags === 'string' ? JSON.parse(n.tags) : n.tags).length > 0 && (
+                                        <div className="note-tags">
+                                            {(typeof n.tags === 'string' ? JSON.parse(n.tags) : n.tags).map((tag, i) => (
+                                                <span key={i} className={`tag-badge tag-badge-${tag.type}`}
+                                                    onClick={tag.type === 'trailer' ? () => navigate(`/trailer/${tag.id}`) : undefined}
+                                                    style={tag.type === 'trailer' ? { cursor: 'pointer' } : undefined}>
+                                                    {tag.label}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {parseInt(n.reply_count) > 0 && (
+                                        <div className="note-actions">
+                                            <button className="note-thread-toggle" onClick={() => toggleNoteThread(n.id)}>
+                                                {expandedNote === n.id ? 'Hide replies' : `${n.reply_count} ${parseInt(n.reply_count) === 1 ? 'reply' : 'replies'}`}
+                                            </button>
+                                        </div>
+                                    )}
+                                    {expandedNote === n.id && (
+                                        <div className="note-thread">
+                                            {(noteReplies[n.id] || []).map(r => (
+                                                <div key={r.id} className="note-reply">
+                                                    <div className="note-header">
+                                                        <span className="note-author">{r.author || 'System'}</span>
+                                                        <span className="note-time">{formatNoteDate(r.created_at)}</span>
+                                                    </div>
+                                                    <p className="note-text">{r.note}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    {parentJobSite && (
+                        <div style={{ marginTop: '12px', textAlign: 'center' }}>
+                            <button className="btn btn-sm btn-ghost" onClick={() => navigate(`/site/${parentJobSite.id}`)}>
+                                View all notes for {parentJobSite.name}
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
 
             {showComponentForm && (
                 <ComponentForm

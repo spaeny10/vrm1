@@ -210,15 +210,19 @@ export async function fetchSiteNotes(id) {
     return apiFetch(`${API_BASE}/job-sites/${id}/notes`);
 }
 
-export async function addSiteNote(id, noteText, mentions = [], parentId = null) {
+export async function addSiteNote(id, noteText, mentions = [], parentId = null, tags = []) {
     return apiFetch(`${API_BASE}/job-sites/${id}/notes`, {
         method: 'POST',
-        body: JSON.stringify({ note: noteText, mentions, parent_id: parentId }),
+        body: JSON.stringify({ note: noteText, mentions, parent_id: parentId, tags }),
     });
 }
 
 export async function fetchReplies(siteId, noteId) {
     return apiFetch(`${API_BASE}/job-sites/${siteId}/notes/${noteId}/replies`);
+}
+
+export async function fetchTrailerNotes(siteId, limit = 20, offset = 0) {
+    return apiFetch(`${API_BASE}/trailers/${siteId}/notes?limit=${limit}&offset=${offset}`);
 }
 
 export async function fetchMentionableUsers() {

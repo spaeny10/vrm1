@@ -14,7 +14,7 @@ import {
     insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
     upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding,
     getJobSites, getJobSite, getJobSiteByPhone, insertJobSite, updateJobSite, deleteJobSite,
-    getSiteNotes, insertSiteNote, getAllSiteNotes, getReplies,
+    getSiteNotes, insertSiteNote, getAllSiteNotes, getReplies, getNotesByTrailer,
     insertAuditLog, getAuditLog,
     getCompanies, getCompany, insertCompany, updateCompany,
     getContacts, insertContact, updateContact, deleteContact,
@@ -1830,17 +1830,30 @@ app.get('/api/job-sites/:id/notes/:noteId/replies', async (req, res) => {
     }
 });
 
+// GET notes tagged with a specific trailer
+app.get('/api/trailers/:siteId/notes', async (req, res) => {
+    try {
+        const siteId = parseInt(req.params.siteId);
+        const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+        const offset = parseInt(req.query.offset) || 0;
+        const result = await getNotesByTrailer(siteId, { limit, offset });
+        res.json({ success: true, notes: result.notes, total: result.total, limit, offset });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // POST new site note (with @mention notifications + audit log)
 app.post('/api/job-sites/:id/notes', async (req, res) => {
     try {
-        const { note, mentions, parent_id } = req.body;
+        const { note, mentions, parent_id, tags } = req.body;
         if (!note) return res.status(400).json({ success: false, error: 'Note is required' });
         const author = req.user ? req.user.display_name : 'system';
         const siteId = parseInt(req.params.id);
-        const created = await insertSiteNote(siteId, note, author, mentions || [], parent_id || null);
+        const created = await insertSiteNote(siteId, note, author, mentions || [], parent_id || null, tags || []);
 
         // Audit log
-        insertAuditLog('site', siteId, 'note_added', { note_id: created.id, mentions }, author).catch(() => { });
+        insertAuditLog('site', siteId, 'note_added', { note_id: created.id, mentions, tags }, author).catch(() => { });
 
         // Send @mention email notifications (async, don't block response)
         if (mentions && mentions.length > 0) {

@@ -8,6 +8,7 @@ import {
 import { Line } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { fetchJobSite, updateJobSite, fetchSiteMaintenance, fetchSiteContacts, assignContact, removeContact, fetchSiteNotes, addSiteNote, fetchReplies, fetchCompanies, fetchContacts, fetchMentionableUsers } from '../api/vrm'
+import TagPicker from '../components/TagPicker'
 import KpiCard from '../components/KpiCard'
 import GaugeChart from '../components/GaugeChart'
 import Breadcrumbs from '../components/Breadcrumbs'
@@ -46,6 +47,7 @@ function JobSiteDetail() {
     const [replies, setReplies] = useState({})
     const [replyingTo, setReplyingTo] = useState(null)
     const [replyText, setReplyText] = useState('')
+    const [selectedTags, setSelectedTags] = useState([])
     const [mentionUsers, setMentionUsers] = useState([])
     const [showMentionList, setShowMentionList] = useState(false)
     const [mentionFilter, setMentionFilter] = useState('')
@@ -118,8 +120,9 @@ function JobSiteDetail() {
         const mentionMatches = newNoteText.match(/@([\w\s]+?)(?=\s@|\s[^@]|$)/g) || []
         const mentions = mentionMatches.map(m => m.slice(1).trim()).filter(Boolean)
         try {
-            await addSiteNote(id, newNoteText, mentions)
+            await addSiteNote(id, newNoteText, mentions, null, selectedTags)
             setNewNoteText('')
+            setSelectedTags([])
             loadNotes()
         } catch (err) { console.error(err) }
         finally { setAddingNote(false) }
@@ -531,6 +534,7 @@ function JobSiteDetail() {
                                 </div>
                             )}
                         </div>
+                        <TagPicker trailers={trailers} selectedTags={selectedTags} onTagsChange={setSelectedTags} />
                         <button className="btn btn-sm btn-primary" type="submit" disabled={!newNoteText.trim() || addingNote}>
                             {addingNote ? '...' : 'Add'}
                         </button>
@@ -552,6 +556,17 @@ function JobSiteDetail() {
                                         <div className="note-mentions">
                                             {(typeof n.mentions === 'string' ? JSON.parse(n.mentions) : n.mentions).map((m, i) => (
                                                 <span key={i} className="mention-tag">@{m}</span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {n.tags && (typeof n.tags === 'string' ? JSON.parse(n.tags) : n.tags).length > 0 && (
+                                        <div className="note-tags">
+                                            {(typeof n.tags === 'string' ? JSON.parse(n.tags) : n.tags).map((tag, i) => (
+                                                <span key={i} className={`tag-badge tag-badge-${tag.type}`}
+                                                    onClick={tag.type === 'trailer' ? () => navigate(`/trailer/${tag.id}`) : undefined}
+                                                    style={tag.type === 'trailer' ? { cursor: 'pointer' } : undefined}>
+                                                    {tag.label}
+                                                </span>
                                             ))}
                                         </div>
                                     )}
@@ -580,6 +595,13 @@ function JobSiteDetail() {
                                                         <div className="note-mentions">
                                                             {(typeof r.mentions === 'string' ? JSON.parse(r.mentions) : r.mentions).map((m, i) => (
                                                                 <span key={i} className="mention-tag">@{m}</span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    {r.tags && (typeof r.tags === 'string' ? JSON.parse(r.tags) : r.tags).length > 0 && (
+                                                        <div className="note-tags">
+                                                            {(typeof r.tags === 'string' ? JSON.parse(r.tags) : r.tags).map((tag, i) => (
+                                                                <span key={i} className={`tag-badge tag-badge-${tag.type}`}>{tag.label}</span>
                                                             ))}
                                                         </div>
                                                     )}
