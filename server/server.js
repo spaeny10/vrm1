@@ -121,6 +121,9 @@ app.use(express.json());
 const distPath = path.join(__dirname, '..', 'dist');
 app.use(express.static(distPath));
 
+// Trust first proxy (Railway) so express-rate-limit reads X-Forwarded-For correctly
+app.set('trust proxy', 1);
+
 // Rate limiters
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, message: { error: 'Too many login attempts, try again in 15 minutes' } });
 const aiLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, message: { error: 'Too many AI requests, try again in a minute' } });
