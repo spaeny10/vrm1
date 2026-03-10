@@ -14,7 +14,7 @@ import {
     insertPepwaveSnapshot, getPepwaveHistory, getPepwaveDailyUsage,
     upsertEmbedding, semanticSearch, getEmbeddingStats, getAllContentForEmbedding,
     getJobSites, getJobSite, getJobSiteByPhone, insertJobSite, updateJobSite, deleteJobSite,
-    getSiteNotes, insertSiteNote, updateSiteNote, deleteSiteNote, getAllSiteNotes, getReplies, getNotesByTrailer,
+    getSiteNotes, getSiteNote, insertSiteNote, updateSiteNote, deleteSiteNote, getAllSiteNotes, getReplies, getNotesByTrailer,
     togglePinNote, markNoteRead, getNoteReaders,
     insertAuditLog, getAuditLog,
     getCompanies, getCompany, insertCompany, updateCompany,
@@ -1904,9 +1904,9 @@ app.put('/api/job-sites/:id/notes/:noteId', async (req, res) => {
         const { note } = req.body;
         if (!note) return res.status(400).json({ success: false, error: 'Note text is required' });
         // Verify ownership: fetch note and check author
-        const existing = await pool.query('SELECT * FROM site_notes WHERE id = $1', [noteId]);
-        if (!existing.rows[0]) return res.status(404).json({ success: false, error: 'Note not found' });
-        const isAuthor = existing.rows[0].author === req.user?.display_name;
+        const existing = await getSiteNote(noteId);
+        if (!existing) return res.status(404).json({ success: false, error: 'Note not found' });
+        const isAuthor = existing.author === req.user?.display_name;
         const isAdmin = req.user?.role === 'admin';
         if (!isAuthor && !isAdmin) return res.status(403).json({ success: false, error: 'Not authorized' });
         const updated = await updateSiteNote(noteId, note);
@@ -1921,9 +1921,9 @@ app.put('/api/job-sites/:id/notes/:noteId', async (req, res) => {
 app.delete('/api/job-sites/:id/notes/:noteId', async (req, res) => {
     try {
         const noteId = parseInt(req.params.noteId);
-        const existing = await pool.query('SELECT * FROM site_notes WHERE id = $1', [noteId]);
-        if (!existing.rows[0]) return res.status(404).json({ success: false, error: 'Note not found' });
-        const isAuthor = existing.rows[0].author === req.user?.display_name;
+        const existing = await getSiteNote(noteId);
+        if (!existing) return res.status(404).json({ success: false, error: 'Note not found' });
+        const isAuthor = existing.author === req.user?.display_name;
         const isAdmin = req.user?.role === 'admin';
         if (!isAuthor && !isAdmin) return res.status(403).json({ success: false, error: 'Not authorized' });
         await deleteSiteNote(noteId);

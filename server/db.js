@@ -1169,6 +1169,12 @@ export async function getAllSiteNotes({ limit = 100, offset = 0, siteId, author,
     return { notes: result.rows, total };
 }
 
+export async function getSiteNote(noteId) {
+    if (!pool) return null;
+    const result = await pool.query('SELECT * FROM site_notes WHERE id = $1', [noteId]);
+    return result.rows[0] || null;
+}
+
 export async function insertSiteNote(jobSiteId, noteText, author = 'system', mentions = [], parentId = null, tags = []) {
     if (!pool) return null;
     const result = await pool.query(
