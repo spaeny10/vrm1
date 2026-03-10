@@ -691,10 +691,10 @@ function TrailerDetail() {
                                         fill="none"
                                         stroke={batteryHealthData.trend === 'declining' ? '#e74c3c' : batteryHealthData.trend === 'improving' ? '#2ecc71' : '#3498db'}
                                         strokeWidth="2"
-                                        points={batteryHealthData.data_points.map((p, i) => `${i * 8},${40 - (p.min_soc ?? p.avg_soc ?? 0) * 0.4}`).join(' ')}
+                                        points={batteryHealthData.data_points.map((p, i) => `${i * 8},${40 - (p.max_soc ?? p.avg_soc ?? 0) * 0.4}`).join(' ')}
                                     />
                                 </svg>
-                                <span className="sparkline-label">30-day min SOC trend</span>
+                                <span className="sparkline-label">30-day max SOC trend</span>
                             </div>
                         )}
                     </div>

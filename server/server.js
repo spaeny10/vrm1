@@ -3047,11 +3047,11 @@ app.get('/api/analytics/trailer/:id/battery-health', async (req, res) => {
             return res.json({ success: true, trend: 'insufficient_data', dataPoints });
         }
 
-        // Linear regression on min_soc over time
+        // Linear regression on max_soc over time (peak daily SOC after charging = true capacity)
         const n = dataPoints.length;
         let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
         for (let i = 0; i < n; i++) {
-            const y = dataPoints[i].min_soc ?? dataPoints[i].avg_soc ?? 0;
+            const y = dataPoints[i].max_soc ?? dataPoints[i].avg_soc ?? 0;
             sumX += i;
             sumY += y;
             sumXY += i * y;
@@ -3066,7 +3066,7 @@ app.get('/api/analytics/trailer/:id/battery-health', async (req, res) => {
 
         let daysUntilCritical = null;
         if (trend === 'declining') {
-            const currentSoc = dataPoints[n - 1].min_soc ?? dataPoints[n - 1].avg_soc ?? 50;
+            const currentSoc = dataPoints[n - 1].max_soc ?? dataPoints[n - 1].avg_soc ?? 50;
             if (currentSoc > 20) {
                 daysUntilCritical = Math.round((currentSoc - 20) / Math.abs(slope));
             }
