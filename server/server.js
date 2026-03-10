@@ -1747,9 +1747,10 @@ app.get('/api/job-sites/:id', async (req, res) => {
         const enrichedTrailers = trailers.map(t => {
             const snap = snapshotCache.get(t.site_id);
             const pw = pepwaveCache.get(t.site_name);
+            const fresh = hasVrmData(snap);
             return {
                 ...t,
-                snapshot: snap || null,
+                snapshot: fresh ? snap : null,
                 pepwave: pw || null,
             };
         });
@@ -5016,14 +5017,15 @@ app.get('/api/reports/site/:id', async (req, res) => {
         const trailerSummaries = [];
         for (const t of trailers) {
             const snapshot = snapshotCache.get(t.site_id);
-            const grade = computeHealthGrade(t.site_id);
+            const fresh = hasVrmData(snapshot);
+            const grade = fresh ? computeHealthGrade(t.site_id) : null;
             trailerSummaries.push({
                 site_id: t.site_id,
                 site_name: t.site_name,
                 health_grade: grade,
-                battery_soc: snapshot?.battery_soc,
-                solar_watts: snapshot?.solar_watts,
-                yield_today: snapshot?.solar_yield_today,
+                battery_soc: fresh ? snapshot?.battery_soc : null,
+                solar_watts: fresh ? snapshot?.solar_watts : null,
+                yield_today: fresh ? snapshot?.solar_yield_today : null,
             });
         }
 
