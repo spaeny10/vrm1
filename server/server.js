@@ -3831,6 +3831,17 @@ async function pollIc2Devices() {
             );
         }
 
+        // Re-run clustering periodically after GPS updates (every 30 min, not every poll)
+        if (dbAvailable && gpsCache.size > 0) {
+            const CLUSTER_INTERVAL = 30 * 60 * 1000; // 30 minutes
+            if (!pollIc2Devices._lastCluster || Date.now() - pollIc2Devices._lastCluster > CLUSTER_INTERVAL) {
+                pollIc2Devices._lastCluster = Date.now();
+                runClustering().catch(err =>
+                    console.error('  Auto-clustering after IC2 poll failed:', err.message)
+                );
+            }
+        }
+
         // Check geofences after GPS update (async, don't block)
         if (gpsCache.size > 0) {
             checkGeofences().catch(err => console.error('  Geofence check failed:', err.message));

@@ -134,6 +134,21 @@ export async function runClustering(thresholdMeters = 300) {
             }
         }
 
+        // If best match is geographically far from cluster, don't match — trailers moved
+        const MAX_MATCH_DISTANCE = 10000; // 10km — beyond this, treat as a new site
+        if (bestMatch && bestOverlap > 0) {
+            const matchedSite = existingJobSites.find(s => s.id === bestMatch);
+            if (matchedSite && matchedSite.latitude && matchedSite.longitude) {
+                const dist = haversineMeters(matchedSite.latitude, matchedSite.longitude,
+                    cluster.centroid_lat, cluster.centroid_lng);
+                if (dist > MAX_MATCH_DISTANCE) {
+                    console.log(`  Clustering: cluster at (${cluster.centroid_lat.toFixed(4)}, ${cluster.centroid_lng.toFixed(4)}) is ${(dist / 1000).toFixed(1)}km from matched site "${matchedSite.name}" — creating new site`);
+                    bestMatch = null;
+                    bestOverlap = 0;
+                }
+            }
+        }
+
         let jobSiteId;
         if (bestMatch && bestOverlap > 0) {
             // Update existing job site centroid coordinates
