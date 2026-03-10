@@ -292,6 +292,8 @@ export async function initDb() {
 
         // Auto-flag Big View HQ as headquarters
         await client.query(`UPDATE job_sites SET is_headquarters = TRUE WHERE name ILIKE '%big view hq%' AND (is_headquarters IS NULL OR is_headquarters = FALSE)`);
+        // Fix: clustering bug overwrote HQ coordinates with remote site GPS — clear them
+        await client.query(`UPDATE job_sites SET latitude = NULL, longitude = NULL WHERE is_headquarters = TRUE AND latitude IS NOT NULL`);
         console.log('  ✓ Deployment management columns ready');
 
         // Add soc_start_of_day column for persistent consumption estimation

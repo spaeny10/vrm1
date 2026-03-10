@@ -92,9 +92,11 @@ function clusterTrailers(trailers, thresholdMeters = 300) {
 
 /**
  * Run clustering and reconcile with existing job_sites in the database.
- * - Matches clusters to existing job sites by trailer overlap
+ * - Matches clusters to existing job sites by GPS proximity (not just overlap)
  * - Creates new job sites for unmatched clusters
  * - Respects manual_override on trailer assignments
+ * - Never moves headquarters coordinates
+ * - Each job site can only be matched by one cluster
  */
 export async function runClustering(thresholdMeters = 300) {
     const trailers = await getTrailersWithGps();
@@ -118,43 +120,56 @@ export async function runClustering(thresholdMeters = 300) {
 
     let created = 0;
     let updated = 0;
+    const matchedJobSiteIds = new Set(); // Track which job sites are already claimed
 
     for (const cluster of clusters) {
         const clusterSiteIds = new Set(cluster.trailers.map(t => t.site_id));
 
-        // Find the existing job site with the most overlap
+        // Step 1: Find best match by GPS proximity to existing job site centroids
         let bestMatch = null;
-        let bestOverlap = 0;
+        let bestDistance = Infinity;
+        const MAX_GPS_MATCH_DISTANCE = 10000; // 10km
 
-        for (const [jobSiteId, assignedIds] of existingAssignments) {
-            const overlap = [...clusterSiteIds].filter(id => assignedIds.has(id)).length;
-            if (overlap > bestOverlap) {
-                bestOverlap = overlap;
-                bestMatch = jobSiteId;
+        for (const js of existingJobSites) {
+            if (matchedJobSiteIds.has(js.id)) continue; // Already claimed by another cluster
+            if (!js.latitude || !js.longitude) continue;
+
+            const dist = haversineMeters(js.latitude, js.longitude,
+                cluster.centroid_lat, cluster.centroid_lng);
+            if (dist < MAX_GPS_MATCH_DISTANCE && dist < bestDistance) {
+                bestDistance = dist;
+                bestMatch = js.id;
             }
         }
 
-        // If best match is geographically far from cluster, don't match — trailers moved
-        const MAX_MATCH_DISTANCE = 10000; // 10km — beyond this, treat as a new site
-        if (bestMatch && bestOverlap > 0) {
-            const matchedSite = existingJobSites.find(s => s.id === bestMatch);
-            if (matchedSite && matchedSite.latitude && matchedSite.longitude) {
-                const dist = haversineMeters(matchedSite.latitude, matchedSite.longitude,
-                    cluster.centroid_lat, cluster.centroid_lng);
-                if (dist > MAX_MATCH_DISTANCE) {
-                    console.log(`  Clustering: cluster at (${cluster.centroid_lat.toFixed(4)}, ${cluster.centroid_lng.toFixed(4)}) is ${(dist / 1000).toFixed(1)}km from matched site "${matchedSite.name}" — creating new site`);
-                    bestMatch = null;
-                    bestOverlap = 0;
+        // Step 2: If no GPS match, fall back to overlap — but only if geographically reasonable
+        if (!bestMatch) {
+            let bestOverlap = 0;
+            for (const [jobSiteId, assignedIds] of existingAssignments) {
+                if (matchedJobSiteIds.has(jobSiteId)) continue;
+                const overlap = [...clusterSiteIds].filter(id => assignedIds.has(id)).length;
+                if (overlap > bestOverlap) {
+                    // Verify the matched site is geographically close (or has no coordinates)
+                    const js = existingJobSites.find(s => s.id === jobSiteId);
+                    if (js && js.latitude && js.longitude) {
+                        const dist = haversineMeters(js.latitude, js.longitude,
+                            cluster.centroid_lat, cluster.centroid_lng);
+                        if (dist > MAX_GPS_MATCH_DISTANCE) continue; // Too far, skip
+                    }
+                    bestOverlap = overlap;
+                    bestMatch = jobSiteId;
                 }
             }
         }
 
         let jobSiteId;
-        if (bestMatch && bestOverlap > 0) {
-            // Update existing job site centroid coordinates
+        if (bestMatch) {
             jobSiteId = bestMatch;
+            matchedJobSiteIds.add(bestMatch); // Claim this job site
+
+            // Update centroid — but never move headquarters
             const existingSite = existingJobSites.find(s => s.id === bestMatch);
-            if (existingSite) {
+            if (existingSite && !existingSite.is_headquarters) {
                 const needsUpdate = !existingSite.latitude || !existingSite.longitude
                     || haversineMeters(existingSite.latitude, existingSite.longitude,
                         cluster.centroid_lat, cluster.centroid_lng) > 200;
@@ -189,6 +204,7 @@ export async function runClustering(thresholdMeters = 300) {
             });
             jobSiteId = newSite.id;
             existingJobSites.push({ id: jobSiteId, name: siteName });
+            matchedJobSiteIds.add(jobSiteId);
             created++;
             // Rate limit Nominatim
             await new Promise(r => setTimeout(r, 1100));
