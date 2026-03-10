@@ -1961,6 +1961,9 @@ app.post('/api/gps-changes/:id/approve', requireRole('admin', 'technician'), asy
         // Mark suggestion as approved
         await updateGpsSuggestionStatus(id, 'approved', req.user.id);
 
+        // Clear geofence alert for this trailer since assignment changed
+        geofenceAlerts.delete(suggestion.site_id);
+
         // Log to audit
         await insertAuditLog('gps_suggestion', id, 'approved', {
             site_name: suggestion.site_name,
@@ -2300,6 +2303,9 @@ app.post('/api/job-sites/recluster', requireRole('admin'), async (req, res) => {
         }
         const threshold = parseInt(req.body?.threshold) || 200;
         const result = await runClustering(threshold);
+        // Clear stale geofence alerts — assignments/coordinates may have changed
+        geofenceAlerts.clear();
+        checkGeofences().catch(err => console.error('  Post-recluster geofence check failed:', err.message));
         res.json({ success: true, ...result });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -2532,6 +2538,10 @@ app.post('/api/gps/refresh', requireRole('admin', 'technician'), async (req, res
         if (dbAvailable && updated > 0) {
             try { await runClustering(); } catch (e) { /* non-critical */ }
         }
+
+        // Clear stale geofence alerts — GPS positions have changed
+        geofenceAlerts.clear();
+        checkGeofences().catch(err => console.error('  Post-GPS-refresh geofence check failed:', err.message));
 
         res.json({ success: true, updated, failed, total_gps_devices: gpsDevices.length });
     } catch (err) {
