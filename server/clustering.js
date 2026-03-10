@@ -1,5 +1,5 @@
 import {
-    getTrailersWithGps, getJobSites, insertJobSite,
+    getTrailersWithGps, getJobSites, insertJobSite, updateJobSite,
     upsertTrailerAssignment, getTrailersByJobSite
 } from './db.js';
 
@@ -136,8 +136,15 @@ export async function runClustering(thresholdMeters = 300) {
 
         let jobSiteId;
         if (bestMatch && bestOverlap > 0) {
-            // Update existing job site centroid
+            // Update existing job site centroid coordinates
             jobSiteId = bestMatch;
+            const existingSite = existingJobSites.find(s => s.id === bestMatch);
+            if (existingSite && (!existingSite.latitude || !existingSite.longitude)) {
+                await updateJobSite(bestMatch, {
+                    latitude: cluster.centroid_lat,
+                    longitude: cluster.centroid_lng,
+                });
+            }
             updated++;
         } else {
             // Create new job site — reverse geocode for name
