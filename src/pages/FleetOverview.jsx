@@ -750,7 +750,10 @@ function FleetOverview() {
                                                     title={`${{ good: 'Good', watch: 'Watch', attention: 'Needs Attention' }[ts.status]}${ts.reason ? ': ' + ts.reason : ''}`} />
                                             ) : '—'}
                                         </td>
-                                        <td className="fleet-table-name">{site.name}</td>
+                                        <td className="fleet-table-name">
+                                            {site.name}
+                                            {(site.ic2_only || site.idSite < 0) && <span className="ic2-only-badge">IC2</span>}
+                                        </td>
                                         <td className="fleet-table-muted fleet-table-site" onClick={jobSiteId ? (e) => { e.stopPropagation(); navigate(`/site/${jobSiteId}`) } : undefined}>
                                             {jobSiteName || '—'}
                                             {companyName && <span className="fleet-table-company">{companyName}</span>}
@@ -760,10 +763,14 @@ function FleetOverview() {
                                                 <span className={`fleet-table-soc ${soc < 20 ? 'soc-critical' : soc < 50 ? 'soc-warning' : 'soc-good'}`}>
                                                     {soc.toFixed(0)}%
                                                 </span>
+                                            ) : (site.ic2_only || site.idSite < 0) ? (
+                                                <span className={`fleet-table-net ${pw?.online ? 'net-online' : 'net-offline'}`}>
+                                                    {pw?.online ? 'Online' : pw ? 'Offline' : '—'}
+                                                </span>
                                             ) : <span className="fleet-table-muted">—</span>}
                                         </td>
-                                        <td>{snap?.solar_watts != null ? `${Math.round(snap.solar_watts)}W` : '—'}</td>
-                                        <td>{snap?.dc_load_watts != null ? `${Math.round(snap.dc_load_watts)}W` : '—'}</td>
+                                        <td>{snap?.solar_watts != null ? `${Math.round(snap.solar_watts)}W` : (site.ic2_only || site.idSite < 0) ? '' : '—'}</td>
+                                        <td>{snap?.dc_load_watts != null ? `${Math.round(snap.dc_load_watts)}W` : (site.ic2_only || site.idSite < 0) ? '' : '—'}</td>
                                         <td>
                                             {pw ? (
                                                 <span className={`fleet-table-net ${pw.online ? 'net-online' : 'net-offline'}`}

@@ -862,6 +862,79 @@ body {
   font-size: 16px;
 }
 
+/* --- IC2-Only Badge & Card Styles --- */
+.ic2-only-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  border-radius: 4px;
+  background: rgba(52, 152, 219, 0.2);
+  color: #3498db;
+  vertical-align: middle;
+}
+
+.ic2-only-body {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.ic2-status-indicator {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 3px solid;
+}
+
+.ic2-status-indicator.ic2-online {
+  border-color: var(--success);
+  background: rgba(46, 204, 113, 0.08);
+}
+
+.ic2-status-indicator.ic2-offline {
+  border-color: var(--text-muted);
+  background: rgba(127, 140, 141, 0.08);
+}
+
+.ic2-status-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.ic2-status-text {
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 4px;
+  color: var(--text-secondary);
+}
+
+.ic2-online .ic2-status-text {
+  color: var(--success);
+}
+
+.ic2-offline .ic2-status-text {
+  color: var(--text-muted);
+}
+
+.ic2-no-data {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 16px;
+}
+
 /* --- Signal Badge (SiteCard header) --- */
 .site-card-badges {
   display: flex;

@@ -72,11 +72,15 @@ function TechStatusDot({ techStatus }) {
 function TrailerCard({ site, snapshot, pepwave, jobSiteName, healthGrade, techStatus }) {
     const navigate = useNavigate()
 
+    const isIc2Only = site.ic2_only || site.idSite < 0
     const soc = snapshot?.battery_soc ?? null
     const voltage = snapshot?.battery_voltage ?? null
     const solarW = snapshot?.solar_watts ?? null
     const yieldToday = snapshot?.solar_yield_today ?? null
     const lastUpdate = (() => {
+        if (isIc2Only && pepwave) {
+            return pepwave.online ? 'Network online' : 'Network offline'
+        }
         if (!snapshot?.timestamp) return '—'
         const ts = Number(snapshot.timestamp)
         if (isNaN(ts) || ts <= 0) return '—'
@@ -87,11 +91,15 @@ function TrailerCard({ site, snapshot, pepwave, jobSiteName, healthGrade, techSt
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     })()
 
-    // Determine status
+    // Determine status — IC2-only uses Pepwave online/offline instead of VRM snapshot
     let status = 'ok'
-    if (site.alarmMonitoring && soc !== null && soc < 20) status = 'alarm'
-    else if (soc !== null && soc < 40) status = 'warning'
-    if (!snapshot) status = 'offline'
+    if (isIc2Only) {
+        status = pepwave?.online ? 'ok' : 'offline'
+    } else {
+        if (site.alarmMonitoring && soc !== null && soc < 20) status = 'alarm'
+        else if (soc !== null && soc < 40) status = 'warning'
+        if (!snapshot) status = 'offline'
+    }
 
     return (
         <div
@@ -100,7 +108,10 @@ function TrailerCard({ site, snapshot, pepwave, jobSiteName, healthGrade, techSt
         >
             <div className="site-card-header">
                 <div>
-                    <h3 className="site-card-name">{site.name}</h3>
+                    <h3 className="site-card-name">
+                        {site.name}
+                        {isIc2Only && <span className="ic2-only-badge">IC2</span>}
+                    </h3>
                     {jobSiteName && <span className="site-card-subtitle">{jobSiteName}</span>}
                 </div>
                 <div className="site-card-badges">
@@ -112,45 +123,83 @@ function TrailerCard({ site, snapshot, pepwave, jobSiteName, healthGrade, techSt
             </div>
 
             <div className="site-card-body">
-                <div className="site-card-gauge">
-                    <GaugeChart
-                        value={soc ?? 0}
-                        max={100}
-                        label="SOC"
-                        size={90}
-                        thickness={8}
-                    />
-                </div>
+                {isIc2Only ? (
+                    <div className="ic2-only-body">
+                        <div className={`ic2-status-indicator ${pepwave?.online ? 'ic2-online' : 'ic2-offline'}`}>
+                            <span className="ic2-status-icon">{pepwave?.online ? '📡' : '📡'}</span>
+                            <span className="ic2-status-text">{pepwave?.online ? 'Online' : 'Offline'}</span>
+                        </div>
+                        {pepwave && (
+                            <div className="site-card-stats">
+                                <div className="stat-row">
+                                    <span className="stat-label">Carrier</span>
+                                    <span className="stat-value">{pepwave.carrier || '—'}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Signal</span>
+                                    <span className="stat-value">
+                                        {pepwave.rsrp ? `${pepwave.rsrp} dBm` : pepwave.signal_bar != null ? `${pepwave.signal_bar}/5` : '—'}
+                                    </span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Technology</span>
+                                    <span className="stat-value">{pepwave.technology || '—'}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Clients</span>
+                                    <span className="stat-value">{pepwave.client_count ?? '—'}</span>
+                                </div>
+                            </div>
+                        )}
+                        {!pepwave && (
+                            <div className="ic2-no-data">
+                                <span>No network data available</span>
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <>
+                        <div className="site-card-gauge">
+                            <GaugeChart
+                                value={soc ?? 0}
+                                max={100}
+                                label="SOC"
+                                size={90}
+                                thickness={8}
+                            />
+                        </div>
 
-                <div className="site-card-stats">
-                    <div className="stat-row">
-                        <span className="stat-label">Voltage</span>
-                        <span className="stat-value">
-                            {voltage !== null ? `${Number(voltage).toFixed(1)}V` : '—'}
-                        </span>
-                    </div>
-                    <div className="stat-row">
-                        <span className="stat-label">Solar</span>
-                        <span className="stat-value">
-                            {solarW !== null ? `${Math.round(solarW)}W` : '—'}
-                        </span>
-                    </div>
-                    <div className="stat-row">
-                        <span className="stat-label">Yield</span>
-                        <span className="stat-value">
-                            {yieldToday !== null ? `${Number(yieldToday).toFixed(2)} kWh` : '—'}
-                        </span>
-                    </div>
-                    <div className="stat-row">
-                        <span className="stat-label">DC Load</span>
-                        <span className="stat-value">
-                            {snapshot?.dc_load_watts != null ? `${Math.round(snapshot.dc_load_watts)}W` : '—'}
-                        </span>
-                    </div>
-                </div>
+                        <div className="site-card-stats">
+                            <div className="stat-row">
+                                <span className="stat-label">Voltage</span>
+                                <span className="stat-value">
+                                    {voltage !== null ? `${Number(voltage).toFixed(1)}V` : '—'}
+                                </span>
+                            </div>
+                            <div className="stat-row">
+                                <span className="stat-label">Solar</span>
+                                <span className="stat-value">
+                                    {solarW !== null ? `${Math.round(solarW)}W` : '—'}
+                                </span>
+                            </div>
+                            <div className="stat-row">
+                                <span className="stat-label">Yield</span>
+                                <span className="stat-value">
+                                    {yieldToday !== null ? `${Number(yieldToday).toFixed(2)} kWh` : '—'}
+                                </span>
+                            </div>
+                            <div className="stat-row">
+                                <span className="stat-label">DC Load</span>
+                                <span className="stat-value">
+                                    {snapshot?.dc_load_watts != null ? `${Math.round(snapshot.dc_load_watts)}W` : '—'}
+                                </span>
+                            </div>
+                        </div>
+                    </>
+                )}
             </div>
 
-            {pepwave && (
+            {!isIc2Only && pepwave && (
                 <div className="site-card-netrow">
                     <span className={`netrow-dot ${pepwave.online ? 'netrow-dot-on' : 'netrow-dot-off'}`}></span>
                     <span className="netrow-carrier">{pepwave.carrier || '—'}</span>
@@ -167,7 +216,7 @@ function TrailerCard({ site, snapshot, pepwave, jobSiteName, healthGrade, techSt
             <div className="site-card-footer">
                 <span className="last-update">Updated {lastUpdate}</span>
                 <span className="site-card-icon">
-                    {site.device_icon === 'solar' ? '☀️' : '🔋'}
+                    {isIc2Only ? '📡' : site.device_icon === 'solar' ? '☀️' : '🔋'}
                 </span>
             </div>
         </div>
