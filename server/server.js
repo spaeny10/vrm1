@@ -4552,8 +4552,9 @@ function computeHealthGrade(siteId) {
 
     let totalScore = 0;
     let weights = 0;
+    const cfg = solarScoreConfig;
 
-    // Solar score 7d avg (25%)
+    // Solar performance (25%) — use weather-adjusted expected yield + throttle compensation
     const siteEnergy = dailyEnergy.get(siteId) || {};
     const today = todayStr();
     const pastDays = Object.entries(siteEnergy)
@@ -4561,45 +4562,57 @@ function computeHealthGrade(siteId) {
         .sort(([a], [b]) => b.localeCompare(a))
         .slice(0, 7);
     if (pastDays.length > 0) {
-        const yieldValues = pastDays.map(([, i]) => i.yield_wh).filter(v => v !== null && v > 0);
-        if (yieldValues.length > 0) {
-            const avgYield = yieldValues.reduce((s, v) => s + v, 0) / yieldValues.length;
-            const psh = 5; // default for grade calc
-            const expected = TRAILER_SPECS.solar.total_watts * psh * TRAILER_SPECS.solar.system_efficiency;
-            const solarPct = Math.min(100, (avgYield / expected) * 100);
+        // Per-day scores using each day's stored expected yield (weather-adjusted)
+        const dayScores = pastDays
+            .filter(([, d]) => d.yield_wh != null && d.yield_wh > 0)
+            .map(([, d]) => {
+                const exp = d.expected_yield_wh || null;
+                return exp > 0 ? Math.min(100, (d.yield_wh / exp) * 100) : null;
+            })
+            .filter(v => v !== null);
+        if (dayScores.length > 0) {
+            let solarPct = dayScores.reduce((s, v) => s + v, 0) / dayScores.length;
+
+            // Throttle compensation: if batteries are full, low yield is expected (MPPT throttled)
+            const csNum = typeof snapshot.charge_state === 'string' ? parseInt(snapshot.charge_state, 10) : snapshot.charge_state;
+            const isThrottled = (typeof csNum === 'number' && !isNaN(csNum) && (csNum === 5 || csNum === 6))
+                || (typeof snapshot.charge_state === 'string' && /float|idle|storage|external/i.test(snapshot.charge_state));
+            const isHighSoc = snapshot.battery_soc !== null && snapshot.battery_soc >= cfg.throttle_soc_threshold;
+
+            if (isThrottled && isHighSoc && solarPct < cfg.score_excellent) {
+                solarPct = Math.max(solarPct, cfg.throttle_floor_score);
+            }
+
             totalScore += solarPct * 0.25;
             weights += 0.25;
         }
     }
 
-    // Battery SOC as health proxy (20%)
+    // Battery SOC (30%) — this is the strongest indicator of system health
     if (snapshot.battery_soc !== null) {
-        totalScore += Math.min(100, snapshot.battery_soc) * 0.20;
-        weights += 0.20;
+        totalScore += Math.min(100, snapshot.battery_soc) * 0.30;
+        weights += 0.30;
     }
 
-    // Autonomy proxy (20%) — use SOC as approximation
+    // Autonomy proxy (15%) — tiered scoring based on SOC levels
     if (snapshot.battery_soc !== null) {
         const autonomyScore = snapshot.battery_soc >= 60 ? 100 : snapshot.battery_soc >= 30 ? 60 : snapshot.battery_soc >= 15 ? 30 : 10;
-        totalScore += autonomyScore * 0.20;
-        weights += 0.20;
+        totalScore += autonomyScore * 0.15;
+        weights += 0.15;
     }
 
     // Network status (15%)
-    const pepName = snapshot.site_name;
+    const pw = getPepwaveForTrailer({ site_name: snapshot.site_name, ic2_device_id: null, site_id: siteId });
     let networkScore = 50; // default if no data
-    for (const [, dev] of pepwaveCache) {
-        if (dev.name && pepName && dev.name.includes(pepName.replace('AG-', ''))) {
-            networkScore = dev.online ? (dev.signal_bar >= 3 ? 100 : dev.signal_bar >= 1 ? 60 : 30) : 0;
-            break;
-        }
+    if (pw) {
+        networkScore = pw.online ? (pw.signal_bar >= 3 ? 100 : pw.signal_bar >= 1 ? 60 : 30) : 0;
     }
     totalScore += networkScore * 0.15;
     weights += 0.15;
 
-    // Maintenance recency (20%) — more recent = better
-    totalScore += 70 * 0.20; // default to 70 (no maintenance tracking in cache)
-    weights += 0.20;
+    // Maintenance / system health (15%) — default to 85 (no issues = healthy)
+    totalScore += 85 * 0.15;
+    weights += 0.15;
 
     const score = weights > 0 ? Math.round(totalScore / weights) : null;
     const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F';
