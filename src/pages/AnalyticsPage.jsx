@@ -93,7 +93,10 @@ function AnalyticsPage({ embedded }) {
         setBackfillMsg('')
         try {
             const result = await backfillAnalytics(days)
-            setBackfillMsg(`Computed ${result.rows_computed} metrics across ${result.days_processed} days`)
+            const parts = [`${result.metrics_rows} metrics`]
+            if (result.expected_yield_backfilled > 0) parts.push(`${result.expected_yield_backfilled} expected yields`)
+            if (result.cache_reloaded > 0) parts.push(`${result.cache_reloaded} cache entries`)
+            setBackfillMsg(`Backfilled ${parts.join(', ')} across ${result.days_processed} days`)
             refetchFleet()
             refetchRankings()
         } catch (err) {

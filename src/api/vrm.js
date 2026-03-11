@@ -472,7 +472,7 @@ export async function fetchTrailerAnalytics(id, days = 30) {
     return apiFetch(`${API_BASE}/analytics/trailer/${id}?days=${days}`);
 }
 
-export async function backfillAnalytics(days = 7) {
+export async function backfillAnalytics(days = 30) {
     return apiFetch(`${API_BASE}/analytics/backfill`, {
         method: 'POST',
         body: JSON.stringify({ days }),
