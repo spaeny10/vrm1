@@ -716,3 +716,56 @@ export async function updateSolarScoreSettings(config) {
 export async function fetchFleetReportData() {
     return apiFetch(`${API_BASE}/reports/fleet`);
 }
+
+// ============================================================
+// Trailers, Rentals & Billing
+// ============================================================
+
+export async function fetchTrailers(status) {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    return apiFetch(`${API_BASE}/trailers${qs}`);
+}
+
+export async function createTrailer(data) {
+    return apiFetch(`${API_BASE}/trailers`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateTrailerAsset(id, data) {
+    return apiFetch(`${API_BASE}/trailers/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function fetchRentals(filters = {}) {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+        if (v !== undefined && v !== null && v !== '') params.set(k, v);
+    }
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return apiFetch(`${API_BASE}/rentals${qs}`);
+}
+
+export async function fetchRental(id) {
+    return apiFetch(`${API_BASE}/rentals/${id}`);
+}
+
+export async function createRental(data) {
+    return apiFetch(`${API_BASE}/rentals`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateRental(id, data) {
+    return apiFetch(`${API_BASE}/rentals/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function postRentalEvent(id, eventType, eventDate, notes) {
+    return apiFetch(`${API_BASE}/rentals/${id}/events`, {
+        method: 'POST',
+        body: JSON.stringify({ event_type: eventType, event_date: eventDate, notes }),
+    });
+}
+
+export async function fetchBillingSummary() {
+    return apiFetch(`${API_BASE}/billing/summary`);
+}
+
+export async function fetchBillingAlerts() {
+    return apiFetch(`${API_BASE}/billing/alerts`);
+}
