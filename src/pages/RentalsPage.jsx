@@ -3,7 +3,7 @@ import { useApiPolling } from '../hooks/useApiPolling'
 import { useAuth } from '../components/AuthProvider'
 import { useToast } from '../components/ToastProvider'
 import {
-    fetchRentals, createRental, postRentalEvent,
+    fetchRentals, createRental, updateRental, postRentalEvent,
     fetchBillingSummary, fetchBillingAlerts,
     fetchTrailers, fetchJobSites, fetchCompanies,
 } from '../api/vrm'
@@ -96,6 +96,7 @@ function RentalsPage() {
 
     const [statusFilter, setStatusFilter] = useState('all')
     const [showNewRental, setShowNewRental] = useState(false)
+    const [editingRental, setEditingRental] = useState(null)
     const [actionModal, setActionModal] = useState(null) // { rental, event }
     const [submitting, setSubmitting] = useState(false)
 
@@ -117,7 +118,7 @@ function RentalsPage() {
     const [companies, setCompanies] = useState([])
 
     useEffect(() => {
-        if (!showNewRental) return
+        if (!showNewRental && !editingRental) return
         Promise.all([fetchTrailers(), fetchJobSites(), fetchCompanies()])
             .then(([t, j, c]) => {
                 setTrailers(t.trailers || [])
@@ -125,7 +126,7 @@ function RentalsPage() {
                 setCompanies(c.companies || [])
             })
             .catch(err => toast.error(`Failed to load form data: ${err.message}`))
-    }, [showNewRental])
+    }, [showNewRental, editingRental])
 
     const filteredRentals = useMemo(() => {
         if (statusFilter === 'all') return rentals.filter(r => r.status !== 'closed' && r.status !== 'cancelled')
@@ -301,6 +302,13 @@ function RentalsPage() {
                                     <td>{statusBadge(r.status)}</td>
                                     {canEdit && (
                                         <td className="maint-actions">
+                                            <button
+                                                className="btn btn-sm btn-ghost"
+                                                style={{ marginRight: 6 }}
+                                                onClick={() => setEditingRental(r)}
+                                            >
+                                                Edit
+                                            </button>
                                             {(STATUS_ACTIONS[r.status] || []).map(action => (
                                                 <button
                                                     key={action.event}
@@ -342,6 +350,18 @@ function RentalsPage() {
                     onClose={() => setShowNewRental(false)}
                 />
             )}
+
+            {/* Edit rental modal */}
+            {editingRental && (
+                <EditRentalModal
+                    rental={editingRental}
+                    jobSites={jobSites}
+                    companies={companies}
+                    onSaved={() => { setEditingRental(null); refetchAll(); toast.success('Rental updated') }}
+                    onError={(msg) => toast.error(msg)}
+                    onClose={() => setEditingRental(null)}
+                />
+            )}
         </div>
     )
 }
@@ -378,6 +398,131 @@ function RentalEventModal({ rental, event, submitting, onConfirm, onClose }) {
                         <button className="btn btn-secondary" onClick={onClose} disabled={submitting}>Cancel</button>
                         <button className="btn btn-primary" onClick={() => onConfirm(event === 'cancel' ? undefined : date, notes)} disabled={submitting}>
                             {submitting ? 'Saving...' : (EVENT_LABELS[event] || 'Confirm')}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+// DATE columns arrive as ISO timestamps — reduce to yyyy-mm-dd for <input type="date">
+function toDateInput(d) {
+    if (!d) return ''
+    return String(d).slice(0, 10)
+}
+
+function EditRentalModal({ rental, jobSites, companies, onSaved, onError, onClose }) {
+    const [form, setForm] = useState({
+        job_site_id: rental.job_site_id || '',
+        company_id: rental.company_id || '',
+        po_number: rental.po_number || '',
+        rate_amount: rental.rate_amount || '',
+        rate_period: rental.rate_period || 'month',
+        billing_start: toDateInput(rental.billing_start),
+        calloff_at: toDateInput(rental.calloff_at),
+        billing_stop: toDateInput(rental.billing_stop),
+        notes: rental.notes || '',
+    })
+    const [saving, setSaving] = useState(false)
+
+    const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
+
+    const handleSubmit = async () => {
+        if (form.billing_start && form.billing_stop && form.billing_stop < form.billing_start) {
+            onError('Billing stop cannot be before billing start')
+            return
+        }
+        setSaving(true)
+        try {
+            await updateRental(rental.id, {
+                job_site_id: form.job_site_id ? parseInt(form.job_site_id) : null,
+                company_id: form.company_id ? parseInt(form.company_id) : null,
+                po_number: form.po_number || null,
+                rate_amount: form.rate_amount ? parseFloat(form.rate_amount) : null,
+                rate_period: form.rate_period,
+                billing_start: form.billing_start || null,
+                calloff_at: form.calloff_at || null,
+                billing_stop: form.billing_stop || null,
+                notes: form.notes || null,
+            })
+            onSaved()
+        } catch (err) {
+            onError(err.message)
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+                <div className="modal-header">
+                    <h2>Edit Rental — {rental.unit_number}</h2>
+                    <button className="modal-close" onClick={onClose}>&times;</button>
+                </div>
+                <div style={{ padding: 20 }}>
+                    <div style={{ marginBottom: 14 }}>
+                        <label className="form-label">Job Site</label>
+                        <select className="input" value={form.job_site_id} onChange={set('job_site_id')}>
+                            <option value="">— None —</option>
+                            {jobSites.filter(js => !js.is_headquarters).map(js => (
+                                <option key={js.id} value={js.id}>{js.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                        <label className="form-label">Company</label>
+                        <select className="input" value={form.company_id} onChange={set('company_id')}>
+                            <option value="">— None —</option>
+                            {companies.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">PO Number</label>
+                            <input className="input" value={form.po_number} onChange={set('po_number')} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">Rate ($)</label>
+                            <input type="number" min="0" step="0.01" className="input" value={form.rate_amount} onChange={set('rate_amount')} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">Per</label>
+                            <select className="input" value={form.rate_period} onChange={set('rate_period')}>
+                                <option value="day">Day</option>
+                                <option value="week">Week</option>
+                                <option value="month">Month (28-day)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">Billing Start</label>
+                            <input type="date" className="input" value={form.billing_start} onChange={set('billing_start')} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">Calloff</label>
+                            <input type="date" className="input" value={form.calloff_at} onChange={set('calloff_at')} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">Billing Stop</label>
+                            <input type="date" className="input" value={form.billing_stop} onChange={set('billing_stop')} />
+                        </div>
+                    </div>
+                    <p className="settings-desc" style={{ marginBottom: 14 }}>
+                        Date fields here are for corrections and are audit-logged. Normal lifecycle changes (deliver, start/stop billing, pickup, return) should use the action buttons so the event trail stays complete.
+                    </p>
+                    <div style={{ marginBottom: 14 }}>
+                        <label className="form-label">Notes</label>
+                        <textarea className="input" rows={2} value={form.notes} onChange={set('notes')} />
+                    </div>
+                    <div className="modal-footer">
+                        <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+                        <button className="btn btn-primary" onClick={handleSubmit} disabled={saving}>
+                            {saving ? 'Saving...' : 'Save Changes'}
                         </button>
                     </div>
                 </div>
