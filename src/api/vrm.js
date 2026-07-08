@@ -769,3 +769,8 @@ export async function fetchBillingSummary() {
 export async function fetchBillingAlerts() {
     return apiFetch(`${API_BASE}/billing/alerts`);
 }
+
+export async function fetchRateCards(product) {
+    const qs = product ? `?product=${encodeURIComponent(product)}` : '';
+    return apiFetch(`${API_BASE}/pricing/rate-cards${qs}`);
+}

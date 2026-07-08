@@ -730,6 +730,59 @@ export async function initDb() {
         await client.query(`CREATE INDEX IF NOT EXISTS idx_rental_events_rental ON rental_events(rental_id)`);
         console.log('  ✓ Rental & billing tables ready');
 
+        // ============================================================
+        // Pricing: rate cards + enterprise volume tiers
+        // ============================================================
+
+        // Base rate per product per commitment term
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS rate_cards (
+        id SERIAL PRIMARY KEY,
+        product_code TEXT NOT NULL,
+        commitment_term TEXT NOT NULL,
+        billing_cycle TEXT NOT NULL,
+        base_rate NUMERIC(10,2) NOT NULL,
+        active BOOLEAN DEFAULT TRUE,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        UNIQUE(product_code, commitment_term)
+      )
+    `);
+
+        // Enterprise Agreement volume discount tiers (applied off base rate,
+        // resolved per customer at the opening of each billing cycle)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS volume_tiers (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        min_units INTEGER NOT NULL,
+        max_units INTEGER,
+        discount_pct NUMERIC(5,2) NOT NULL DEFAULT 0
+      )
+    `);
+
+        // Seed the BV1305 commercial rate structure (FY2026 pricing guide)
+        await client.query(`
+      INSERT INTO rate_cards (product_code, commitment_term, billing_cycle, base_rate) VALUES
+        ('BV1305', 'monthly', 'calendar_month', 2250.00),
+        ('BV1305', '6_month', '28_day', 2050.00),
+        ('BV1305', '1_year', '28_day', 1923.00)
+      ON CONFLICT (product_code, commitment_term) DO NOTHING
+    `);
+        await client.query(`
+      INSERT INTO volume_tiers (name, min_units, max_units, discount_pct) VALUES
+        ('Standard', 1, 9, 0),
+        ('Bronze', 10, 24, 7.25),
+        ('Silver', 25, 49, 10.00),
+        ('Gold', 50, NULL, 12.50)
+      ON CONFLICT (name) DO NOTHING
+    `);
+
+        // Product + pricing columns on existing tables
+        await client.query(`ALTER TABLE trailers ADD COLUMN IF NOT EXISTS product_code TEXT DEFAULT 'BV1305'`);
+        await client.query(`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS commitment_term TEXT DEFAULT 'monthly'`);
+        await client.query(`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS rollback_amount NUMERIC(12,2)`);
+        console.log('  ✓ Pricing rate cards ready (BV1305 seeded)');
+
         // Backfill trailers from existing GPS-derived assignments (idempotent)
         await client.query(`
       INSERT INTO trailers (unit_number, vrm_site_id, ic2_device_id)
@@ -2653,7 +2706,7 @@ export async function updateTrailer(id, updates) {
 
 const RENTAL_JOIN = `
     SELECT r.*,
-           t.unit_number, t.vrm_site_id, t.status AS trailer_status,
+           t.unit_number, t.vrm_site_id, t.status AS trailer_status, t.product_code,
            js.name AS job_site_name,
            c.name AS company_name
     FROM rentals r
@@ -2694,8 +2747,8 @@ export async function getRental(id) {
 export async function insertRental(r) {
     if (!pool) return null;
     const result = await pool.query(`
-        INSERT INTO rentals (trailer_id, job_site_id, company_id, po_number, reserved_at, rate_amount, rate_period, status, notes)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO rentals (trailer_id, job_site_id, company_id, po_number, reserved_at, rate_amount, rate_period, commitment_term, status, notes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING *
     `, [
         r.trailer_id,
@@ -2705,6 +2758,7 @@ export async function insertRental(r) {
         r.reserved_at || new Date().toISOString().slice(0, 10),
         r.rate_amount || null,
         ['day', 'week', 'month'].includes(r.rate_period) ? r.rate_period : 'month',
+        ['monthly', '6_month', '1_year'].includes(r.commitment_term) ? r.commitment_term : 'monthly',
         'reserved',
         r.notes || null,
     ]);
@@ -2717,7 +2771,7 @@ export async function updateRental(id, updates) {
     const values = [];
     let idx = 1;
     for (const [key, value] of Object.entries(updates)) {
-        if (['job_site_id', 'company_id', 'po_number', 'reserved_at', 'delivered_at', 'billing_start', 'calloff_at', 'billing_stop', 'picked_up_at', 'returned_at', 'rate_amount', 'rate_period', 'status', 'notes'].includes(key)) {
+        if (['job_site_id', 'company_id', 'po_number', 'reserved_at', 'delivered_at', 'billing_start', 'calloff_at', 'billing_stop', 'picked_up_at', 'returned_at', 'rate_amount', 'rate_period', 'commitment_term', 'rollback_amount', 'status', 'notes'].includes(key)) {
             fields.push(`${key} = $${idx}`);
             values.push(value);
             idx++;
@@ -2806,6 +2860,42 @@ export async function getUnbilledDeployedTrailers() {
             WHERE r.trailer_id = t.id AND r.status NOT IN ('closed', 'cancelled')
           )
         ORDER BY t.unit_number
+    `);
+    return result.rows;
+}
+
+// ============================================================
+// Pricing: rate cards, volume tiers, on-rent windows
+// ============================================================
+
+export async function getRateCards(productCode = null) {
+    if (!pool) return [];
+    const params = [];
+    let where = 'WHERE active = TRUE';
+    if (productCode) {
+        params.push(productCode);
+        where += ` AND product_code = $1`;
+    }
+    const result = await pool.query(`SELECT * FROM rate_cards ${where} ORDER BY product_code, base_rate DESC`, params);
+    return result.rows;
+}
+
+export async function getVolumeTiers() {
+    if (!pool) return [];
+    const result = await pool.query(`SELECT * FROM volume_tiers ORDER BY min_units`);
+    return result.rows;
+}
+
+// Billing windows for every rental that ever billed, grouped by company —
+// used to resolve each customer's EA volume tier at any cycle-open date
+export async function getCompanyRentalWindows() {
+    if (!pool) return [];
+    const result = await pool.query(`
+        SELECT company_id, billing_start, billing_stop
+        FROM rentals
+        WHERE company_id IS NOT NULL
+          AND billing_start IS NOT NULL
+          AND status != 'cancelled'
     `);
     return result.rows;
 }

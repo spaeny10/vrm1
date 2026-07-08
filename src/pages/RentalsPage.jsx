@@ -5,7 +5,7 @@ import { useToast } from '../components/ToastProvider'
 import {
     fetchRentals, createRental, updateRental, postRentalEvent,
     fetchBillingSummary, fetchBillingAlerts,
-    fetchTrailers, fetchJobSites, fetchCompanies,
+    fetchTrailers, fetchJobSites, fetchCompanies, fetchRateCards,
 } from '../api/vrm'
 import { generateCSV, downloadCSV } from '../utils/csv'
 
@@ -74,6 +74,20 @@ const EVENT_LABELS = {
     cancel: 'Cancel Rental',
 }
 
+const TERM_LABELS = {
+    monthly: 'Monthly',
+    '6_month': '6-Month',
+    '1_year': '1-Year',
+}
+
+const CYCLE_LABELS = {
+    calendar_month: 'cal-mo',
+    '28_day': '28d',
+    day: 'day',
+    week: 'week',
+    month: '28d-mo',
+}
+
 function formatDate(d) {
     if (!d) return '—'
     const dt = new Date(d)
@@ -116,14 +130,16 @@ function RentalsPage() {
     const [trailers, setTrailers] = useState([])
     const [jobSites, setJobSites] = useState([])
     const [companies, setCompanies] = useState([])
+    const [rateCards, setRateCards] = useState([])
 
     useEffect(() => {
         if (!showNewRental && !editingRental) return
-        Promise.all([fetchTrailers(), fetchJobSites(), fetchCompanies()])
-            .then(([t, j, c]) => {
+        Promise.all([fetchTrailers(), fetchJobSites(), fetchCompanies(), fetchRateCards()])
+            .then(([t, j, c, rc]) => {
                 setTrailers(t.trailers || [])
                 setJobSites(j.job_sites || [])
                 setCompanies(c.companies || [])
+                setRateCards(rc.rate_cards || [])
             })
             .catch(err => toast.error(`Failed to load form data: ${err.message}`))
     }, [showNewRental, editingRental])
@@ -151,19 +167,23 @@ function RentalsPage() {
     }
 
     const handleExportCSV = () => {
-        const headers = ['Unit', 'Status', 'Job Site', 'Company', 'PO Number', 'Rate', 'Rate Period', 'Billing Start', 'Billing Stop', 'Days on Rent', 'Accrued']
+        const headers = ['Unit', 'Status', 'Job Site', 'Company', 'PO Number', 'Term', 'Effective Rate', 'Billing Cycle', 'Volume Tier', 'Billing Start', 'Billing Stop', 'Days on Rent', 'Accrued', 'Roll-Back Adj', 'Total Due']
         const rows = filteredRentals.map(r => [
             r.unit_number,
             STATUS_LABELS[r.status] || r.status,
             r.job_site_name || '',
             r.company_name || '',
             r.po_number || '',
-            r.rate_amount || '',
-            r.rate_period || '',
+            r.pricing_source === 'manual' ? 'Manual' : (TERM_LABELS[r.commitment_term] || r.commitment_term || ''),
+            r.effective_rate ?? '',
+            r.billing_cycle || '',
+            r.volume_tier ? `${r.volume_tier.name} -${r.volume_tier.discount_pct}%` : '',
             r.billing_start ? String(r.billing_start).slice(0, 10) : '',
             r.billing_stop ? String(r.billing_stop).slice(0, 10) : '',
             r.days_on_rent ?? '',
             r.accrued_amount ?? '',
+            r.rollback_amount ?? '',
+            r.total_due ?? '',
         ])
         downloadCSV(generateCSV(headers, rows), `rentals-${todayStr()}.csv`)
     }
@@ -243,7 +263,7 @@ function RentalsPage() {
 
             {summary.rentals_missing_rate > 0 && (
                 <p className="settings-desc" style={{ marginBottom: 16 }}>
-                    {summary.rentals_missing_rate} active rental{summary.rentals_missing_rate !== 1 ? 's have' : ' has'} no rate set — accrued totals are understated. Edit the rental to add a rate.
+                    {summary.rentals_missing_rate} active rental{summary.rentals_missing_rate !== 1 ? 's have' : ' has'} no matching rate card and no manual rate — accrued totals are understated. Edit the rental to set a term or manual rate.
                 </p>
             )}
 
@@ -294,11 +314,29 @@ function RentalsPage() {
                                     <td>{r.job_site_name || '—'}</td>
                                     <td>{r.company_name || '—'}</td>
                                     <td>{r.po_number || '—'}</td>
-                                    <td>{r.rate_amount ? `${formatMoney(r.rate_amount)}/${r.rate_period}` : '—'}</td>
+                                    <td>
+                                        {r.effective_rate ? (
+                                            <>
+                                                <div>{formatMoney(r.effective_rate)}/{CYCLE_LABELS[r.billing_cycle] || r.billing_cycle}</div>
+                                                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                                    {r.pricing_source === 'manual'
+                                                        ? 'Manual rate'
+                                                        : `${TERM_LABELS[r.commitment_term] || r.commitment_term}${r.volume_tier && r.volume_tier.discount_pct > 0 ? ` · ${r.volume_tier.name} −${r.volume_tier.discount_pct}%` : ''}`}
+                                                </div>
+                                            </>
+                                        ) : '—'}
+                                    </td>
                                     <td className="maint-date">{formatDate(r.billing_start)}</td>
                                     <td className="maint-date">{formatDate(r.billing_stop)}</td>
                                     <td>{r.days_on_rent ?? '—'}</td>
-                                    <td className="maint-cost">{formatMoney(r.accrued_amount)}</td>
+                                    <td className="maint-cost">
+                                        {formatMoney(r.total_due ?? r.accrued_amount)}
+                                        {r.rollback_amount > 0 && (
+                                            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }} title="Roll-back adjustment for early termination of commitment">
+                                                incl. +{formatMoney(r.rollback_amount)} roll-back
+                                            </div>
+                                        )}
+                                    </td>
                                     <td>{statusBadge(r.status)}</td>
                                     {canEdit && (
                                         <td className="maint-actions">
@@ -345,6 +383,7 @@ function RentalsPage() {
                     trailers={trailers}
                     jobSites={jobSites}
                     companies={companies}
+                    rateCards={rateCards}
                     onCreated={() => { setShowNewRental(false); refetchAll(); toast.success('Rental created') }}
                     onError={(msg) => toast.error(msg)}
                     onClose={() => setShowNewRental(false)}
@@ -357,6 +396,7 @@ function RentalsPage() {
                     rental={editingRental}
                     jobSites={jobSites}
                     companies={companies}
+                    rateCards={rateCards}
                     onSaved={() => { setEditingRental(null); refetchAll(); toast.success('Rental updated') }}
                     onError={(msg) => toast.error(msg)}
                     onClose={() => setEditingRental(null)}
@@ -412,11 +452,12 @@ function toDateInput(d) {
     return String(d).slice(0, 10)
 }
 
-function EditRentalModal({ rental, jobSites, companies, onSaved, onError, onClose }) {
+function EditRentalModal({ rental, jobSites, companies, rateCards, onSaved, onError, onClose }) {
     const [form, setForm] = useState({
         job_site_id: rental.job_site_id || '',
         company_id: rental.company_id || '',
         po_number: rental.po_number || '',
+        commitment_term: rental.commitment_term || 'monthly',
         rate_amount: rental.rate_amount || '',
         rate_period: rental.rate_period || 'month',
         billing_start: toDateInput(rental.billing_start),
@@ -425,6 +466,8 @@ function EditRentalModal({ rental, jobSites, companies, onSaved, onError, onClos
         notes: rental.notes || '',
     })
     const [saving, setSaving] = useState(false)
+
+    const productCards = rateCards.filter(c => c.product_code === (rental.product_code || 'BV1305'))
 
     const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
 
@@ -439,6 +482,7 @@ function EditRentalModal({ rental, jobSites, companies, onSaved, onError, onClos
                 job_site_id: form.job_site_id ? parseInt(form.job_site_id) : null,
                 company_id: form.company_id ? parseInt(form.company_id) : null,
                 po_number: form.po_number || null,
+                commitment_term: form.commitment_term,
                 rate_amount: form.rate_amount ? parseFloat(form.rate_amount) : null,
                 rate_period: form.rate_period,
                 billing_start: form.billing_start || null,
@@ -480,18 +524,32 @@ function EditRentalModal({ rental, jobSites, companies, onSaved, onError, onClos
                             ))}
                         </select>
                     </div>
+                    <div style={{ marginBottom: 14 }}>
+                        <label className="form-label">Commitment Term</label>
+                        <select className="input" value={form.commitment_term} onChange={set('commitment_term')}>
+                            {productCards.length > 0 ? productCards.map(c => (
+                                <option key={c.commitment_term} value={c.commitment_term}>{termOptionLabel(c)}</option>
+                            )) : (
+                                <>
+                                    <option value="monthly">Monthly</option>
+                                    <option value="6_month">6-Month</option>
+                                    <option value="1_year">1-Year</option>
+                                </>
+                            )}
+                        </select>
+                    </div>
                     <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
                         <div style={{ flex: 1 }}>
                             <label className="form-label">PO Number</label>
                             <input className="input" value={form.po_number} onChange={set('po_number')} />
                         </div>
                         <div style={{ flex: 1 }}>
-                            <label className="form-label">Rate ($)</label>
-                            <input type="number" min="0" step="0.01" className="input" value={form.rate_amount} onChange={set('rate_amount')} />
+                            <label className="form-label">Manual Rate Override ($)</label>
+                            <input type="number" min="0" step="0.01" className="input" value={form.rate_amount} onChange={set('rate_amount')} placeholder="Blank = rate card" />
                         </div>
                         <div style={{ flex: 1 }}>
-                            <label className="form-label">Per</label>
-                            <select className="input" value={form.rate_period} onChange={set('rate_period')}>
+                            <label className="form-label">Override Per</label>
+                            <select className="input" value={form.rate_period} onChange={set('rate_period')} disabled={!form.rate_amount}>
                                 <option value="day">Day</option>
                                 <option value="week">Week</option>
                                 <option value="month">Month (28-day)</option>
@@ -531,12 +589,24 @@ function EditRentalModal({ rental, jobSites, companies, onSaved, onError, onClos
     )
 }
 
-function NewRentalModal({ trailers, jobSites, companies, onCreated, onError, onClose }) {
+// Rate cards for the product of the selected trailer (fallback BV1305)
+function cardsForTrailer(rateCards, trailers, trailerId) {
+    const trailer = trailers.find(t => String(t.id) === String(trailerId))
+    const product = trailer?.product_code || 'BV1305'
+    return rateCards.filter(c => c.product_code === product)
+}
+
+function termOptionLabel(card) {
+    return `${TERM_LABELS[card.commitment_term] || card.commitment_term} — ${formatMoney(card.base_rate)}/${CYCLE_LABELS[card.billing_cycle] || card.billing_cycle}`
+}
+
+function NewRentalModal({ trailers, jobSites, companies, rateCards, onCreated, onError, onClose }) {
     const [form, setForm] = useState({
         trailer_id: '',
         job_site_id: '',
         company_id: '',
         po_number: '',
+        commitment_term: 'monthly',
         rate_amount: '',
         rate_period: 'month',
         reserved_at: todayStr(),
@@ -546,6 +616,7 @@ function NewRentalModal({ trailers, jobSites, companies, onCreated, onError, onC
 
     // Only trailers without an open rental can be reserved
     const rentableTrailers = trailers.filter(t => !t.open_rental_id && t.status !== 'retired')
+    const availableCards = cardsForTrailer(rateCards, trailers, form.trailer_id)
 
     const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
 
@@ -557,6 +628,7 @@ function NewRentalModal({ trailers, jobSites, companies, onCreated, onError, onC
                 job_site_id: form.job_site_id ? parseInt(form.job_site_id) : null,
                 company_id: form.company_id ? parseInt(form.company_id) : null,
                 po_number: form.po_number || null,
+                commitment_term: form.commitment_term,
                 rate_amount: form.rate_amount ? parseFloat(form.rate_amount) : null,
                 rate_period: form.rate_period,
                 reserved_at: form.reserved_at,
@@ -610,6 +682,23 @@ function NewRentalModal({ trailers, jobSites, companies, onCreated, onError, onC
                             ))}
                         </select>
                     </div>
+                    <div style={{ marginBottom: 14 }}>
+                        <label className="form-label">Commitment Term</label>
+                        <select className="input" value={form.commitment_term} onChange={set('commitment_term')}>
+                            {availableCards.length > 0 ? availableCards.map(c => (
+                                <option key={c.commitment_term} value={c.commitment_term}>{termOptionLabel(c)}</option>
+                            )) : (
+                                <>
+                                    <option value="monthly">Monthly</option>
+                                    <option value="6_month">6-Month</option>
+                                    <option value="1_year">1-Year</option>
+                                </>
+                            )}
+                        </select>
+                        <p className="settings-desc" style={{ marginTop: 6 }}>
+                            Pricing comes from the rate card; enterprise volume discounts (Bronze/Silver/Gold) apply automatically per billing cycle based on the customer's on-rent unit count. Early termination of 6-month/1-year commitments triggers the roll-back clause.
+                        </p>
+                    </div>
                     <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
                         <div style={{ flex: 1 }}>
                             <label className="form-label">PO Number</label>
@@ -622,12 +711,12 @@ function NewRentalModal({ trailers, jobSites, companies, onCreated, onError, onC
                     </div>
                     <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
                         <div style={{ flex: 1 }}>
-                            <label className="form-label">Rate ($)</label>
-                            <input type="number" min="0" step="0.01" className="input" value={form.rate_amount} onChange={set('rate_amount')} placeholder="e.g. 1850" />
+                            <label className="form-label">Manual Rate Override ($)</label>
+                            <input type="number" min="0" step="0.01" className="input" value={form.rate_amount} onChange={set('rate_amount')} placeholder="Leave blank to use rate card" />
                         </div>
                         <div style={{ flex: 1 }}>
-                            <label className="form-label">Per</label>
-                            <select className="input" value={form.rate_period} onChange={set('rate_period')}>
+                            <label className="form-label">Override Per</label>
+                            <select className="input" value={form.rate_period} onChange={set('rate_period')} disabled={!form.rate_amount}>
                                 <option value="day">Day</option>
                                 <option value="week">Week</option>
                                 <option value="month">Month (28-day)</option>

@@ -46,7 +46,9 @@ import {
     getRentals, getRental, insertRental, updateRental,
     insertRentalEvent, getRentalEvents,
     getBillingPastCalloff, getBillingAtHeadquarters, getUnbilledDeployedTrailers,
+    getRateCards, getVolumeTiers, getCompanyRentalWindows,
 } from './db.js';
+import { computeCharges, computeRollback, buildTierCounter, parseDateUTC, TERM_DAYS } from './pricing.js';
 import {
     generateQueryEmbedding, embedSiteSnapshots, embedPepwaveDevices,
     embedAlerts, embedMaintenanceLogs, embedJobSites,
@@ -1746,8 +1748,93 @@ function computeAccruedThisMonth(rental, asOf = new Date()) {
     return Math.round(perDay * days * 100) / 100;
 }
 
-function enrichRental(r) {
-    return { ...r, days_on_rent: billingDays(r), accrued_amount: computeAccrued(r) };
+// ---- Rate-card pricing context (FY2026 commercial structure) ----
+
+async function buildPricingContext() {
+    const [rateCards, tiers, windows] = await Promise.all([
+        getRateCards(), getVolumeTiers(), getCompanyRentalWindows(),
+    ]);
+    const cardsByProductTerm = {};
+    for (const c of rateCards) {
+        (cardsByProductTerm[c.product_code] = cardsByProductTerm[c.product_code] || {})[c.commitment_term] = c;
+    }
+    return { cardsByProductTerm, tiers, windows };
+}
+
+function rentalRateCard(r, ctx) {
+    const product = r.product_code || 'BV1305';
+    const term = r.commitment_term || 'monthly';
+    return (ctx.cardsByProductTerm[product] || {})[term] || null;
+}
+
+// Price a rental: manual rate_amount overrides; otherwise the rate card for
+// the trailer's product + the rental's commitment term, with the EA volume
+// tier resolved dynamically per billing cycle.
+function priceRental(r, ctx) {
+    const rollback = r.rollback_amount ? Number(r.rollback_amount) : 0;
+
+    if (r.rate_amount) {
+        const accrued = computeAccrued(r);
+        return {
+            ...r,
+            pricing_source: 'manual',
+            days_on_rent: billingDays(r),
+            accrued_amount: accrued,
+            total_due: accrued === null ? null : Math.round((accrued + rollback) * 100) / 100,
+            effective_rate: Number(r.rate_amount),
+            billing_cycle: r.rate_period,
+            volume_tier: null,
+        };
+    }
+
+    const card = rentalRateCard(r, ctx);
+    if (!card || !r.billing_start) {
+        return {
+            ...r,
+            pricing_source: card ? 'rate_card' : 'none',
+            days_on_rent: billingDays(r),
+            accrued_amount: null,
+            total_due: null,
+            effective_rate: card ? Number(card.base_rate) : null,
+            billing_cycle: card ? card.billing_cycle : null,
+            volume_tier: null,
+        };
+    }
+
+    const countAt = buildTierCounter(ctx.windows, r.company_id);
+    const start = parseDateUTC(r.billing_start);
+    const end = r.billing_stop ? parseDateUTC(r.billing_stop) : parseDateUTC(new Date().toISOString());
+    const charges = computeCharges({ billingStart: start, billingEnd: end, rateCard: card, tiers: ctx.tiers, countAt });
+    return {
+        ...r,
+        pricing_source: 'rate_card',
+        days_on_rent: billingDays(r),
+        accrued_amount: charges.accrued,
+        total_due: Math.round((charges.accrued + rollback) * 100) / 100,
+        effective_rate: charges.currentRate,
+        billing_cycle: card.billing_cycle,
+        volume_tier: charges.currentTier,
+    };
+}
+
+// Month-to-date accrual for rate-card rentals: full-window accrual minus
+// the accrual up to the end of last month
+function computeMtdEngine(r, ctx) {
+    const card = rentalRateCard(r, ctx);
+    if (!card || !r.billing_start) return null;
+    const countAt = buildTierCounter(ctx.windows, r.company_id);
+    const start = parseDateUTC(r.billing_start);
+    const today = parseDateUTC(new Date().toISOString());
+    const end = r.billing_stop ? parseDateUTC(r.billing_stop) : today;
+    const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    const total = computeCharges({ billingStart: start, billingEnd: end, rateCard: card, tiers: ctx.tiers, countAt }).accrued;
+    if (start >= monthStart) return total;
+    const beforeMonth = computeCharges({
+        billingStart: start,
+        billingEnd: new Date(Math.min(monthStart.getTime() - 86400000, end.getTime())),
+        rateCard: card, tiers: ctx.tiers, countAt,
+    }).accrued;
+    return Math.round((total - beforeMonth) * 100) / 100;
 }
 
 app.get('/api/rentals', async (req, res) => {
@@ -1759,7 +1846,8 @@ app.get('/api/rentals', async (req, res) => {
             companyId: req.query.company_id ? parseInt(req.query.company_id) : undefined,
             open: req.query.open === '1' || req.query.open === 'true',
         });
-        res.json({ success: true, rentals: rentals.map(enrichRental) });
+        const ctx = await buildPricingContext();
+        res.json({ success: true, rentals: rentals.map(r => priceRental(r, ctx)) });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -1770,7 +1858,18 @@ app.get('/api/rentals/:id', async (req, res) => {
         const rental = await getRental(parseInt(req.params.id));
         if (!rental) return res.status(404).json({ success: false, error: 'Rental not found' });
         const events = await getRentalEvents(rental.id);
-        res.json({ success: true, rental: enrichRental(rental), events });
+        const ctx = await buildPricingContext();
+        res.json({ success: true, rental: priceRental(rental, ctx), events });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Rate card matrix + EA tiers (for UI display and reference)
+app.get('/api/pricing/rate-cards', async (req, res) => {
+    try {
+        const [rateCards, tiers] = await Promise.all([getRateCards(req.query.product), getVolumeTiers()]);
+        res.json({ success: true, rate_cards: rateCards, volume_tiers: tiers });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -1853,7 +1952,35 @@ app.post('/api/rentals/:id/events', requireRole('admin', 'technician'), async (r
         const event = await insertRentalEvent(rental.id, event_type, date, actor, notes || null);
         insertAuditLog('rental', rental.id, `rental_${event_type}`, { trailer: rental.unit_number, date }, actor).catch(() => { });
 
-        res.json({ success: true, rental: enrichRental({ ...rental, ...updated }), event });
+        // Roll-Back clause: stopping billing before a 6-month/1-year commitment
+        // is fulfilled retroactively re-prices the utilized period at the
+        // shorter-term bracket. Only applies to rate-card pricing.
+        let rollback = null;
+        let merged = { ...rental, ...updated };
+        if (event_type === 'stop_billing' && !rental.rate_amount && TERM_DAYS[rental.commitment_term] && rental.billing_start) {
+            const ctx = await buildPricingContext();
+            const cardsByTerm = ctx.cardsByProductTerm[rental.product_code || 'BV1305'] || {};
+            rollback = computeRollback({
+                billingStart: parseDateUTC(rental.billing_start),
+                billingStop: parseDateUTC(date),
+                term: rental.commitment_term,
+                rateCardsByTerm: cardsByTerm,
+                tiers: ctx.tiers,
+                countAt: buildTierCounter(ctx.windows, rental.company_id),
+            });
+            if (rollback && rollback.adjustment > 0) {
+                await updateRental(rental.id, { rollback_amount: rollback.adjustment });
+                merged.rollback_amount = rollback.adjustment;
+                await insertRentalEvent(
+                    rental.id, 'rollback_adjustment', date, actor,
+                    `Early termination of ${rental.commitment_term} commitment after ${rollback.utilized_days} days — re-priced at ${rollback.rollback_term} bracket: +$${rollback.adjustment.toFixed(2)}`
+                );
+                insertAuditLog('rental', rental.id, 'rental_rollback_adjustment', { trailer: rental.unit_number, ...rollback }, actor).catch(() => { });
+            }
+        }
+
+        const ctx = await buildPricingContext();
+        res.json({ success: true, rental: priceRental(merged, ctx), event, rollback });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -1864,15 +1991,16 @@ app.get('/api/billing/summary', async (req, res) => {
     try {
         const openRentals = await getRentals({ open: true });
         const trailers = await getTrailers();
+        const ctx = await buildPricingContext();
 
         const billing = openRentals.filter(r => r.status === 'billing' || r.status === 'called_off');
         let accruedMtd = 0, accruedTotal = 0, missingRates = 0;
         for (const r of billing) {
-            const mtd = computeAccruedThisMonth(r);
-            const total = computeAccrued(r);
-            if (mtd === null) missingRates++;
+            const priced = priceRental(r, ctx);
+            const mtd = priced.pricing_source === 'manual' ? computeAccruedThisMonth(r) : computeMtdEngine(r, ctx);
+            if (priced.accrued_amount === null) missingRates++;
             accruedMtd += mtd || 0;
-            accruedTotal += total || 0;
+            accruedTotal += priced.total_due || 0;
         }
 
         res.json({
@@ -1887,7 +2015,7 @@ app.get('/api/billing/summary', async (req, res) => {
                 accrued_total_open: Math.round(accruedTotal * 100) / 100,
                 rentals_missing_rate: missingRates,
             },
-            rentals: openRentals.map(enrichRental),
+            rentals: openRentals.map(r => priceRental(r, ctx)),
         });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
