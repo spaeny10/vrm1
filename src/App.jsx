@@ -21,6 +21,7 @@ const TrailerDetail = lazy(() => import('./pages/TrailerDetail'))
 const MapView = lazy(() => import('./pages/MapView'))
 const FleetDetailsPage = lazy(() => import('./pages/FleetDetailsPage'))
 const MaintenancePage = lazy(() => import('./pages/MaintenancePage'))
+const RentalsPage = lazy(() => import('./pages/RentalsPage'))
 const Settings = lazy(() => import('./pages/Settings'))
 const HelpPage = lazy(() => import('./pages/HelpPage'))
 const PortalDashboard = lazy(() => import('./pages/PortalDashboard'))
@@ -96,6 +97,7 @@ function App() {
                             <Route path="/map" element={<MapView />} />
                             <Route path="/fleet" element={<FleetDetailsPage />} />
                             <Route path="/maintenance" element={<MaintenancePage />} />
+                            <Route path="/rentals" element={<RentalsPage />} />
                             <Route path="/companies" element={<Companies />} />
                             <Route path="/settings" element={<Settings />} />
                             <Route path="/help" element={<HelpPage />} />

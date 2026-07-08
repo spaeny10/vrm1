@@ -42,6 +42,10 @@ import {
     getMaintenanceCalendar,
     getCustomerSiteAccess, upsertCustomerSiteAccess,
     updateTrailerGps, getGpsSuggestions, updateGpsSuggestionStatus, getPool,
+    getTrailers, getTrailer, insertTrailer, updateTrailer,
+    getRentals, getRental, insertRental, updateRental,
+    insertRentalEvent, getRentalEvents,
+    getBillingPastCalloff, getBillingAtHeadquarters, getUnbilledDeployedTrailers,
 } from './db.js';
 import {
     generateQueryEmbedding, embedSiteSnapshots, embedPepwaveDevices,
@@ -1582,6 +1586,41 @@ app.post('/api/settings/purge', requireRole('admin'), async (req, res) => {
 
 app.get('/api/fleet/deployment', async (req, res) => {
     try {
+        // Prefer explicit rental records (commercial truth) when they exist
+        const openRentals = dbAvailable ? await getRentals({ open: true }) : [];
+        if (openRentals.length > 0) {
+            const trailers = await getTrailers();
+            const billingSites = new Set(), standbySites = new Set(), pickupSites = new Set();
+            let billingTrailers = 0, standbyTrailers = 0, pickupTrailers = 0;
+
+            for (const r of openRentals) {
+                // called_off keeps accruing until billing is explicitly stopped
+                if (r.status === 'billing' || r.status === 'called_off') {
+                    billingTrailers++;
+                    if (r.job_site_id) billingSites.add(r.job_site_id);
+                } else if (r.status === 'delivered') {
+                    standbyTrailers++;
+                    if (r.job_site_id) standbySites.add(r.job_site_id);
+                } else if (r.status === 'awaiting_pickup') {
+                    pickupTrailers++;
+                    if (r.job_site_id) pickupSites.add(r.job_site_id);
+                }
+            }
+
+            const availableTrailers = trailers.filter(t => t.status === 'available').length;
+
+            return res.json({
+                success: true,
+                source: 'rentals',
+                active_billing: { sites: billingSites.size, trailers: billingTrailers },
+                standby: { sites: standbySites.size, trailers: standbyTrailers },
+                available_at_hq: { trailers: availableTrailers },
+                awaiting_pickup: { sites: pickupSites.size, trailers: pickupTrailers },
+                total_deployed: { sites: billingSites.size + standbySites.size, trailers: billingTrailers + standbyTrailers },
+            });
+        }
+
+        // Legacy fallback: infer from job site status
         const jobSites = await getJobSites();
         const assignments = await getTrailerAssignments();
 
@@ -1623,12 +1662,272 @@ app.get('/api/fleet/deployment', async (req, res) => {
 
         res.json({
             success: true,
+            source: 'job_site_status',
             active_billing: { sites: activeBillingSites, trailers: activeBillingTrailers },
             standby: { sites: standbySites, trailers: standbyTrailers },
             available_at_hq: { trailers: hqTrailers },
             awaiting_pickup: { sites: awaitingPickupSites, trailers: awaitingPickupTrailers },
             total_deployed: { sites: activeBillingSites + standbySites, trailers: activeBillingTrailers + standbyTrailers },
         });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Trailers (rental fleet assets)
+// ============================================================
+
+app.get('/api/trailers', async (req, res) => {
+    try {
+        const trailers = await getTrailers({ status: req.query.status });
+        res.json({ success: true, trailers });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/trailers', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        if (!req.body.unit_number) return res.status(400).json({ success: false, error: 'unit_number is required' });
+        const created = await insertTrailer(req.body);
+        const actor = req.user ? req.user.display_name : 'system';
+        insertAuditLog('trailer', created.id, 'trailer_created', { unit_number: created.unit_number }, actor).catch(() => { });
+        res.status(201).json({ success: true, trailer: created });
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ success: false, error: 'A trailer with that unit number or VRM site already exists' });
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/trailers/:id', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        const updated = await updateTrailer(parseInt(req.params.id), req.body);
+        if (!updated) return res.status(404).json({ success: false, error: 'Trailer not found' });
+        const actor = req.user ? req.user.display_name : 'system';
+        insertAuditLog('trailer', updated.id, 'trailer_updated', { fields: Object.keys(req.body) }, actor).catch(() => { });
+        res.json({ success: true, trailer: updated });
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ success: false, error: 'A trailer with that unit number or VRM site already exists' });
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ============================================================
+// Rentals & Billing
+// ============================================================
+
+const RATE_PERIOD_DAYS = { day: 1, week: 7, month: 28 };
+
+function billingDays(rental, asOf = new Date()) {
+    if (!rental.billing_start) return null;
+    const start = new Date(rental.billing_start);
+    const end = rental.billing_stop ? new Date(rental.billing_stop) : asOf;
+    if (end < start) return 0;
+    return Math.floor((end - start) / 86400000) + 1; // inclusive of start day
+}
+
+function computeAccrued(rental, asOf = new Date()) {
+    const days = billingDays(rental, asOf);
+    if (days === null || !rental.rate_amount) return null;
+    const perDay = Number(rental.rate_amount) / (RATE_PERIOD_DAYS[rental.rate_period] || 28);
+    return Math.round(perDay * days * 100) / 100;
+}
+
+// Accrual limited to the current calendar month (for the MTD tile)
+function computeAccruedThisMonth(rental, asOf = new Date()) {
+    if (!rental.billing_start || !rental.rate_amount) return null;
+    const monthStart = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
+    const start = new Date(Math.max(new Date(rental.billing_start), monthStart));
+    const end = rental.billing_stop ? new Date(Math.min(new Date(rental.billing_stop), asOf)) : asOf;
+    if (end < start) return 0;
+    const days = Math.floor((end - start) / 86400000) + 1;
+    const perDay = Number(rental.rate_amount) / (RATE_PERIOD_DAYS[rental.rate_period] || 28);
+    return Math.round(perDay * days * 100) / 100;
+}
+
+function enrichRental(r) {
+    return { ...r, days_on_rent: billingDays(r), accrued_amount: computeAccrued(r) };
+}
+
+app.get('/api/rentals', async (req, res) => {
+    try {
+        const rentals = await getRentals({
+            status: req.query.status,
+            trailerId: req.query.trailer_id ? parseInt(req.query.trailer_id) : undefined,
+            jobSiteId: req.query.job_site_id ? parseInt(req.query.job_site_id) : undefined,
+            companyId: req.query.company_id ? parseInt(req.query.company_id) : undefined,
+            open: req.query.open === '1' || req.query.open === 'true',
+        });
+        res.json({ success: true, rentals: rentals.map(enrichRental) });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/rentals/:id', async (req, res) => {
+    try {
+        const rental = await getRental(parseInt(req.params.id));
+        if (!rental) return res.status(404).json({ success: false, error: 'Rental not found' });
+        const events = await getRentalEvents(rental.id);
+        res.json({ success: true, rental: enrichRental(rental), events });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/rentals', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        if (!req.body.trailer_id) return res.status(400).json({ success: false, error: 'trailer_id is required' });
+        const trailer = await getTrailer(parseInt(req.body.trailer_id));
+        if (!trailer) return res.status(404).json({ success: false, error: 'Trailer not found' });
+        if (trailer.status === 'retired') return res.status(400).json({ success: false, error: 'Cannot rent a retired trailer' });
+
+        const created = await insertRental(req.body);
+        await updateTrailer(trailer.id, { status: 'reserved' });
+        const actor = req.user ? req.user.display_name : 'system';
+        await insertRentalEvent(created.id, 'reserved', created.reserved_at, actor, req.body.notes || null);
+        insertAuditLog('rental', created.id, 'rental_created', { trailer: trailer.unit_number, job_site_id: created.job_site_id }, actor).catch(() => { });
+        res.status(201).json({ success: true, rental: created });
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ success: false, error: 'This trailer already has an open rental' });
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/rentals/:id', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        // Status changes must go through the lifecycle event endpoint
+        const { status, ...updates } = req.body;
+        const updated = await updateRental(parseInt(req.params.id), updates);
+        if (!updated) return res.status(404).json({ success: false, error: 'Rental not found' });
+        const actor = req.user ? req.user.display_name : 'system';
+        insertAuditLog('rental', updated.id, 'rental_updated', { fields: Object.keys(updates) }, actor).catch(() => { });
+        res.json({ success: true, rental: updated });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Rental lifecycle transitions. Each event stamps its date column, moves the
+// rental status forward, updates the trailer status, and logs an immutable event.
+const RENTAL_TRANSITIONS = {
+    deliver: { from: ['reserved'], dateField: 'delivered_at', toStatus: 'delivered', trailerStatus: 'on_rent' },
+    start_billing: { from: ['reserved', 'delivered'], dateField: 'billing_start', toStatus: 'billing', trailerStatus: 'on_rent' },
+    calloff: { from: ['billing'], dateField: 'calloff_at', toStatus: 'called_off', trailerStatus: null },
+    stop_billing: { from: ['billing', 'called_off'], dateField: 'billing_stop', toStatus: 'awaiting_pickup', trailerStatus: null },
+    pickup: { from: ['awaiting_pickup', 'called_off', 'delivered'], dateField: 'picked_up_at', toStatus: 'awaiting_pickup', trailerStatus: 'in_transit' },
+    return: { from: ['awaiting_pickup', 'delivered', 'reserved'], dateField: 'returned_at', toStatus: 'closed', trailerStatus: 'available' },
+    cancel: { from: ['reserved', 'delivered'], dateField: null, toStatus: 'cancelled', trailerStatus: 'available' },
+};
+
+app.post('/api/rentals/:id/events', requireRole('admin', 'technician'), async (req, res) => {
+    try {
+        const { event_type, event_date, notes } = req.body;
+        const transition = RENTAL_TRANSITIONS[event_type];
+        if (!transition) {
+            return res.status(400).json({ success: false, error: `Unknown event_type. Valid: ${Object.keys(RENTAL_TRANSITIONS).join(', ')}` });
+        }
+
+        const rental = await getRental(parseInt(req.params.id));
+        if (!rental) return res.status(404).json({ success: false, error: 'Rental not found' });
+        if (!transition.from.includes(rental.status)) {
+            return res.status(409).json({ success: false, error: `Cannot ${event_type} a rental in '${rental.status}' status` });
+        }
+
+        // Billing can't stop before it started
+        const date = event_date || new Date().toISOString().slice(0, 10);
+        if (event_type === 'stop_billing' && rental.billing_start && new Date(date) < new Date(rental.billing_start)) {
+            return res.status(400).json({ success: false, error: 'billing_stop cannot be before billing_start' });
+        }
+
+        const updates = { status: transition.toStatus };
+        if (transition.dateField) updates[transition.dateField] = date;
+        const updated = await updateRental(rental.id, updates);
+
+        if (transition.trailerStatus) {
+            await updateTrailer(rental.trailer_id, { status: transition.trailerStatus });
+        }
+
+        const actor = req.user ? req.user.display_name : 'system';
+        const event = await insertRentalEvent(rental.id, event_type, date, actor, notes || null);
+        insertAuditLog('rental', rental.id, `rental_${event_type}`, { trailer: rental.unit_number, date }, actor).catch(() => { });
+
+        res.json({ success: true, rental: enrichRental({ ...rental, ...updated }), event });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Billing dashboard summary
+app.get('/api/billing/summary', async (req, res) => {
+    try {
+        const openRentals = await getRentals({ open: true });
+        const trailers = await getTrailers();
+
+        const billing = openRentals.filter(r => r.status === 'billing' || r.status === 'called_off');
+        let accruedMtd = 0, accruedTotal = 0, missingRates = 0;
+        for (const r of billing) {
+            const mtd = computeAccruedThisMonth(r);
+            const total = computeAccrued(r);
+            if (mtd === null) missingRates++;
+            accruedMtd += mtd || 0;
+            accruedTotal += total || 0;
+        }
+
+        res.json({
+            success: true,
+            summary: {
+                trailers_total: trailers.filter(t => t.status !== 'retired').length,
+                trailers_available: trailers.filter(t => t.status === 'available').length,
+                rentals_open: openRentals.length,
+                rentals_billing: billing.length,
+                rentals_awaiting_pickup: openRentals.filter(r => r.status === 'awaiting_pickup').length,
+                accrued_mtd: Math.round(accruedMtd * 100) / 100,
+                accrued_total_open: Math.round(accruedTotal * 100) / 100,
+                rentals_missing_rate: missingRates,
+            },
+            rentals: openRentals.map(enrichRental),
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Revenue-leakage alerts
+app.get('/api/billing/alerts', async (req, res) => {
+    try {
+        const [pastCalloff, atHq, unbilled] = await Promise.all([
+            getBillingPastCalloff(),
+            getBillingAtHeadquarters(),
+            getUnbilledDeployedTrailers(),
+        ]);
+
+        const alerts = [
+            ...pastCalloff.map(r => ({
+                type: 'billing_past_calloff',
+                severity: 'warning',
+                rental_id: r.id,
+                unit_number: r.unit_number,
+                message: `${r.unit_number} is still billing but was called off ${new Date(r.calloff_at).toLocaleDateString()} — stop billing or clear the calloff date`,
+            })),
+            ...atHq.map(r => ({
+                type: 'billing_at_hq',
+                severity: 'critical',
+                rental_id: r.id,
+                unit_number: r.unit_number,
+                message: `${r.unit_number} is physically at ${r.hq_name} but billing is still running — customer may be overbilled`,
+            })),
+            ...unbilled.map(t => ({
+                type: 'unbilled_deployed',
+                severity: 'critical',
+                trailer_id: t.trailer_id,
+                unit_number: t.unit_number,
+                message: `${t.unit_number} is deployed at active site "${t.job_site_name}" with no open rental — revenue is leaking`,
+            })),
+        ];
+
+        res.json({ success: true, alerts });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }

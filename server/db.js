@@ -217,6 +217,34 @@ export async function initDb() {
         await client.query(`CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC)`);
         console.log('  ✓ Audit log table ready');
 
+        // Users table (authentication + roles) — must exist before tables that
+        // reference users(id), e.g. gps_change_suggestions on a fresh install
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin','technician','viewer')),
+        active BOOLEAN DEFAULT TRUE,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        updated_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`);
+        // Google SSO columns
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT`);
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`);
+        await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL`);
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login BIGINT`);
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN DEFAULT FALSE`);
+        console.log('  ✓ Users table ready');
+
+        // Extend users role constraint to include 'customer'
+        await client.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check`);
+        await client.query(`ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin','technician','viewer','customer'))`);
+
         // Companies table
         await client.query(`
       CREATE TABLE IF NOT EXISTS companies (
@@ -295,17 +323,6 @@ export async function initDb() {
         // Fix: clustering bug overwrote HQ coordinates with remote site GPS — clear them
         await client.query(`UPDATE job_sites SET latitude = NULL, longitude = NULL WHERE is_headquarters = TRUE AND latitude IS NOT NULL`);
         console.log('  ✓ Deployment management columns ready');
-
-        // Add soc_start_of_day column for persistent consumption estimation
-        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS soc_start_of_day REAL`);
-
-        // Add expected_yield_wh column so each day's score uses that day's weather
-        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS expected_yield_wh NUMERIC`);
-        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS consumption_source TEXT`);
-
-        // Add end-of-day state columns for intelligent deficit detection
-        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS battery_soc_eod REAL`);
-        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS mppt_state_eod INTEGER`);
 
         // Promote VRM diagnostic fields from JSONB to dedicated columns
         await client.query(`ALTER TABLE site_snapshots ADD COLUMN IF NOT EXISTS consumed_ah REAL`);
@@ -413,6 +430,17 @@ export async function initDb() {
       )
     `);
 
+        // Add soc_start_of_day column for persistent consumption estimation
+        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS soc_start_of_day REAL`);
+
+        // Add expected_yield_wh column so each day's score uses that day's weather
+        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS expected_yield_wh NUMERIC`);
+        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS consumption_source TEXT`);
+
+        // Add end-of-day state columns for intelligent deficit detection
+        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS battery_soc_eod REAL`);
+        await client.query(`ALTER TABLE daily_energy_summary ADD COLUMN IF NOT EXISTS mppt_state_eod INTEGER`);
+
         // Alert history (persists across server restarts)
         await client.query(`
       CREATE TABLE IF NOT EXISTS alert_history (
@@ -474,33 +502,6 @@ export async function initDb() {
         } catch (embErr) {
             console.warn('  ⚠ Semantic search tables skipped (pgvector required)');
         }
-
-        // Users table (authentication + roles)
-        await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL,
-        display_name TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin','technician','viewer')),
-        active BOOLEAN DEFAULT TRUE,
-        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
-        updated_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
-      )
-    `);
-        await client.query(`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`);
-        // Google SSO columns
-        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT`);
-        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`);
-        await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL`);
-        await client.query(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL`);
-        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login BIGINT`);
-        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN DEFAULT FALSE`);
-        console.log('  ✓ Users table ready');
-
-        // Extend users role constraint to include 'customer'
-        await client.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check`);
-        await client.query(`ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin','technician','viewer','customer'))`);
 
         // Customer site access (customer portal)
         await client.query(`
@@ -657,6 +658,118 @@ export async function initDb() {
                 JSON.stringify([{ name: 'Cellular Antenna', quantity: 1 }]),
             ]);
             console.log('  ✓ Default issue templates seeded');
+        }
+
+        // ============================================================
+        // Rental & Billing tables (trailer rental lifecycle)
+        // ============================================================
+
+        // Trailers as first-class assets (decoupled from VRM installation IDs)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS trailers (
+        id SERIAL PRIMARY KEY,
+        unit_number TEXT NOT NULL UNIQUE,
+        vin TEXT,
+        vrm_site_id INTEGER UNIQUE,
+        ic2_device_id INTEGER,
+        status TEXT DEFAULT 'available',
+        home_base_job_site_id INTEGER REFERENCES job_sites(id) ON DELETE SET NULL,
+        purchase_date DATE,
+        condition_notes TEXT,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        updated_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_trailers_status ON trailers(status)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_trailers_vrm_site ON trailers(vrm_site_id) WHERE vrm_site_id IS NOT NULL`);
+
+        // Rentals: one row per trailer per rental engagement (commercial truth)
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS rentals (
+        id SERIAL PRIMARY KEY,
+        trailer_id INTEGER NOT NULL REFERENCES trailers(id) ON DELETE CASCADE,
+        job_site_id INTEGER REFERENCES job_sites(id) ON DELETE SET NULL,
+        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        po_number TEXT,
+        reserved_at DATE,
+        delivered_at DATE,
+        billing_start DATE,
+        calloff_at DATE,
+        billing_stop DATE,
+        picked_up_at DATE,
+        returned_at DATE,
+        rate_amount NUMERIC(10,2),
+        rate_period TEXT DEFAULT 'month',
+        status TEXT DEFAULT 'reserved',
+        notes TEXT,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000),
+        updated_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_rentals_trailer ON rentals(trailer_id)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_rentals_job_site ON rentals(job_site_id)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_rentals_status ON rentals(status)`);
+        // One open rental per trailer at a time
+        await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_rentals_one_open_per_trailer
+      ON rentals(trailer_id) WHERE status NOT IN ('closed', 'cancelled')
+    `);
+
+        // Immutable event log: who started/stopped billing and when
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS rental_events (
+        id SERIAL PRIMARY KEY,
+        rental_id INTEGER NOT NULL REFERENCES rentals(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        event_date DATE NOT NULL,
+        actor TEXT,
+        notes TEXT,
+        created_at BIGINT NOT NULL DEFAULT (extract(epoch from now()) * 1000)
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_rental_events_rental ON rental_events(rental_id)`);
+        console.log('  ✓ Rental & billing tables ready');
+
+        // Backfill trailers from existing GPS-derived assignments (idempotent)
+        await client.query(`
+      INSERT INTO trailers (unit_number, vrm_site_id, ic2_device_id)
+      SELECT ta.site_name, ta.site_id, ta.ic2_device_id
+      FROM trailer_assignments ta
+      WHERE NOT EXISTS (SELECT 1 FROM trailers t WHERE t.vrm_site_id = ta.site_id)
+      ON CONFLICT (unit_number) DO NOTHING
+    `);
+
+        // One-time rental backfill: open a rental for every trailer currently
+        // deployed on a customer job site, seeded from the site's lifecycle dates
+        const rentalsBackfilled = await client.query(`SELECT value FROM settings WHERE key = 'rentals_backfilled'`);
+        if (rentalsBackfilled.rows.length === 0) {
+            await client.query(`
+        INSERT INTO rentals (trailer_id, job_site_id, company_id, delivered_at, billing_start, calloff_at, status, notes)
+        SELECT t.id, js.id, js.company_id,
+               js.delivery_date,
+               COALESCE(js.active_date, js.delivery_date, to_timestamp(ta.assigned_at / 1000)::date),
+               js.calloff_date,
+               CASE
+                 WHEN js.status = 'active' THEN 'billing'
+                 WHEN js.status = 'standby' THEN 'delivered'
+                 ELSE 'awaiting_pickup'
+               END,
+               'Backfilled from job site assignment'
+        FROM trailers t
+        JOIN trailer_assignments ta ON ta.site_id = t.vrm_site_id
+        JOIN job_sites js ON js.id = ta.job_site_id
+        WHERE js.is_headquarters IS NOT TRUE
+          AND NOT EXISTS (
+            SELECT 1 FROM rentals r
+            WHERE r.trailer_id = t.id AND r.status NOT IN ('closed', 'cancelled')
+          )
+      `);
+            await client.query(`
+        UPDATE trailers SET status = 'on_rent'
+        WHERE id IN (SELECT trailer_id FROM rentals WHERE status NOT IN ('closed', 'cancelled'))
+      `);
+            await client.query(`INSERT INTO settings (key, value) VALUES ('rentals_backfilled', '1') ON CONFLICT (key) DO NOTHING`);
+            console.log('  ✓ Rentals backfilled from current trailer assignments');
         }
 
         // Default retention: 90 days
@@ -2451,6 +2564,253 @@ export async function markAllNotificationsRead(userId) {
     if (!pool) return;
     await pool.query(`UPDATE notifications SET read = TRUE WHERE user_id = $1 AND read = FALSE`, [userId]);
 }
+
+// ============================================================
+// Trailers (rental fleet assets)
+// ============================================================
+
+const TRAILER_STATUSES = ['available', 'reserved', 'on_rent', 'in_transit', 'maintenance', 'retired'];
+const OPEN_RENTAL_STATUSES = ['reserved', 'delivered', 'billing', 'called_off', 'awaiting_pickup'];
+
+export async function getTrailers({ status } = {}) {
+    if (!pool) return [];
+    const params = [];
+    let where = '';
+    if (status) {
+        params.push(status);
+        where = `WHERE t.status = $1`;
+    }
+    const result = await pool.query(`
+        SELECT t.*,
+               ta.job_site_id AS current_job_site_id,
+               js.name AS current_job_site_name,
+               js.is_headquarters AS at_headquarters,
+               r.id AS open_rental_id,
+               r.status AS open_rental_status
+        FROM trailers t
+        LEFT JOIN trailer_assignments ta ON ta.site_id = t.vrm_site_id
+        LEFT JOIN job_sites js ON js.id = ta.job_site_id
+        LEFT JOIN rentals r ON r.trailer_id = t.id AND r.status NOT IN ('closed', 'cancelled')
+        ${where}
+        ORDER BY t.unit_number
+    `, params);
+    return result.rows;
+}
+
+export async function getTrailer(id) {
+    if (!pool) return null;
+    const result = await pool.query(`SELECT * FROM trailers WHERE id = $1`, [id]);
+    return result.rows[0] || null;
+}
+
+export async function insertTrailer(t) {
+    if (!pool) return null;
+    const result = await pool.query(`
+        INSERT INTO trailers (unit_number, vin, vrm_site_id, ic2_device_id, status, home_base_job_site_id, purchase_date, condition_notes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING *
+    `, [
+        t.unit_number,
+        t.vin || null,
+        t.vrm_site_id || null,
+        t.ic2_device_id || null,
+        TRAILER_STATUSES.includes(t.status) ? t.status : 'available',
+        t.home_base_job_site_id || null,
+        t.purchase_date || null,
+        t.condition_notes || null,
+    ]);
+    return result.rows[0];
+}
+
+export async function updateTrailer(id, updates) {
+    if (!pool) return null;
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    for (const [key, value] of Object.entries(updates)) {
+        if (['unit_number', 'vin', 'vrm_site_id', 'ic2_device_id', 'status', 'home_base_job_site_id', 'purchase_date', 'condition_notes'].includes(key)) {
+            if (key === 'status' && !TRAILER_STATUSES.includes(value)) continue;
+            fields.push(`${key} = $${idx}`);
+            values.push(value);
+            idx++;
+        }
+    }
+    if (fields.length === 0) return null;
+    fields.push(`updated_at = $${idx}`);
+    values.push(Date.now());
+    idx++;
+    values.push(id);
+    const result = await pool.query(
+        `UPDATE trailers SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+        values
+    );
+    return result.rows[0] || null;
+}
+
+// ============================================================
+// Rentals & billing lifecycle
+// ============================================================
+
+const RENTAL_JOIN = `
+    SELECT r.*,
+           t.unit_number, t.vrm_site_id, t.status AS trailer_status,
+           js.name AS job_site_name,
+           c.name AS company_name
+    FROM rentals r
+    JOIN trailers t ON t.id = r.trailer_id
+    LEFT JOIN job_sites js ON js.id = r.job_site_id
+    LEFT JOIN companies c ON c.id = r.company_id
+`;
+
+export async function getRentals({ status, trailerId, jobSiteId, companyId, open } = {}) {
+    if (!pool) return [];
+    const conditions = [];
+    const params = [];
+    if (status) { params.push(status); conditions.push(`r.status = $${params.length}`); }
+    if (trailerId) { params.push(trailerId); conditions.push(`r.trailer_id = $${params.length}`); }
+    if (jobSiteId) { params.push(jobSiteId); conditions.push(`r.job_site_id = $${params.length}`); }
+    if (companyId) { params.push(companyId); conditions.push(`r.company_id = $${params.length}`); }
+    if (open) conditions.push(`r.status NOT IN ('closed', 'cancelled')`);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const result = await pool.query(`
+        ${RENTAL_JOIN}
+        ${where}
+        ORDER BY
+            CASE r.status
+                WHEN 'billing' THEN 0 WHEN 'called_off' THEN 1 WHEN 'awaiting_pickup' THEN 2
+                WHEN 'delivered' THEN 3 WHEN 'reserved' THEN 4 ELSE 5
+            END,
+            t.unit_number
+    `, params);
+    return result.rows;
+}
+
+export async function getRental(id) {
+    if (!pool) return null;
+    const result = await pool.query(`${RENTAL_JOIN} WHERE r.id = $1`, [id]);
+    return result.rows[0] || null;
+}
+
+export async function insertRental(r) {
+    if (!pool) return null;
+    const result = await pool.query(`
+        INSERT INTO rentals (trailer_id, job_site_id, company_id, po_number, reserved_at, rate_amount, rate_period, status, notes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING *
+    `, [
+        r.trailer_id,
+        r.job_site_id || null,
+        r.company_id || null,
+        r.po_number || null,
+        r.reserved_at || new Date().toISOString().slice(0, 10),
+        r.rate_amount || null,
+        ['day', 'week', 'month'].includes(r.rate_period) ? r.rate_period : 'month',
+        'reserved',
+        r.notes || null,
+    ]);
+    return result.rows[0];
+}
+
+export async function updateRental(id, updates) {
+    if (!pool) return null;
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    for (const [key, value] of Object.entries(updates)) {
+        if (['job_site_id', 'company_id', 'po_number', 'reserved_at', 'delivered_at', 'billing_start', 'calloff_at', 'billing_stop', 'picked_up_at', 'returned_at', 'rate_amount', 'rate_period', 'status', 'notes'].includes(key)) {
+            fields.push(`${key} = $${idx}`);
+            values.push(value);
+            idx++;
+        }
+    }
+    if (fields.length === 0) return null;
+    fields.push(`updated_at = $${idx}`);
+    values.push(Date.now());
+    idx++;
+    values.push(id);
+    const result = await pool.query(
+        `UPDATE rentals SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+        values
+    );
+    return result.rows[0] || null;
+}
+
+export async function insertRentalEvent(rentalId, eventType, eventDate, actor = 'system', notes = null) {
+    if (!pool) return null;
+    const result = await pool.query(`
+        INSERT INTO rental_events (rental_id, event_type, event_date, actor, notes)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+    `, [rentalId, eventType, eventDate, actor, notes]);
+    return result.rows[0];
+}
+
+export async function getRentalEvents(rentalId) {
+    if (!pool) return [];
+    const result = await pool.query(
+        `SELECT * FROM rental_events WHERE rental_id = $1 ORDER BY event_date, created_at`,
+        [rentalId]
+    );
+    return result.rows;
+}
+
+// ============================================================
+// Billing: revenue-leakage alert queries
+// ============================================================
+
+// Rentals still accruing past their calloff date (billing or called_off —
+// both accrue until billing_stop is stamped)
+export async function getBillingPastCalloff() {
+    if (!pool) return [];
+    const result = await pool.query(`
+        ${RENTAL_JOIN}
+        WHERE r.status IN ('billing', 'called_off')
+          AND r.billing_stop IS NULL
+          AND r.calloff_at IS NOT NULL
+          AND r.calloff_at < CURRENT_DATE
+        ORDER BY r.calloff_at
+    `);
+    return result.rows;
+}
+
+// Trailers physically at HQ (per GPS assignment) but with billing still running
+export async function getBillingAtHeadquarters() {
+    if (!pool) return [];
+    const result = await pool.query(`
+        SELECT r.*, t.unit_number, js.name AS hq_name
+        FROM rentals r
+        JOIN trailers t ON t.id = r.trailer_id
+        JOIN trailer_assignments ta ON ta.site_id = t.vrm_site_id
+        JOIN job_sites js ON js.id = ta.job_site_id
+        WHERE js.is_headquarters = TRUE
+          AND r.status IN ('billing', 'called_off')
+          AND r.billing_stop IS NULL
+        ORDER BY t.unit_number
+    `);
+    return result.rows;
+}
+
+// Trailers deployed on an active customer site with no open rental (unbilled units)
+export async function getUnbilledDeployedTrailers() {
+    if (!pool) return [];
+    const result = await pool.query(`
+        SELECT t.id AS trailer_id, t.unit_number, js.id AS job_site_id, js.name AS job_site_name
+        FROM trailers t
+        JOIN trailer_assignments ta ON ta.site_id = t.vrm_site_id
+        JOIN job_sites js ON js.id = ta.job_site_id
+        WHERE js.is_headquarters IS NOT TRUE
+          AND js.status = 'active'
+          AND t.status != 'retired'
+          AND NOT EXISTS (
+            SELECT 1 FROM rentals r
+            WHERE r.trailer_id = t.id AND r.status NOT IN ('closed', 'cancelled')
+          )
+        ORDER BY t.unit_number
+    `);
+    return result.rows;
+}
+
+export { OPEN_RENTAL_STATUSES };
 
 export function getPool() {
     return pool;
