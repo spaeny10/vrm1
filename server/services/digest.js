@@ -9,6 +9,7 @@ import { todayStr, hasVrmData } from '../lib/util.js';
 
 // --- Enhanced Digest ---
 export async function buildDigestData() {
+    const db = getPool();
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = yesterday.toISOString().slice(0, 10);
@@ -304,6 +305,7 @@ export function scheduleDigest() {
     cron.schedule(cronExpr, async () => {
         console.log('  Running scheduled digest...');
         try {
+            const db = getPool();
             const data = await buildDigestData();
             // Fetch overdue maintenance if DB available
             if (dbAvailable) {
