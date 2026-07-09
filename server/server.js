@@ -3,10 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import Anthropic from '@anthropic-ai/sdk';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
 import {
     initDb, insertSnapshot, getHistory, getLatestSnapshots,
@@ -61,63 +59,26 @@ import {
     sendMentionNotification
 } from './email.js';
 import cron from 'node-cron';
+import {
+    PORT, VRM_TOKEN, VRM_USER_ID, VRM_BASE,
+    IC2_CLIENT_ID, IC2_CLIENT_SECRET, IC2_BASE, IC2_ORG_ID, IC2_GROUP_ID,
+    anthropic, JWT_SECRET, JWT_EXPIRES_IN, GOOGLE_CLIENT_ID, ALLOWED_GOOGLE_DOMAIN,
+    allowedOrigins, SITES_CACHE_TTL, WEATHER_CACHE_TTL, VRM_STALE_MS,
+    TRAILER_SPECS, SOLAR_SCORE_DEFAULTS,
+} from './config.js';
+import {
+    snapshotCache, pepwaveCache, ic2DeviceIdToSiteId, ic2DeviceIdToName,
+    gpsCache, trailerJobSiteMap, socStartOfDay, consumptionAccumulator,
+    dailyEnergy, weatherCache, offlineTimestamps, geofenceAlerts,
+    solarScoreConfig,
+    dbAvailable, setDbAvailable, pgvectorAvailable, setPgvectorAvailable,
+    dbPool, setDbPool, sitesCache, sitesCacheTime, setSitesCache,
+    lastIc2Poll, setLastIc2Poll, bandwidthLoggedOnce, setBandwidthLoggedOnce,
+} from './state.js';
+import { authMiddleware, requireRole, apiAuthGate, loginLimiter, aiLimiter } from './middleware/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 3001;
-const VRM_TOKEN = process.env.VRM_API_TOKEN;
-const VRM_USER_ID = process.env.VRM_USER_ID;
-const VRM_BASE = 'https://vrmapi.victronenergy.com/v2';
-
-// InControl2 credentials
-const IC2_CLIENT_ID = process.env.IC2_CLIENT_ID;
-const IC2_CLIENT_SECRET = process.env.IC2_CLIENT_SECRET;
-const IC2_BASE = 'https://api.ic.peplink.com';
-const IC2_ORG_ID = 'VdYVxn';
-const IC2_GROUP_ID = 1;
-
-// Claude API for natural language queries
-const anthropic = process.env.ANTHROPIC_API_KEY
-    ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    : null;
-
-// JWT Authentication
-if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
-    console.error('FATAL: JWT_SECRET environment variable is required in production');
-    process.exit(1);
-}
-const JWT_SECRET = process.env.JWT_SECRET || 'vrm-fleet-dev-secret-change-in-production';
-const JWT_EXPIRES_IN = '24h';
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const ALLOWED_GOOGLE_DOMAIN = 'jetstreamsys.com';
-
-function authMiddleware(req, res, next) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Authentication required' });
-    }
-    try {
-        const token = authHeader.split(' ')[1];
-        const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded;
-        next();
-    } catch {
-        return res.status(401).json({ error: 'Invalid or expired token' });
-    }
-}
-
-function requireRole(...roles) {
-    return (req, res, next) => {
-        if (!req.user || !roles.includes(req.user.role)) {
-            return res.status(403).json({ error: 'Insufficient permissions' });
-        }
-        next();
-    };
-}
-
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-    : ['http://localhost:5173', 'http://localhost:3000'];
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' ? allowedOrigins : true,
     credentials: true,
@@ -131,15 +92,8 @@ app.use(express.static(distPath));
 // Trust first proxy (Railway) so express-rate-limit reads X-Forwarded-For correctly
 app.set('trust proxy', 1);
 
-// Rate limiters
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, message: { error: 'Too many login attempts, try again in 15 minutes' } });
-const aiLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, message: { error: 'Too many AI requests, try again in a minute' } });
-
 // Apply auth to all /api routes except login
-app.use('/api', (req, res, next) => {
-    if (req.path === '/auth/login' || req.path === '/auth/google' || req.path === '/health') return next();
-    authMiddleware(req, res, next);
-});
+app.use('/api', apiAuthGate);
 
 // Health check (unauthenticated, for Railway/uptime monitors)
 app.get('/api/health', (req, res) => {
@@ -231,37 +185,7 @@ async function ic2Fetch(endpoint, retryOn401 = true) {
     return res.json();
 }
 
-// --- Caches ---
-let sitesCache = null;
-let sitesCacheTime = 0;
-const SITES_CACHE_TTL = 5 * 60 * 1000;
-
-// In-memory snapshot cache: siteId -> latest snapshot data
-const snapshotCache = new Map();
-let dbAvailable = false;
-let pgvectorAvailable = false;
-
-// Pepwave device cache: deviceName -> device data
-const pepwaveCache = new Map();
-const ic2DeviceIdToSiteId = new Map();  // ic2DeviceId -> siteId (persistent linkage)
-const ic2DeviceIdToName = new Map();    // ic2DeviceId -> deviceName (for pepwave lookups)
-let lastIc2Poll = 0;
-let dbPool = null;
-let bandwidthLoggedOnce = false;
-
-// GPS cache: siteId -> { latitude, longitude, updatedAt }
-const gpsCache = new Map();
-
-// Trailer to job site mapping: siteId -> job_site_name
-const trailerJobSiteMap = new Map();
-
-// SOC-at-start-of-day cache: siteId -> { date, soc }
-// Used to estimate daily consumption when CE diagnostic is unavailable
-const socStartOfDay = new Map();
-
-// Consumption accumulator: siteId -> { date, wh, lastTimestamp }
-// Integrates DC load power over time when CE diagnostic unavailable
-const consumptionAccumulator = new Map();
+// --- Caches live in state.js (shared across modules) ---
 
 // ============================================================
 // Helper: does this trailer have actual VRM/Victron data?
@@ -278,27 +202,6 @@ function hasVrmData(snapshot) {
     return true;
 }
 
-// Trailer Hardware Specifications
-// ============================================================
-const TRAILER_SPECS = {
-    solar: { panels: 3, panel_watts: 435, total_watts: 1305, system_efficiency: 0.70 },
-    battery: { chemistry: 'LiFePO4', count: 2, config: 'parallel', ah_per_battery: 230, voltage: 25.6, total_ah: 460, total_wh: 11776, min_soc_threshold: 20, usable_wh: 9421 },
-};
-
-// ============================================================
-// Solar Score Configuration (configurable from Settings page)
-// ============================================================
-const SOLAR_SCORE_DEFAULTS = {
-    throttle_soc_threshold: 95,    // SOC % above which throttling is detected
-    throttle_floor_soc: 98,        // SOC % above which minimum score floor applies
-    throttle_floor_score: 80,      // Minimum score when floor condition met
-    throttle_panel_min_pct: 10,    // Panel output % threshold to confirm system health
-    score_excellent: 80,           // Score threshold for "Excellent"
-    score_good: 60,                // Score threshold for "Good"
-    score_fair: 40,                // Score threshold for "Fair"
-};
-let solarScoreConfig = { ...SOLAR_SCORE_DEFAULTS };
-
 async function loadSolarScoreConfig() {
     if (!dbAvailable) return;
     try {
@@ -313,12 +216,8 @@ async function loadSolarScoreConfig() {
 }
 
 // ============================================================
-// Weather / Solar Irradiance Cache (Open-Meteo, free, no API key)
-// Key: "lat,lon" (rounded to 0.1°), Value: { data, fetchedAt }
+// Weather / Solar Irradiance (Open-Meteo, free, no API key)
 // ============================================================
-const weatherCache = new Map();
-const WEATHER_CACHE_TTL = 60 * 60 * 1000; // 1 hour
-
 async function fetchSolarIrradiance(latitude, longitude) {
     const cacheKey = `${Math.round(latitude * 10) / 10},${Math.round(longitude * 10) / 10}`;
     const cached = weatherCache.get(cacheKey);
@@ -610,8 +509,6 @@ async function computeTrailerIntelligence(siteId) {
 // Daily energy tracker: siteId -> { [dateStr]: { yield_wh, consumed_wh, site_name } }
 // Keeps up to 14 days of data in memory
 // ============================================================
-const dailyEnergy = new Map();
-
 function todayStr() {
     return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
@@ -782,7 +679,6 @@ async function seedDailyEnergyFromDb() {
 // ============================================================
 // Offline device duration tracking
 // ============================================================
-const offlineTimestamps = new Map(); // deviceName -> firstOfflineTime
 
 // ============================================================
 // Trailer to Job Site Mapping
@@ -1271,8 +1167,7 @@ app.get('/api/sites', async (req, res) => {
     try {
         if (!sitesCache || Date.now() - sitesCacheTime >= SITES_CACHE_TTL) {
             const data = await vrmFetch(`/users/${VRM_USER_ID}/installations`);
-            sitesCache = data;
-            sitesCacheTime = Date.now();
+            setSitesCache(data);
         }
         // Augment with IC2-only devices (those without VRM)
         const vrmNames = new Set((sitesCache.records || []).map(r => r.name));
@@ -3897,8 +3792,6 @@ function extractVrmTimestamp(records) {
     return latest > 0 ? latest * 1000 : null;  // convert to ms
 }
 
-// VRM data staleness threshold (30 minutes)
-const VRM_STALE_MS = 30 * 60 * 1000;
 
 // --- Background polling: VRM ---
 let isPolling = false;
@@ -3912,8 +3805,7 @@ async function pollAllSites() {
     try {
         if (!sitesCache) {
             const data = await vrmFetch(`/users/${VRM_USER_ID}/installations`);
-            sitesCache = data;
-            sitesCacheTime = Date.now();
+            setSitesCache(data);
         }
 
         const sites = sitesCache.records || [];
@@ -4151,7 +4043,7 @@ async function pollIc2Devices() {
 
             // Debug: log raw structure on first successful fetch
             if (!bandwidthLoggedOnce) {
-                bandwidthLoggedOnce = true;
+                setBandwidthLoggedOnce(true);
                 if (Array.isArray(bwData) && bwData.length > 0) {
                     console.log(`  IC2 bandwidth sample (array[0]):`, JSON.stringify(bwData[0]).slice(0, 500));
                 } else if (typeof bwData === 'object') {
@@ -4381,7 +4273,7 @@ async function pollIc2Devices() {
             checkGeofences().catch(err => console.error('  Geofence check failed:', err.message));
         }
 
-        lastIc2Poll = Date.now();
+        setLastIc2Poll(Date.now());
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         console.log(`  IC2 poll complete: ${devices.length} devices (${onlineCount} online, ${offlineCount} offline) in ${elapsed}s`);
     } catch (err) {
@@ -4394,7 +4286,6 @@ async function pollIc2Devices() {
 // ============================================================
 // Geofence Checking
 // ============================================================
-const geofenceAlerts = new Map(); // siteId -> { breached, distance_m, lastAlertedAt, site_name, job_site_name }
 
 async function checkGeofences() {
     if (!dbAvailable) return;
@@ -6361,18 +6252,18 @@ app.use((err, req, res, _next) => {
 // --- Start ---
 async function start() {
     try {
-        dbPool = await initDb();
-        dbAvailable = true;
+        setDbPool(await initDb());
+        setDbAvailable(true);
         console.log('PostgreSQL database connected');
         // Check if pgvector / fleet_embeddings table exists
         try {
             await dbPool.query(`SELECT 1 FROM fleet_embeddings LIMIT 0`);
-            pgvectorAvailable = true;
+            setPgvectorAvailable(true);
         } catch {
-            pgvectorAvailable = false;
+            setPgvectorAvailable(false);
         }
     } catch (err) {
-        dbAvailable = false;
+        setDbAvailable(false);
         console.warn('PostgreSQL not available — using in-memory cache only');
         console.warn('Set DATABASE_URL to enable persistent history');
         console.error('Database connection error:', err.message);
