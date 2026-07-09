@@ -87,6 +87,25 @@ function RentalsPage() {
         }
     }, [rentals])
 
+    // Group the filtered rentals by job site (unassigned last), with totals
+    const bySiteGroups = useMemo(() => {
+        const map = new Map()
+        for (const r of filteredRentals) {
+            const key = r.job_site_id ?? 'none'
+            if (!map.has(key)) {
+                map.set(key, { key, id: r.job_site_id || null, name: r.job_site_name || 'No Site Assigned', rentals: [], total: 0 })
+            }
+            const g = map.get(key)
+            g.rentals.push(r)
+            g.total = Math.round((g.total + (r.total_due ?? r.accrued_amount ?? 0)) * 100) / 100
+        }
+        return [...map.values()].sort((a, b) => {
+            if (!a.id && b.id) return 1
+            if (a.id && !b.id) return -1
+            return a.name.localeCompare(b.name)
+        })
+    }, [filteredRentals])
+
     const refetchAll = () => { refetchRentals(); refetchSummary(); refetchAlerts() }
 
     const handleEvent = async (rental, event, date, notes) => {
@@ -270,6 +289,7 @@ function RentalsPage() {
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
                 <div className="view-toggle">
                     <button className={`view-toggle-btn ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')}>List</button>
+                    <button className={`view-toggle-btn ${viewMode === 'by_site' ? 'active' : ''}`} onClick={() => setViewMode('by_site')}>By Site</button>
                     <button className={`view-toggle-btn ${viewMode === 'calendar' ? 'active' : ''}`} onClick={() => setViewMode('calendar')}>Calendar</button>
                     <button className={`view-toggle-btn ${viewMode === 'statements' ? 'active' : ''}`} onClick={() => setViewMode('statements')}>Statements</button>
                 </div>
@@ -283,7 +303,7 @@ function RentalsPage() {
                 <StatementsView />
             )}
 
-            {viewMode === 'list' && (<>
+            {(viewMode === 'list' || viewMode === 'by_site') && (<>
             {/* Status tabs */}
             <div className="maint-tabs" style={{ marginBottom: 16 }}>
                 {STATUS_TABS.map(tab => (
@@ -297,82 +317,51 @@ function RentalsPage() {
                 ))}
             </div>
 
-            {/* Rentals table */}
-            <div className="maint-table-section">
-                {loading && rentals.length === 0 ? (
-                    <div className="page-loading"><div className="spinner" /><p>Loading rentals...</p></div>
-                ) : filteredRentals.length === 0 ? (
+            {loading && rentals.length === 0 ? (
+                <div className="page-loading"><div className="spinner" /><p>Loading rentals...</p></div>
+            ) : filteredRentals.length === 0 ? (
+                <div className="maint-table-section">
                     <div className="empty-section">
                         <p>{rentals.length === 0
                             ? 'No rentals yet. Click "+ New Rental" to reserve a trailer for a customer.'
                             : 'No rentals match this filter.'}</p>
                     </div>
-                ) : (
-                    <table className="maint-table">
-                        <thead>
-                            <tr>
-                                <th>Unit</th>
-                                <th>Job Site</th>
-                                <th>Company</th>
-                                <th>PO #</th>
-                                <th>Rate</th>
-                                <th>Billing Start</th>
-                                <th>Billing Stop</th>
-                                <th>Days</th>
-                                <th>Accrued</th>
-                                <th>Status</th>
-                                {canEdit && <th>Actions</th>}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filteredRentals.map(r => (
-                                <tr key={r.id} className="maint-row" onClick={() => openDetail(r)} style={{ cursor: 'pointer' }}>
-                                    <td className="maint-title">{unitCell(r)}</td>
-                                    <td>{siteCell(r)}</td>
-                                    <td>{r.company_name || '—'}</td>
-                                    <td>{r.po_number || '—'}</td>
-                                    <td>
-                                        {r.effective_rate ? (
-                                            <>
-                                                <div>{formatMoney(r.effective_rate)}/{CYCLE_LABELS[r.billing_cycle] || r.billing_cycle}</div>
-                                                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                                                    {r.pricing_source === 'manual'
-                                                        ? 'Manual rate'
-                                                        : `${TERM_LABELS[r.commitment_term] || r.commitment_term}${r.volume_tier && r.volume_tier.discount_pct > 0 ? ` · ${r.volume_tier.name} −${r.volume_tier.discount_pct}%` : ''}`}
-                                                </div>
-                                            </>
-                                        ) : '—'}
-                                    </td>
-                                    <td className="maint-date">{formatDate(r.billing_start)}</td>
-                                    <td className="maint-date">{formatDate(r.billing_stop)}</td>
-                                    <td>{r.days_on_rent ?? '—'}</td>
-                                    <td className="maint-cost">
-                                        {formatMoney(r.total_due ?? r.accrued_amount)}
-                                        {r.rollback_amount > 0 && (
-                                            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }} title="Roll-back adjustment for early termination of commitment">
-                                                incl. +{formatMoney(r.rollback_amount)} roll-back
-                                            </div>
-                                        )}
-                                    </td>
-                                    <td><RentalStatusBadge status={r.status} /></td>
-                                    {canEdit && (
-                                        <td className="maint-actions">
-                                            <button
-                                                className="btn btn-sm btn-ghost"
-                                                style={{ marginRight: 6 }}
-                                                onClick={(e) => { e.stopPropagation(); setEditingRental(r) }}
-                                            >
-                                                Edit
-                                            </button>
-                                            <RentalActionButtons rental={r} onAction={(rental, event) => setActionModal({ rental, event })} />
-                                        </td>
-                                    )}
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                )}
-            </div>
+                </div>
+            ) : viewMode === 'list' ? (
+                <div className="maint-table-section">
+                    <RentalsTable
+                        rows={filteredRentals}
+                        canEdit={canEdit}
+                        unitCell={unitCell} siteCell={siteCell}
+                        onRowClick={openDetail}
+                        onEdit={setEditingRental}
+                        onAction={(rental, event) => setActionModal({ rental, event })}
+                    />
+                </div>
+            ) : (
+                bySiteGroups.map(g => (
+                    <div key={g.key} className="maint-table-section" style={{ marginBottom: 20 }}>
+                        <div className="maint-group-header">
+                            <h3>
+                                {g.id
+                                    ? <Link to={`/site/${g.id}`} className="table-link">{g.name}</Link>
+                                    : g.name}
+                                <span className="maint-group-count">{g.rentals.length} rental{g.rentals.length !== 1 ? 's' : ''}</span>
+                            </h3>
+                            <strong>{formatMoney(g.total)}</strong>
+                        </div>
+                        <RentalsTable
+                            rows={g.rentals}
+                            hideSite
+                            canEdit={canEdit}
+                            unitCell={unitCell} siteCell={siteCell}
+                            onRowClick={openDetail}
+                            onEdit={setEditingRental}
+                            onAction={(rental, event) => setActionModal({ rental, event })}
+                        />
+                    </div>
+                ))
+            )}
             </>)}
 
             {/* Rental detail drawer: summary + event timeline */}
@@ -424,6 +413,74 @@ function RentalsPage() {
                 />
             )}
         </div>
+    )
+}
+
+function RentalsTable({ rows, hideSite, canEdit, unitCell, siteCell, onRowClick, onEdit, onAction }) {
+    return (
+        <table className="maint-table">
+            <thead>
+                <tr>
+                    <th>Unit</th>
+                    {!hideSite && <th>Job Site</th>}
+                    <th>Company</th>
+                    <th>PO #</th>
+                    <th>Rate</th>
+                    <th>Billing Start</th>
+                    <th>Billing Stop</th>
+                    <th>Days</th>
+                    <th>Accrued</th>
+                    <th>Status</th>
+                    {canEdit && <th>Actions</th>}
+                </tr>
+            </thead>
+            <tbody>
+                {rows.map(r => (
+                    <tr key={r.id} className="maint-row" onClick={() => onRowClick(r)} style={{ cursor: 'pointer' }}>
+                        <td className="maint-title">{unitCell(r)}</td>
+                        {!hideSite && <td>{siteCell(r)}</td>}
+                        <td>{r.company_name || '—'}</td>
+                        <td>{r.po_number || '—'}</td>
+                        <td>
+                            {r.effective_rate ? (
+                                <>
+                                    <div>{formatMoney(r.effective_rate)}/{CYCLE_LABELS[r.billing_cycle] || r.billing_cycle}</div>
+                                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                        {r.pricing_source === 'manual'
+                                            ? 'Manual rate'
+                                            : `${TERM_LABELS[r.commitment_term] || r.commitment_term}${r.volume_tier && r.volume_tier.discount_pct > 0 ? ` · ${r.volume_tier.name} −${r.volume_tier.discount_pct}%` : ''}`}
+                                    </div>
+                                </>
+                            ) : '—'}
+                        </td>
+                        <td className="maint-date">{formatDate(r.billing_start)}</td>
+                        <td className="maint-date">{formatDate(r.billing_stop)}</td>
+                        <td>{r.days_on_rent ?? '—'}</td>
+                        <td className="maint-cost">
+                            {formatMoney(r.total_due ?? r.accrued_amount)}
+                            {r.rollback_amount > 0 && (
+                                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }} title="Roll-back adjustment for early termination of commitment">
+                                    incl. +{formatMoney(r.rollback_amount)} roll-back
+                                </div>
+                            )}
+                        </td>
+                        <td><RentalStatusBadge status={r.status} /></td>
+                        {canEdit && (
+                            <td className="maint-actions">
+                                <button
+                                    className="btn btn-sm btn-ghost"
+                                    style={{ marginRight: 6 }}
+                                    onClick={(e) => { e.stopPropagation(); onEdit(r) }}
+                                >
+                                    Edit
+                                </button>
+                                <RentalActionButtons rental={r} onAction={onAction} />
+                            </td>
+                        )}
+                    </tr>
+                ))}
+            </tbody>
+        </table>
     )
 }
 
