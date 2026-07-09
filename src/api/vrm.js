@@ -755,10 +755,10 @@ export async function updateRental(id, data) {
     return apiFetch(`${API_BASE}/rentals/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 }
 
-export async function postRentalEvent(id, eventType, eventDate, notes) {
+export async function postRentalEvent(id, eventType, eventDate, notes, extras = {}) {
     return apiFetch(`${API_BASE}/rentals/${id}/events`, {
         method: 'POST',
-        body: JSON.stringify({ event_type: eventType, event_date: eventDate, notes }),
+        body: JSON.stringify({ event_type: eventType, event_date: eventDate, notes, ...extras }),
     });
 }
 

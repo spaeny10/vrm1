@@ -32,10 +32,10 @@ function RentalsInline({ jobSiteId, vrmSiteId, title = 'Rentals & Billing' }) {
 
     useEffect(() => { load() }, [load])
 
-    const handleEvent = async (rental, event, date, notes) => {
+    const handleEvent = async (rental, event, date, notes, extras) => {
         setSubmitting(true)
         try {
-            await postRentalEvent(rental.id, event, date, notes)
+            await postRentalEvent(rental.id, event, date, notes, extras)
             toast.success(`${rental.unit_number}: ${EVENT_LABELS[event] || event} recorded`)
             setActionModal(null)
             load()
@@ -110,7 +110,7 @@ function RentalsInline({ jobSiteId, vrmSiteId, title = 'Rentals & Billing' }) {
                     rental={actionModal.rental}
                     event={actionModal.event}
                     submitting={submitting}
-                    onConfirm={(date, notes) => handleEvent(actionModal.rental, actionModal.event, date, notes)}
+                    onConfirm={(date, notes, extras) => handleEvent(actionModal.rental, actionModal.event, date, notes, extras)}
                     onClose={() => setActionModal(null)}
                 />
             )}

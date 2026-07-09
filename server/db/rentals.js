@@ -168,13 +168,13 @@ export async function updateRental(id, updates) {
     return result.rows[0] || null;
 }
 
-export async function insertRentalEvent(rentalId, eventType, eventDate, actor = 'system', notes = null) {
+export async function insertRentalEvent(rentalId, eventType, eventDate, actor = 'system', notes = null, extras = {}) {
     if (!pool) return null;
     const result = await pool.query(`
-        INSERT INTO rental_events (rental_id, event_type, event_date, actor, notes)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO rental_events (rental_id, event_type, event_date, actor, notes, transport_company, transport_cost)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
-    `, [rentalId, eventType, eventDate, actor, notes]);
+    `, [rentalId, eventType, eventDate, actor, notes, extras.transport_company || null, extras.transport_cost ?? null]);
     return result.rows[0];
 }
 

@@ -114,7 +114,7 @@ app.put('/api/rentals/:id', requireRole('admin', 'technician'), async (req, res)
 
 app.post('/api/rentals/:id/events', requireRole('admin', 'technician'), async (req, res) => {
     try {
-        const { event_type, event_date, notes } = req.body;
+        const { event_type, event_date, notes, transport_company, transport_cost } = req.body;
         const transition = RENTAL_TRANSITIONS[event_type];
         if (!transition) {
             return res.status(400).json({ success: false, error: `Unknown event_type. Valid: ${Object.keys(RENTAL_TRANSITIONS).join(', ')}` });
@@ -141,8 +141,12 @@ app.post('/api/rentals/:id/events', requireRole('admin', 'technician'), async (r
         }
 
         const actor = req.user ? req.user.display_name : 'system';
-        const event = await insertRentalEvent(rental.id, event_type, date, actor, notes || null);
-        insertAuditLog('rental', rental.id, `rental_${event_type}`, { trailer: rental.unit_number, date }, actor).catch(() => { });
+        const transport = {
+            transport_company: transport_company ? String(transport_company).trim() : null,
+            transport_cost: transport_cost !== undefined && transport_cost !== null && transport_cost !== '' ? parseFloat(transport_cost) : null,
+        };
+        const event = await insertRentalEvent(rental.id, event_type, date, actor, notes || null, transport);
+        insertAuditLog('rental', rental.id, `rental_${event_type}`, { trailer: rental.unit_number, date, ...(transport.transport_company || transport.transport_cost ? transport : {}) }, actor).catch(() => { });
 
         // Roll-Back clause: stopping billing before a 6-month/1-year commitment
         // is fulfilled retroactively re-prices the utilized period at the

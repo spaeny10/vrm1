@@ -168,7 +168,17 @@ export function RentalActionButtons({ rental, onAction, size = 'sm' }) {
 export function RentalEventModal({ rental, event, submitting, onConfirm, onClose }) {
     const [date, setDate] = useState(todayStr())
     const [notes, setNotes] = useState('')
+    const [transportCompany, setTransportCompany] = useState('')
+    const [transportCost, setTransportCost] = useState('')
     const isBillingEvent = event === 'start_billing' || event === 'stop_billing'
+    // Pickups and deliveries are physical moves — log the hotshot service used
+    const isTransportEvent = event === 'pickup' || event === 'deliver'
+
+    const confirm = () => onConfirm(
+        event === 'cancel' ? undefined : date,
+        notes,
+        isTransportEvent ? { transport_company: transportCompany || null, transport_cost: transportCost ? parseFloat(transportCost) : null } : {},
+    )
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -189,13 +199,25 @@ export function RentalEventModal({ rental, event, submitting, onConfirm, onClose
                             )}
                         </div>
                     )}
+                    {isTransportEvent && (
+                        <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+                            <div style={{ flex: 2 }}>
+                                <label className="form-label">Hotshot / Transport Company</label>
+                                <input className="input" value={transportCompany} onChange={e => setTransportCompany(e.target.value)} placeholder="e.g. Rapid Hotshot LLC" />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                                <label className="form-label">Transport Cost ($)</label>
+                                <input type="number" min="0" step="0.01" className="input" value={transportCost} onChange={e => setTransportCost(e.target.value)} placeholder="0.00" />
+                            </div>
+                        </div>
+                    )}
                     <div style={{ marginBottom: 14 }}>
                         <label className="form-label">Notes (optional)</label>
                         <textarea className="input" rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Confirmed with site super by phone" />
                     </div>
                     <div className="modal-footer">
                         <button className="btn btn-secondary" onClick={onClose} disabled={submitting}>Cancel</button>
-                        <button className="btn btn-primary" onClick={() => onConfirm(event === 'cancel' ? undefined : date, notes)} disabled={submitting}>
+                        <button className="btn btn-primary" onClick={confirm} disabled={submitting}>
                             {submitting ? 'Saving...' : (EVENT_LABELS[event] || 'Confirm')}
                         </button>
                     </div>

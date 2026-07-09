@@ -108,10 +108,10 @@ function RentalsPage() {
 
     const refetchAll = () => { refetchRentals(); refetchSummary(); refetchAlerts() }
 
-    const handleEvent = async (rental, event, date, notes) => {
+    const handleEvent = async (rental, event, date, notes, extras) => {
         setSubmitting(true)
         try {
-            await postRentalEvent(rental.id, event, date, notes)
+            await postRentalEvent(rental.id, event, date, notes, extras)
             toast.success(`${rental.unit_number}: ${EVENT_LABELS[event] || event} recorded`)
             setActionModal(null)
             refetchAll()
@@ -382,7 +382,7 @@ function RentalsPage() {
                     rental={actionModal.rental}
                     event={actionModal.event}
                     submitting={submitting}
-                    onConfirm={(date, notes) => handleEvent(actionModal.rental, actionModal.event, date, notes)}
+                    onConfirm={(date, notes, extras) => handleEvent(actionModal.rental, actionModal.event, date, notes, extras)}
                     onClose={() => setActionModal(null)}
                 />
             )}
@@ -533,6 +533,12 @@ function RentalDetailModal({ rental, events, canEdit, onAction, onEdit, onClose 
                     )}
                     <div className="stat-row"><span className="stat-label">Total Due</span><span className="stat-value">{formatMoney(r.total_due)}</span></div>
                     {r.notes && <div className="stat-row"><span className="stat-label">Notes</span><span className="stat-value">{r.notes}</span></div>}
+                    {(() => {
+                        const transportTotal = events.reduce((sum, ev) => sum + (Number(ev.transport_cost) || 0), 0)
+                        return transportTotal > 0
+                            ? <div className="stat-row"><span className="stat-label">Transport Costs (internal)</span><span className="stat-value">{formatMoney(transportTotal)}</span></div>
+                            : null
+                    })()}
 
                     <h3 style={{ margin: '18px 0 8px' }}>History</h3>
                     {events.length === 0 ? (
@@ -545,7 +551,9 @@ function RentalDetailModal({ rental, events, canEdit, onAction, onEdit, onClose 
                                         <td className="maint-date" style={{ width: 110 }}>{formatDate(ev.event_date)}</td>
                                         <td className="maint-title">{EVENT_LABELS[ev.event_type] || ev.event_type}</td>
                                         <td style={{ color: 'var(--text-secondary)' }}>
-                                            {ev.actor}{ev.notes ? ` — ${ev.notes}` : ''}
+                                            {ev.actor}
+                                            {ev.transport_company || ev.transport_cost ? ` — via ${ev.transport_company || 'transport'}${ev.transport_cost ? ` (${formatMoney(ev.transport_cost)})` : ''}` : ''}
+                                            {ev.notes ? ` — ${ev.notes}` : ''}
                                         </td>
                                     </tr>
                                 ))}

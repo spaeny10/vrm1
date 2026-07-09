@@ -695,6 +695,9 @@ export async function applySchema(client) {
       )
     `);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_rental_events_rental ON rental_events(rental_id)`);
+        // Transport logging (hotshot service) on pickup/delivery events
+        await client.query(`ALTER TABLE rental_events ADD COLUMN IF NOT EXISTS transport_company TEXT`);
+        await client.query(`ALTER TABLE rental_events ADD COLUMN IF NOT EXISTS transport_cost NUMERIC(10,2)`);
         console.log('  ✓ Rental & billing tables ready');
 
         // ============================================================
