@@ -26,9 +26,12 @@ export function requireRole(...roles) {
     };
 }
 
-// Auth gate for all /api routes except login/health
+// Auth gate for all /api routes except login/health and the Twilio
+// webhook (Twilio can't send a Bearer token; the webhook handler
+// authenticates the request via Twilio signature validation instead)
 export function apiAuthGate(req, res, next) {
-    if (req.path === '/auth/login' || req.path === '/auth/google' || req.path === '/health') return next();
+    if (req.path === '/auth/login' || req.path === '/auth/google' || req.path === '/health'
+        || req.path === '/webhooks/twilio') return next();
     authMiddleware(req, res, next);
 }
 
