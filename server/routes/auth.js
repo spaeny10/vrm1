@@ -29,7 +29,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
         res.json({
             success: true,
             token,
-            user: { id: user.id, username: user.username, display_name: user.display_name, role: user.role },
+            user: { id: user.id, username: user.username, display_name: user.display_name, role: user.role, must_change_password: user.must_change_password === true },
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -60,7 +60,7 @@ app.post('/api/auth/change-password', async (req, res) => {
         const valid = await bcrypt.compare(current_password, user.password_hash);
         if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
         const hash = await bcrypt.hash(new_password, 10);
-        await updateUser(req.user.id, { password_hash: hash });
+        await updateUser(req.user.id, { password_hash: hash, must_change_password: false });
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });

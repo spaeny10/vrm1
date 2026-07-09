@@ -1,11 +1,11 @@
 import { pool } from './core.js';
 
-export async function createUser(username, passwordHash, displayName, role) {
+export async function createUser(username, passwordHash, displayName, role, mustChangePassword = false) {
     if (!pool) return null;
     const result = await pool.query(
-        `INSERT INTO users (username, password_hash, display_name, role)
-         VALUES ($1, $2, $3, $4) RETURNING id, username, display_name, role, active, created_at`,
-        [username, passwordHash, displayName, role]
+        `INSERT INTO users (username, password_hash, display_name, role, must_change_password)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id, username, display_name, role, active, created_at`,
+        [username, passwordHash, displayName, role, mustChangePassword]
     );
     return result.rows[0];
 }
@@ -22,7 +22,7 @@ export async function getUserByUsername(username) {
 export async function getUserById(id) {
     if (!pool) return null;
     const result = await pool.query(
-        `SELECT id, username, display_name, role, active, created_at FROM users WHERE id = $1`,
+        `SELECT id, username, display_name, role, active, created_at, must_change_password FROM users WHERE id = $1`,
         [id]
     );
     return result.rows[0] || null;
@@ -71,7 +71,7 @@ export async function updateUser(id, updates) {
     const values = [];
     let idx = 1;
     for (const [key, val] of Object.entries(updates)) {
-        if (['display_name', 'role', 'active', 'password_hash', 'google_id', 'email', 'last_login', 'digest_enabled'].includes(key)) {
+        if (['display_name', 'role', 'active', 'password_hash', 'google_id', 'email', 'last_login', 'digest_enabled', 'must_change_password'].includes(key)) {
             fields.push(`${key} = $${idx++}`);
             values.push(val);
         }

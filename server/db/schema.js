@@ -205,6 +205,7 @@ export async function applySchema(client) {
         await client.query(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL`);
         await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login BIGINT`);
         await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN DEFAULT FALSE`);
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE`);
         console.log('  ✓ Users table ready');
 
         // Extend users role constraint to include 'customer'

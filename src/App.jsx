@@ -5,6 +5,7 @@ import PortalSidebar from './components/PortalSidebar'
 import MobileHeader from './components/MobileHeader'
 import ErrorBoundary from './components/ErrorBoundary'
 import LoginPage from './pages/LoginPage'
+import ForcePasswordChangePage from './pages/ForcePasswordChangePage'
 import FleetOverview from './pages/FleetOverview'
 import JobSiteDetail from './pages/JobSiteDetail'
 import NotFound from './pages/NotFound'
@@ -56,6 +57,11 @@ function App() {
 
     if (!user) {
         return <LoginPage />
+    }
+
+    // Temporary-password accounts must rotate before touching anything
+    if (user.must_change_password) {
+        return <ForcePasswordChangePage />
     }
 
     // Customer portal: simplified layout

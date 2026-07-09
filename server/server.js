@@ -367,8 +367,9 @@ async function start() {
             const users = await getUsers();
             if (users.length === 0) {
                 const hash = await bcrypt.hash('admin123', 10);
-                await createUser('admin', hash, 'Administrator', 'admin');
-                console.log('  ✓ Default admin user created (username: admin, password: admin123)');
+                // must_change_password: force rotation of the well-known seed password
+                await createUser('admin', hash, 'Administrator', 'admin', true);
+                console.log('  ✓ Default admin user created (username: admin, password: admin123 — must be changed on first login)');
             }
         } catch (seedErr) {
             console.warn('  ⚠ Could not seed admin user:', seedErr.message);
