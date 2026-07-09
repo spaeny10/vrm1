@@ -400,3 +400,19 @@ export async function getMaintenanceCalendar(startMs, endMs, technicianId) {
 // Customer Site Access (portal)
 // ============================================================
 
+
+// Per-trailer maintenance stats for the Health Grade maintenance component
+export async function getMaintenanceStatsBySite() {
+    if (!pool) return [];
+    const now = Date.now();
+    const result = await pool.query(`
+        SELECT site_id,
+               COUNT(*) FILTER (WHERE status NOT IN ('completed', 'cancelled')) AS open_count,
+               COUNT(*) FILTER (WHERE status = 'scheduled' AND scheduled_date < $1) AS overdue_count,
+               COUNT(*) FILTER (WHERE visit_type = 'emergency' AND created_at > $2) AS emergency_30d
+        FROM maintenance_logs
+        WHERE site_id IS NOT NULL
+        GROUP BY site_id
+    `, [now, now - 30 * 86400000]);
+    return result.rows;
+}

@@ -43,6 +43,10 @@ export const offlineTimestamps = new Map();
 // siteId -> { breached, distance_m, lastAlertedAt, site_name, job_site_name }
 export const geofenceAlerts = new Map();
 
+// siteId -> { open_count, overdue_count, emergency_30d } — refreshed after
+// each VRM poll; feeds the Health Grade maintenance component
+export const maintStatsCache = new Map();
+
 // Solar score config: defaults, overwritten in place from settings at startup
 export const solarScoreConfig = { ...SOLAR_SCORE_DEFAULTS };
 

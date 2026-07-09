@@ -12,6 +12,7 @@ import { computeAlerts, persistAlertHistory, refreshTrailerJobSiteMap } from './
 import { generateEmbeddingsAsync } from './embeddingsJob.js';
 import { computeYesterdayMetrics } from './analyticsJobs.js';
 import { detectGpsChanges } from './geofence.js';
+import { refreshMaintStatsCache } from './intelligence.js';
 
 // --- Background polling: VRM ---
 export let isPolling = false;
@@ -190,6 +191,8 @@ export async function pollAllSites() {
             try { await pruneOldData(); } catch (e) { /* ignore */ }
             // Refresh trailer-to-job-site mapping for alert emails
             try { await refreshTrailerJobSiteMap(); } catch (e) { /* ignore */ }
+            // Refresh maintenance stats for health grades
+            try { await refreshMaintStatsCache(); } catch (e) { /* ignore */ }
         }
 
         const currentAlerts = computeAlerts();

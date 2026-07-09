@@ -1,11 +1,30 @@
 import { TRAILER_SPECS, SOLAR_SCORE_DEFAULTS } from '../config.js';
 import {
     snapshotCache, pepwaveCache, dailyEnergy, gpsCache, trailerJobSiteMap,
-    socStartOfDay, solarScoreConfig, dbAvailable, geofenceAlerts,
+    socStartOfDay, solarScoreConfig, dbAvailable, geofenceAlerts, maintStatsCache,
 } from '../state.js';
-import { getSetting, getDailyEnergy } from '../db.js';
+import { getSetting, getDailyEnergy, getMaintenanceStatsBySite } from '../db.js';
 import { fetchSolarIrradiance, computeAstronomicalPSH } from './weather.js';
 import { hasVrmData, todayStr, extractMpptState, mpptStateToString, getPepwaveForTrailer } from '../lib/util.js';
+
+// Refresh the per-trailer maintenance stats used by computeHealthGrade.
+// Called after each VRM poll cycle (computeHealthGrade itself is sync).
+export async function refreshMaintStatsCache() {
+    if (!dbAvailable) return;
+    try {
+        const rows = await getMaintenanceStatsBySite();
+        maintStatsCache.clear();
+        for (const r of rows) {
+            maintStatsCache.set(r.site_id, {
+                open_count: parseInt(r.open_count) || 0,
+                overdue_count: parseInt(r.overdue_count) || 0,
+                emergency_30d: parseInt(r.emergency_30d) || 0,
+            });
+        }
+    } catch (err) {
+        console.error('  Maintenance stats cache refresh failed:', err.message);
+    }
+}
 
 export async function loadSolarScoreConfig() {
     if (!dbAvailable) return;
@@ -298,8 +317,15 @@ export function computeHealthGrade(siteId) {
     totalScore += networkScore * 0.15;
     weights += 0.15;
 
-    // Maintenance / system health (15%) — default to 85 (no issues = healthy)
-    totalScore += 85 * 0.15;
+    // Maintenance / system health (15%) — from real maintenance history when
+    // available: overdue work drags hardest, open logs and recent emergencies
+    // also count. Trailers with no maintenance history keep the legacy 85 so
+    // existing grades don't shift.
+    const maint = maintStatsCache.get(siteId);
+    const maintScore = maint
+        ? Math.max(0, Math.min(100, 100 - 35 * maint.overdue_count - 10 * maint.open_count - 15 * Math.min(maint.emergency_30d, 1)))
+        : 85;
+    totalScore += maintScore * 0.15;
     weights += 0.15;
 
     const score = weights > 0 ? Math.round(totalScore / weights) : null;
