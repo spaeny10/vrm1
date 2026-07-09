@@ -1,12 +1,18 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { useAuth } from '../components/AuthProvider'
 import { useToast } from '../components/ToastProvider'
 import {
-    fetchRentals, createRental, updateRental, postRentalEvent,
+    fetchRentals, fetchRental, createRental, updateRental, postRentalEvent,
     fetchBillingSummary, fetchBillingAlerts,
     fetchTrailers, fetchJobSites, fetchCompanies, fetchRateCards,
 } from '../api/vrm'
+import {
+    STATUS_LABELS, STATUS_ACTIONS, EVENT_LABELS, TERM_LABELS, CYCLE_LABELS,
+    formatDate, formatMoney, todayStr, toDateInput, pricingLabel,
+    RentalStatusBadge, RentalActionButtons, RentalEventModal,
+} from '../components/RentalLifecycle'
 import { generateCSV, downloadCSV } from '../utils/csv'
 
 const STATUS_TABS = [
@@ -19,90 +25,6 @@ const STATUS_TABS = [
     { key: 'closed', label: 'Closed' },
 ]
 
-const STATUS_LABELS = {
-    reserved: 'Reserved',
-    delivered: 'Delivered',
-    billing: 'Billing',
-    called_off: 'Called Off',
-    awaiting_pickup: 'Awaiting Pickup',
-    closed: 'Closed',
-    cancelled: 'Cancelled',
-}
-
-const STATUS_COLORS = {
-    reserved: 'gray',
-    delivered: 'blue',
-    billing: 'green',
-    called_off: 'yellow',
-    awaiting_pickup: 'yellow',
-    closed: 'gray',
-    cancelled: 'gray',
-}
-
-// Lifecycle actions available from each rental status
-const STATUS_ACTIONS = {
-    reserved: [
-        { event: 'deliver', label: 'Deliver' },
-        { event: 'start_billing', label: 'Start Billing' },
-        { event: 'cancel', label: 'Cancel' },
-    ],
-    delivered: [
-        { event: 'start_billing', label: 'Start Billing' },
-        { event: 'pickup', label: 'Pickup' },
-        { event: 'cancel', label: 'Cancel' },
-    ],
-    billing: [
-        { event: 'calloff', label: 'Call Off' },
-        { event: 'stop_billing', label: 'Stop Billing' },
-    ],
-    called_off: [
-        { event: 'stop_billing', label: 'Stop Billing' },
-    ],
-    awaiting_pickup: [
-        { event: 'pickup', label: 'Pickup' },
-        { event: 'return', label: 'Return to HQ' },
-    ],
-}
-
-const EVENT_LABELS = {
-    deliver: 'Mark Delivered',
-    start_billing: 'Start Billing',
-    calloff: 'Call Off',
-    stop_billing: 'Stop Billing',
-    pickup: 'Mark Picked Up',
-    return: 'Mark Returned',
-    cancel: 'Cancel Rental',
-}
-
-const TERM_LABELS = {
-    monthly: 'Monthly',
-    '6_month': '6-Month',
-    '1_year': '1-Year',
-}
-
-const CYCLE_LABELS = {
-    calendar_month: 'cal-mo',
-    '28_day': '28d',
-    day: 'day',
-    week: 'week',
-    month: '28d-mo',
-}
-
-function formatDate(d) {
-    if (!d) return '—'
-    const dt = new Date(d)
-    return isNaN(dt) ? '—' : dt.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function formatMoney(v) {
-    if (v === null || v === undefined) return '—'
-    return `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
-
-function todayStr() {
-    return new Date().toISOString().slice(0, 10)
-}
-
 function RentalsPage() {
     const { user } = useAuth()
     const canEdit = user?.role === 'admin' || user?.role === 'technician'
@@ -111,6 +33,7 @@ function RentalsPage() {
     const [statusFilter, setStatusFilter] = useState('all')
     const [showNewRental, setShowNewRental] = useState(false)
     const [editingRental, setEditingRental] = useState(null)
+    const [detailRental, setDetailRental] = useState(null) // { rental, events }
     const [actionModal, setActionModal] = useState(null) // { rental, event }
     const [submitting, setSubmitting] = useState(false)
 
@@ -126,7 +49,7 @@ function RentalsPage() {
     const summary = summaryData?.summary || {}
     const alerts = alertsData?.alerts || []
 
-    // Reference data for the New Rental modal
+    // Reference data for the New/Edit Rental modals
     const [trailers, setTrailers] = useState([])
     const [jobSites, setJobSites] = useState([])
     const [companies, setCompanies] = useState([])
@@ -150,6 +73,18 @@ function RentalsPage() {
         return rentals.filter(r => r.status === statusFilter)
     }, [rentals, statusFilter])
 
+    // Dispatch board: what needs to physically move
+    const dispatch = useMemo(() => {
+        const open = rentals.filter(r => r.status !== 'closed' && r.status !== 'cancelled')
+        return {
+            deliveries: open.filter(r => r.status === 'reserved')
+                .sort((a, b) => String(a.reserved_at).localeCompare(String(b.reserved_at))),
+            pickups: open.filter(r => (r.status === 'awaiting_pickup' || r.status === 'called_off') && !r.picked_up_at)
+                .sort((a, b) => String(a.calloff_at || a.billing_stop || '').localeCompare(String(b.calloff_at || b.billing_stop || ''))),
+            inTransit: open.filter(r => r.status === 'awaiting_pickup' && r.picked_up_at),
+        }
+    }, [rentals])
+
     const refetchAll = () => { refetchRentals(); refetchSummary(); refetchAlerts() }
 
     const handleEvent = async (rental, event, date, notes) => {
@@ -163,6 +98,15 @@ function RentalsPage() {
             toast.error(err.message)
         } finally {
             setSubmitting(false)
+        }
+    }
+
+    const openDetail = async (rental) => {
+        try {
+            const data = await fetchRental(rental.id)
+            setDetailRental({ rental: data.rental, events: data.events || [] })
+        } catch (err) {
+            toast.error(err.message)
         }
     }
 
@@ -188,11 +132,13 @@ function RentalsPage() {
         downloadCSV(generateCSV(headers, rows), `rentals-${todayStr()}.csv`)
     }
 
-    const statusBadge = (status) => (
-        <span className={`maint-status-badge maint-status-${STATUS_COLORS[status] || 'gray'}`}>
-            {STATUS_LABELS[status] || status}
-        </span>
-    )
+    const unitCell = (r) => r.vrm_site_id
+        ? <Link to={`/trailer/${r.vrm_site_id}`} onClick={e => e.stopPropagation()} className="table-link">{r.unit_number}</Link>
+        : r.unit_number
+
+    const siteCell = (r) => r.job_site_id
+        ? <Link to={`/site/${r.job_site_id}`} onClick={e => e.stopPropagation()} className="table-link">{r.job_site_name}</Link>
+        : (r.job_site_name || '—')
 
     return (
         <div className="page">
@@ -237,6 +183,47 @@ function RentalsPage() {
                 </div>
             </div>
 
+            {/* Dispatch board: physical moves needed */}
+            {(dispatch.deliveries.length > 0 || dispatch.pickups.length > 0 || dispatch.inTransit.length > 0) && (
+                <div className="maint-table-section" style={{ marginBottom: 20 }}>
+                    <div className="maint-group-header">
+                        <h3>Dispatch</h3>
+                        <span className="maint-group-count">
+                            {dispatch.deliveries.length} deliver · {dispatch.pickups.length} pick up · {dispatch.inTransit.length} in transit
+                        </span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, padding: '12px 0' }}>
+                        <DispatchColumn
+                            title="Deliveries Due"
+                            empty="No pending deliveries"
+                            items={dispatch.deliveries}
+                            dateLabel={r => `Reserved ${formatDate(r.reserved_at)}`}
+                            canEdit={canEdit}
+                            onAction={(r, ev) => setActionModal({ rental: r, event: ev })}
+                            unitCell={unitCell} siteCell={siteCell}
+                        />
+                        <DispatchColumn
+                            title="Pickups Due"
+                            empty="No pending pickups"
+                            items={dispatch.pickups}
+                            dateLabel={r => r.calloff_at ? `Called off ${formatDate(r.calloff_at)}` : `Billing stopped ${formatDate(r.billing_stop)}`}
+                            canEdit={canEdit}
+                            onAction={(r, ev) => setActionModal({ rental: r, event: ev })}
+                            unitCell={unitCell} siteCell={siteCell}
+                        />
+                        <DispatchColumn
+                            title="In Transit"
+                            empty="Nothing in transit"
+                            items={dispatch.inTransit}
+                            dateLabel={r => `Picked up ${formatDate(r.picked_up_at)}`}
+                            canEdit={canEdit}
+                            onAction={(r, ev) => setActionModal({ rental: r, event: ev })}
+                            unitCell={unitCell} siteCell={siteCell}
+                        />
+                    </div>
+                </div>
+            )}
+
             {/* Revenue-leakage alerts */}
             {alerts.length > 0 && (
                 <div className="maint-table-section" style={{ marginBottom: 20 }}>
@@ -254,6 +241,16 @@ function RentalsPage() {
                                         </span>
                                     </td>
                                     <td>{a.message}</td>
+                                    <td style={{ width: 110, textAlign: 'right' }}>
+                                        {a.rental_id && (
+                                            <button className="btn btn-sm btn-secondary" onClick={() => {
+                                                const r = rentals.find(x => x.id === a.rental_id)
+                                                if (r) openDetail(r)
+                                            }}>
+                                                View Rental
+                                            </button>
+                                        )}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -309,9 +306,9 @@ function RentalsPage() {
                         </thead>
                         <tbody>
                             {filteredRentals.map(r => (
-                                <tr key={r.id}>
-                                    <td className="maint-title">{r.unit_number}</td>
-                                    <td>{r.job_site_name || '—'}</td>
+                                <tr key={r.id} className="maint-row" onClick={() => openDetail(r)} style={{ cursor: 'pointer' }}>
+                                    <td className="maint-title">{unitCell(r)}</td>
+                                    <td>{siteCell(r)}</td>
                                     <td>{r.company_name || '—'}</td>
                                     <td>{r.po_number || '—'}</td>
                                     <td>
@@ -337,26 +334,17 @@ function RentalsPage() {
                                             </div>
                                         )}
                                     </td>
-                                    <td>{statusBadge(r.status)}</td>
+                                    <td><RentalStatusBadge status={r.status} /></td>
                                     {canEdit && (
                                         <td className="maint-actions">
                                             <button
                                                 className="btn btn-sm btn-ghost"
                                                 style={{ marginRight: 6 }}
-                                                onClick={() => setEditingRental(r)}
+                                                onClick={(e) => { e.stopPropagation(); setEditingRental(r) }}
                                             >
                                                 Edit
                                             </button>
-                                            {(STATUS_ACTIONS[r.status] || []).map(action => (
-                                                <button
-                                                    key={action.event}
-                                                    className={`btn btn-sm ${action.event === 'cancel' ? 'btn-ghost' : 'btn-secondary'}`}
-                                                    style={{ marginRight: 6 }}
-                                                    onClick={() => setActionModal({ rental: r, event: action.event })}
-                                                >
-                                                    {action.label}
-                                                </button>
-                                            ))}
+                                            <RentalActionButtons rental={r} onAction={(rental, event) => setActionModal({ rental, event })} />
                                         </td>
                                     )}
                                 </tr>
@@ -365,6 +353,18 @@ function RentalsPage() {
                     </table>
                 )}
             </div>
+
+            {/* Rental detail drawer: summary + event timeline */}
+            {detailRental && (
+                <RentalDetailModal
+                    rental={detailRental.rental}
+                    events={detailRental.events}
+                    canEdit={canEdit}
+                    onAction={(rental, event) => { setDetailRental(null); setActionModal({ rental, event }) }}
+                    onEdit={(rental) => { setDetailRental(null); setEditingRental(rental) }}
+                    onClose={() => setDetailRental(null)}
+                />
+            )}
 
             {/* Lifecycle event modal */}
             {actionModal && (
@@ -406,183 +406,81 @@ function RentalsPage() {
     )
 }
 
-function RentalEventModal({ rental, event, submitting, onConfirm, onClose }) {
-    const [date, setDate] = useState(todayStr())
-    const [notes, setNotes] = useState('')
-    const isBillingEvent = event === 'start_billing' || event === 'stop_billing'
-
+function DispatchColumn({ title, empty, items, dateLabel, canEdit, onAction, unitCell, siteCell }) {
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
-                <div className="modal-header">
-                    <h2>{EVENT_LABELS[event] || event} — {rental.unit_number}</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
-                </div>
-                <div style={{ padding: 20 }}>
-                    {event !== 'cancel' && (
-                        <div style={{ marginBottom: 14 }}>
-                            <label className="form-label">Effective Date</label>
-                            <input type="date" className="input" value={date} onChange={e => setDate(e.target.value)} />
-                            {isBillingEvent && (
-                                <p className="settings-desc" style={{ marginTop: 6 }}>
-                                    This date is used for billing calculations and is recorded in the audit trail.
-                                </p>
-                            )}
-                        </div>
-                    )}
-                    <div style={{ marginBottom: 14 }}>
-                        <label className="form-label">Notes (optional)</label>
-                        <textarea className="input" rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Confirmed with site super by phone" />
+        <div>
+            <h4 style={{ margin: '0 0 8px', color: 'var(--text-secondary)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {title} {items.length > 0 && <span className="maint-group-count">{items.length}</span>}
+            </h4>
+            {items.length === 0 ? (
+                <p className="settings-desc">{empty}</p>
+            ) : items.slice(0, 6).map(r => (
+                <div key={r.id} className="work-card" style={{ marginBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                        <strong>{unitCell(r)}</strong>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{dateLabel(r)}</span>
                     </div>
-                    <div className="modal-footer">
-                        <button className="btn btn-secondary" onClick={onClose} disabled={submitting}>Cancel</button>
-                        <button className="btn btn-primary" onClick={() => onConfirm(event === 'cancel' ? undefined : date, notes)} disabled={submitting}>
-                            {submitting ? 'Saving...' : (EVENT_LABELS[event] || 'Confirm')}
-                        </button>
+                    <div style={{ fontSize: 13, margin: '4px 0 8px', color: 'var(--text-secondary)' }}>
+                        {siteCell(r)}{r.company_name ? <> · {r.company_name}</> : null}
                     </div>
+                    {canEdit && <RentalActionButtons rental={r} onAction={onAction} />}
                 </div>
-            </div>
+            ))}
+            {items.length > 6 && <p className="settings-desc">+{items.length - 6} more…</p>}
         </div>
     )
 }
 
-// DATE columns arrive as ISO timestamps — reduce to yyyy-mm-dd for <input type="date">
-function toDateInput(d) {
-    if (!d) return ''
-    return String(d).slice(0, 10)
-}
-
-function EditRentalModal({ rental, jobSites, companies, rateCards, onSaved, onError, onClose }) {
-    const [form, setForm] = useState({
-        job_site_id: rental.job_site_id || '',
-        company_id: rental.company_id || '',
-        po_number: rental.po_number || '',
-        commitment_term: rental.commitment_term || 'monthly',
-        rate_amount: rental.rate_amount || '',
-        rate_period: rental.rate_period || 'month',
-        billing_start: toDateInput(rental.billing_start),
-        calloff_at: toDateInput(rental.calloff_at),
-        billing_stop: toDateInput(rental.billing_stop),
-        notes: rental.notes || '',
-    })
-    const [saving, setSaving] = useState(false)
-
-    const productCards = rateCards.filter(c => c.product_code === (rental.product_code || 'BV1305'))
-
-    const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
-
-    const handleSubmit = async () => {
-        if (form.billing_start && form.billing_stop && form.billing_stop < form.billing_start) {
-            onError('Billing stop cannot be before billing start')
-            return
-        }
-        setSaving(true)
-        try {
-            await updateRental(rental.id, {
-                job_site_id: form.job_site_id ? parseInt(form.job_site_id) : null,
-                company_id: form.company_id ? parseInt(form.company_id) : null,
-                po_number: form.po_number || null,
-                commitment_term: form.commitment_term,
-                rate_amount: form.rate_amount ? parseFloat(form.rate_amount) : null,
-                rate_period: form.rate_period,
-                billing_start: form.billing_start || null,
-                calloff_at: form.calloff_at || null,
-                billing_stop: form.billing_stop || null,
-                notes: form.notes || null,
-            })
-            onSaved()
-        } catch (err) {
-            onError(err.message)
-        } finally {
-            setSaving(false)
-        }
-    }
-
+function RentalDetailModal({ rental, events, canEdit, onAction, onEdit, onClose }) {
+    const r = rental
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
                 <div className="modal-header">
-                    <h2>Edit Rental — {rental.unit_number}</h2>
+                    <h2>{r.unit_number} — Rental #{r.id}</h2>
                     <button className="modal-close" onClick={onClose}>&times;</button>
                 </div>
                 <div style={{ padding: 20 }}>
-                    <div style={{ marginBottom: 14 }}>
-                        <label className="form-label">Job Site</label>
-                        <select className="input" value={form.job_site_id} onChange={set('job_site_id')}>
-                            <option value="">— None —</option>
-                            {jobSites.filter(js => !js.is_headquarters).map(js => (
-                                <option key={js.id} value={js.id}>{js.name}</option>
-                            ))}
-                        </select>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+                        <RentalStatusBadge status={r.status} />
+                        {pricingLabel(r) && <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{pricingLabel(r)}</span>}
                     </div>
-                    <div style={{ marginBottom: 14 }}>
-                        <label className="form-label">Company</label>
-                        <select className="input" value={form.company_id} onChange={set('company_id')}>
-                            <option value="">— None —</option>
-                            {companies.map(c => (
-                                <option key={c.id} value={c.id}>{c.name}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div style={{ marginBottom: 14 }}>
-                        <label className="form-label">Commitment Term</label>
-                        <select className="input" value={form.commitment_term} onChange={set('commitment_term')}>
-                            {productCards.length > 0 ? productCards.map(c => (
-                                <option key={c.commitment_term} value={c.commitment_term}>{termOptionLabel(c)}</option>
-                            )) : (
-                                <>
-                                    <option value="monthly">Monthly</option>
-                                    <option value="6_month">6-Month</option>
-                                    <option value="1_year">1-Year</option>
-                                </>
-                            )}
-                        </select>
-                    </div>
-                    <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">PO Number</label>
-                            <input className="input" value={form.po_number} onChange={set('po_number')} />
+                    <div className="stat-row"><span className="stat-label">Customer</span><span className="stat-value">{r.company_name || '—'}</span></div>
+                    <div className="stat-row"><span className="stat-label">Job Site</span><span className="stat-value">{r.job_site_name || '—'}</span></div>
+                    <div className="stat-row"><span className="stat-label">PO Number</span><span className="stat-value">{r.po_number || '—'}</span></div>
+                    <div className="stat-row"><span className="stat-label">Days on Rent</span><span className="stat-value">{r.days_on_rent ?? '—'}</span></div>
+                    <div className="stat-row"><span className="stat-label">Accrued</span><span className="stat-value">{formatMoney(r.accrued_amount)}</span></div>
+                    {r.rollback_amount > 0 && (
+                        <div className="stat-row"><span className="stat-label">Roll-Back Adjustment</span><span className="stat-value">+{formatMoney(r.rollback_amount)}</span></div>
+                    )}
+                    <div className="stat-row"><span className="stat-label">Total Due</span><span className="stat-value">{formatMoney(r.total_due)}</span></div>
+                    {r.notes && <div className="stat-row"><span className="stat-label">Notes</span><span className="stat-value">{r.notes}</span></div>}
+
+                    <h3 style={{ margin: '18px 0 8px' }}>History</h3>
+                    {events.length === 0 ? (
+                        <p className="settings-desc">No events recorded yet.</p>
+                    ) : (
+                        <table className="maint-table">
+                            <tbody>
+                                {events.map(ev => (
+                                    <tr key={ev.id}>
+                                        <td className="maint-date" style={{ width: 110 }}>{formatDate(ev.event_date)}</td>
+                                        <td className="maint-title">{EVENT_LABELS[ev.event_type] || ev.event_type}</td>
+                                        <td style={{ color: 'var(--text-secondary)' }}>
+                                            {ev.actor}{ev.notes ? ` — ${ev.notes}` : ''}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+
+                    {canEdit && (
+                        <div className="modal-footer" style={{ marginTop: 16 }}>
+                            <button className="btn btn-ghost" onClick={() => onEdit(r)}>Edit Details</button>
+                            <RentalActionButtons rental={r} onAction={onAction} size="sm" />
                         </div>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">Manual Rate Override ($)</label>
-                            <input type="number" min="0" step="0.01" className="input" value={form.rate_amount} onChange={set('rate_amount')} placeholder="Blank = rate card" />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">Override Per</label>
-                            <select className="input" value={form.rate_period} onChange={set('rate_period')} disabled={!form.rate_amount}>
-                                <option value="day">Day</option>
-                                <option value="week">Week</option>
-                                <option value="month">Month (28-day)</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">Billing Start</label>
-                            <input type="date" className="input" value={form.billing_start} onChange={set('billing_start')} />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">Calloff</label>
-                            <input type="date" className="input" value={form.calloff_at} onChange={set('calloff_at')} />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">Billing Stop</label>
-                            <input type="date" className="input" value={form.billing_stop} onChange={set('billing_stop')} />
-                        </div>
-                    </div>
-                    <p className="settings-desc" style={{ marginBottom: 14 }}>
-                        Date fields here are for corrections and are audit-logged. Normal lifecycle changes (deliver, start/stop billing, pickup, return) should use the action buttons so the event trail stays complete.
-                    </p>
-                    <div style={{ marginBottom: 14 }}>
-                        <label className="form-label">Notes</label>
-                        <textarea className="input" rows={2} value={form.notes} onChange={set('notes')} />
-                    </div>
-                    <div className="modal-footer">
-                        <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
-                        <button className="btn btn-primary" onClick={handleSubmit} disabled={saving}>
-                            {saving ? 'Saving...' : 'Save Changes'}
-                        </button>
-                    </div>
+                    )}
                 </div>
             </div>
         </div>
@@ -596,7 +494,7 @@ function cardsForTrailer(rateCards, trailers, trailerId) {
     return rateCards.filter(c => c.product_code === product)
 }
 
-function termOptionLabel(card) {
+export function termOptionLabel(card) {
     return `${TERM_LABELS[card.commitment_term] || card.commitment_term} — ${formatMoney(card.base_rate)}/${CYCLE_LABELS[card.billing_cycle] || card.billing_cycle}`
 }
 
@@ -731,6 +629,143 @@ function NewRentalModal({ trailers, jobSites, companies, rateCards, onCreated, o
                         <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
                         <button className="btn btn-primary" onClick={handleSubmit} disabled={saving || !form.trailer_id}>
                             {saving ? 'Creating...' : 'Create Rental'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+function EditRentalModal({ rental, jobSites, companies, rateCards, onSaved, onError, onClose }) {
+    const [form, setForm] = useState({
+        job_site_id: rental.job_site_id || '',
+        company_id: rental.company_id || '',
+        po_number: rental.po_number || '',
+        commitment_term: rental.commitment_term || 'monthly',
+        rate_amount: rental.rate_amount || '',
+        rate_period: rental.rate_period || 'month',
+        billing_start: toDateInput(rental.billing_start),
+        calloff_at: toDateInput(rental.calloff_at),
+        billing_stop: toDateInput(rental.billing_stop),
+        notes: rental.notes || '',
+    })
+    const [saving, setSaving] = useState(false)
+
+    const productCards = rateCards.filter(c => c.product_code === (rental.product_code || 'BV1305'))
+
+    const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
+
+    const handleSubmit = async () => {
+        if (form.billing_start && form.billing_stop && form.billing_stop < form.billing_start) {
+            onError('Billing stop cannot be before billing start')
+            return
+        }
+        setSaving(true)
+        try {
+            await updateRental(rental.id, {
+                job_site_id: form.job_site_id ? parseInt(form.job_site_id) : null,
+                company_id: form.company_id ? parseInt(form.company_id) : null,
+                po_number: form.po_number || null,
+                commitment_term: form.commitment_term,
+                rate_amount: form.rate_amount ? parseFloat(form.rate_amount) : null,
+                rate_period: form.rate_period,
+                billing_start: form.billing_start || null,
+                calloff_at: form.calloff_at || null,
+                billing_stop: form.billing_stop || null,
+                notes: form.notes || null,
+            })
+            onSaved()
+        } catch (err) {
+            onError(err.message)
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+                <div className="modal-header">
+                    <h2>Edit Rental — {rental.unit_number}</h2>
+                    <button className="modal-close" onClick={onClose}>&times;</button>
+                </div>
+                <div style={{ padding: 20 }}>
+                    <div style={{ marginBottom: 14 }}>
+                        <label className="form-label">Job Site</label>
+                        <select className="input" value={form.job_site_id} onChange={set('job_site_id')}>
+                            <option value="">— None —</option>
+                            {jobSites.filter(js => !js.is_headquarters).map(js => (
+                                <option key={js.id} value={js.id}>{js.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                        <label className="form-label">Company</label>
+                        <select className="input" value={form.company_id} onChange={set('company_id')}>
+                            <option value="">— None —</option>
+                            {companies.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                        <label className="form-label">Commitment Term</label>
+                        <select className="input" value={form.commitment_term} onChange={set('commitment_term')}>
+                            {productCards.length > 0 ? productCards.map(c => (
+                                <option key={c.commitment_term} value={c.commitment_term}>{termOptionLabel(c)}</option>
+                            )) : (
+                                <>
+                                    <option value="monthly">Monthly</option>
+                                    <option value="6_month">6-Month</option>
+                                    <option value="1_year">1-Year</option>
+                                </>
+                            )}
+                        </select>
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">PO Number</label>
+                            <input className="input" value={form.po_number} onChange={set('po_number')} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">Manual Rate Override ($)</label>
+                            <input type="number" min="0" step="0.01" className="input" value={form.rate_amount} onChange={set('rate_amount')} placeholder="Blank = rate card" />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">Override Per</label>
+                            <select className="input" value={form.rate_period} onChange={set('rate_period')} disabled={!form.rate_amount}>
+                                <option value="day">Day</option>
+                                <option value="week">Week</option>
+                                <option value="month">Month (28-day)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">Billing Start</label>
+                            <input type="date" className="input" value={form.billing_start} onChange={set('billing_start')} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">Calloff</label>
+                            <input type="date" className="input" value={form.calloff_at} onChange={set('calloff_at')} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <label className="form-label">Billing Stop</label>
+                            <input type="date" className="input" value={form.billing_stop} onChange={set('billing_stop')} />
+                        </div>
+                    </div>
+                    <p className="settings-desc" style={{ marginBottom: 14 }}>
+                        Date fields here are for corrections and are audit-logged. Normal lifecycle changes (deliver, start/stop billing, pickup, return) should use the action buttons so the event trail stays complete.
+                    </p>
+                    <div style={{ marginBottom: 14 }}>
+                        <label className="form-label">Notes</label>
+                        <textarea className="input" rows={2} value={form.notes} onChange={set('notes')} />
+                    </div>
+                    <div className="modal-footer">
+                        <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+                        <button className="btn btn-primary" onClick={handleSubmit} disabled={saving}>
+                            {saving ? 'Saving...' : 'Save Changes'}
                         </button>
                     </div>
                 </div>

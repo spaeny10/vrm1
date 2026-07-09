@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import RentalsInline from '../components/RentalsInline'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
     Chart as ChartJS,
@@ -421,6 +422,9 @@ function TrailerDetail() {
                     VRM data is stale — Cerbo GX last reported {vrmLastUpdated ? new Date(vrmLastUpdated).toLocaleDateString() : 'unknown'}. Live values unavailable.
                 </div>
             )}
+
+            {/* Rental & billing status for this unit */}
+            <RentalsInline vrmSiteId={parseInt(id)} title="Rental & Billing" />
 
             {/* KPI Cards */}
             <div className="kpi-row">

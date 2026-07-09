@@ -1,6 +1,6 @@
 import { acknowledgeAction as dbAcknowledgeAction, unacknowledgeAction as dbUnacknowledgeAction } from '../db.js';
 import { TRAILER_SPECS } from '../config.js';
-import { getAcknowledgedActions, getUpcomingMaintenance } from '../db.js';
+import { getAcknowledgedActions, getUpcomingMaintenance, getBillingPastCalloff, getBillingAtHeadquarters, getUnbilledDeployedTrailers } from '../db.js';
 import { hasVrmData, todayStr } from '../lib/util.js';
 import { requireRole } from '../middleware/auth.js';
 import { computeAlerts } from '../services/alerts.js';
@@ -175,6 +175,56 @@ app.get('/api/action-queue', async (req, res) => {
                     details: detailsMsg,
                 });
             }
+        }
+
+        // Source: Revenue leakage (rental/billing mismatches)
+        if (dbAvailable) {
+            try {
+                const [pastCalloff, atHq, unbilled] = await Promise.all([
+                    getBillingPastCalloff(),
+                    getBillingAtHeadquarters(),
+                    getUnbilledDeployedTrailers(),
+                ]);
+                for (const r of pastCalloff) {
+                    actions.push({
+                        key: `revenue:calloff:${r.id}`,
+                        priority: 3,
+                        category: 'revenue',
+                        title: `Billing past calloff — ${r.unit_number}`,
+                        subtitle: r.job_site_name || r.company_name || 'Rental',
+                        rental_id: r.id,
+                        severity: 'warning',
+                        details: `Called off ${new Date(r.calloff_at).toLocaleDateString()} but billing never stopped. Stop billing or clear the calloff date on the Rentals page.`,
+                        created_at: now,
+                    });
+                }
+                for (const r of atHq) {
+                    actions.push({
+                        key: `revenue:athq:${r.id}`,
+                        priority: 1,
+                        category: 'revenue',
+                        title: `Billing while at HQ — ${r.unit_number}`,
+                        subtitle: r.hq_name,
+                        rental_id: r.id,
+                        severity: 'critical',
+                        details: `Trailer is physically at ${r.hq_name} but its rental is still billing — the customer may be overbilled.`,
+                        created_at: now,
+                    });
+                }
+                for (const t of unbilled) {
+                    actions.push({
+                        key: `revenue:unbilled:${t.trailer_id}`,
+                        priority: 1,
+                        category: 'revenue',
+                        title: `Unbilled trailer on site — ${t.unit_number}`,
+                        subtitle: t.job_site_name,
+                        trailer_id: t.trailer_id,
+                        severity: 'critical',
+                        details: `Deployed at active site "${t.job_site_name}" with no open rental — revenue is leaking. Create a rental for this unit.`,
+                        created_at: now,
+                    });
+                }
+            } catch { }
         }
 
         // Get acknowledged actions

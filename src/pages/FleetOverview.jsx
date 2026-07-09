@@ -562,7 +562,7 @@ function FleetOverview() {
                                         {action.priority}
                                     </span>
                                     <span className="action-queue-category">
-                                        {action.category === 'battery' ? '🔋' : action.category === 'solar' ? '☀️' : action.category === 'network' ? '📡' : '⚠️'}
+                                        {action.category === 'battery' ? '🔋' : action.category === 'solar' ? '☀️' : action.category === 'network' ? '📡' : action.category === 'revenue' ? '💰' : '⚠️'}
                                         {' '}{action.category}
                                     </span>
                                     <div className="action-queue-text">
@@ -595,7 +595,7 @@ function FleetOverview() {
                                         {action.priority}
                                     </span>
                                     <span className="action-queue-category">
-                                        {action.category === 'battery' ? '🔋' : action.category === 'solar' ? '☀️' : action.category === 'network' ? '📡' : '⚠️'}
+                                        {action.category === 'battery' ? '🔋' : action.category === 'solar' ? '☀️' : action.category === 'network' ? '📡' : action.category === 'revenue' ? '💰' : '⚠️'}
                                         {' '}{action.category}
                                     </span>
                                     <div className="action-queue-text">

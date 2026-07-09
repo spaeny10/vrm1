@@ -97,6 +97,16 @@ function Sidebar({ mobileOpen, onCloseMobile }) {
                     <span>Rentals</span>
                 </NavLink>
 
+                <NavLink to="/trailers" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} data-tooltip={collapsed ? "Trailers" : ""}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="1" y="6" width="15" height="10" rx="1" />
+                        <path d="M16 10h4l3 3v3h-7" />
+                        <circle cx="6" cy="19" r="2" />
+                        <circle cx="18" cy="19" r="2" />
+                    </svg>
+                    <span>Trailers</span>
+                </NavLink>
+
                 <NavLink to="/maintenance" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} data-tooltip={collapsed ? "Maintenance" : ""}>
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />

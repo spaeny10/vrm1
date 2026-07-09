@@ -47,6 +47,7 @@ app.get('/api/rentals', async (req, res) => {
             trailerId: req.query.trailer_id ? parseInt(req.query.trailer_id) : undefined,
             jobSiteId: req.query.job_site_id ? parseInt(req.query.job_site_id) : undefined,
             companyId: req.query.company_id ? parseInt(req.query.company_id) : undefined,
+            vrmSiteId: req.query.vrm_site_id ? parseInt(req.query.vrm_site_id) : undefined,
             open: req.query.open === '1' || req.query.open === 'true',
         });
         const ctx = await buildPricingContext();

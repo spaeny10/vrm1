@@ -10166,3 +10166,13 @@ tr:hover .btn-hq-toggle {
         display: none;
     }
 }
+
+/* --- Rental management cross-links --- */
+.table-link {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.table-link:hover {
+    text-decoration: underline;
+}

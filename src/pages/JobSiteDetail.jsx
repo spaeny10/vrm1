@@ -7,6 +7,7 @@ import {
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 import { useApiPolling } from '../hooks/useApiPolling'
+import RentalsInline from '../components/RentalsInline'
 import { fetchJobSite, updateJobSite, fetchSiteMaintenance, fetchSiteContacts, assignContact, removeContact, fetchSiteNotes, addSiteNote, editSiteNote, deleteSiteNote, toggleNotePin, markNoteAsRead, fetchReplies, fetchCompanies, fetchContacts, fetchMentionableUsers } from '../api/vrm'
 import TagPicker from '../components/TagPicker'
 import KpiCard from '../components/KpiCard'
@@ -525,6 +526,9 @@ function JobSiteDetail() {
                     </div>
                 )}
             </div>
+
+            {/* Rentals on this site */}
+            <RentalsInline jobSiteId={parseInt(id)} title="Rentals at this Site" />
 
             {/* Trailer Grid */}
             <div className="jobsite-section">

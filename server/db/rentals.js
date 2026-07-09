@@ -59,7 +59,7 @@ export async function updateTrailer(id, updates) {
     const values = [];
     let idx = 1;
     for (const [key, value] of Object.entries(updates)) {
-        if (['unit_number', 'vin', 'vrm_site_id', 'ic2_device_id', 'status', 'home_base_job_site_id', 'purchase_date', 'condition_notes'].includes(key)) {
+        if (['unit_number', 'vin', 'vrm_site_id', 'ic2_device_id', 'status', 'home_base_job_site_id', 'purchase_date', 'condition_notes', 'product_code'].includes(key)) {
             if (key === 'status' && !TRAILER_STATUSES.includes(value)) continue;
             fields.push(`${key} = $${idx}`);
             values.push(value);
@@ -93,7 +93,7 @@ const RENTAL_JOIN = `
     LEFT JOIN companies c ON c.id = r.company_id
 `;
 
-export async function getRentals({ status, trailerId, jobSiteId, companyId, open } = {}) {
+export async function getRentals({ status, trailerId, jobSiteId, companyId, vrmSiteId, open } = {}) {
     if (!pool) return [];
     const conditions = [];
     const params = [];
@@ -101,6 +101,7 @@ export async function getRentals({ status, trailerId, jobSiteId, companyId, open
     if (trailerId) { params.push(trailerId); conditions.push(`r.trailer_id = $${params.length}`); }
     if (jobSiteId) { params.push(jobSiteId); conditions.push(`r.job_site_id = $${params.length}`); }
     if (companyId) { params.push(companyId); conditions.push(`r.company_id = $${params.length}`); }
+    if (vrmSiteId) { params.push(vrmSiteId); conditions.push(`t.vrm_site_id = $${params.length}`); }
     if (open) conditions.push(`r.status NOT IN ('closed', 'cancelled')`);
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const result = await pool.query(`
