@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchTechStatus, fetchDeploymentSummary, createJobSite, fetchCompanies } from '../api/vrm'
+import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchTechStatus, fetchDeploymentSummary, createJobSite, fetchCompanies, approveGpsChange, rejectGpsChange } from '../api/vrm'
 import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
 import QueryBar from '../components/QueryBar'
@@ -89,6 +89,18 @@ function FleetOverview() {
             refetchActions()
         } catch (err) {
             console.error('Failed to acknowledge action:', err)
+        }
+    }
+
+    // GPS relocation suggestions: approve applies the reassignment,
+    // reject dismisses it — same endpoints as the Settings review queue
+    const handleGpsSuggestion = async (suggestionId, approve) => {
+        try {
+            if (approve) await approveGpsChange(suggestionId)
+            else await rejectGpsChange(suggestionId)
+            refetchActions()
+        } catch (err) {
+            console.error('Failed to resolve GPS suggestion:', err)
         }
     }
 
@@ -562,7 +574,7 @@ function FleetOverview() {
                                         {action.priority}
                                     </span>
                                     <span className="action-queue-category">
-                                        {action.category === 'battery' ? '🔋' : action.category === 'solar' ? '☀️' : action.category === 'network' ? '📡' : action.category === 'revenue' ? '💰' : '⚠️'}
+                                        {action.category === 'battery' ? '🔋' : action.category === 'solar' ? '☀️' : action.category === 'network' ? '📡' : action.category === 'revenue' ? '💰' : action.category === 'location' ? '📍' : '⚠️'}
                                         {' '}{action.category}
                                     </span>
                                     <div className="action-queue-text">
@@ -576,7 +588,23 @@ function FleetOverview() {
                                             </span>
                                         )}
                                     </div>
-                                    {canEdit && (
+                                    {canEdit && action.suggestion_id && (
+                                        <span style={{ display: 'flex', gap: 6 }}>
+                                            <button
+                                                className="btn btn-sm btn-primary"
+                                                onClick={(e) => { e.stopPropagation(); handleGpsSuggestion(action.suggestion_id, true) }}
+                                            >
+                                                Approve
+                                            </button>
+                                            <button
+                                                className="btn btn-sm btn-ghost"
+                                                onClick={(e) => { e.stopPropagation(); handleGpsSuggestion(action.suggestion_id, false) }}
+                                            >
+                                                Reject
+                                            </button>
+                                        </span>
+                                    )}
+                                    {canEdit && !action.suggestion_id && (
                                         <button
                                             className="action-ack-btn"
                                             onClick={(e) => { e.stopPropagation(); handleAcknowledge(action.key) }}
@@ -595,7 +623,7 @@ function FleetOverview() {
                                         {action.priority}
                                     </span>
                                     <span className="action-queue-category">
-                                        {action.category === 'battery' ? '🔋' : action.category === 'solar' ? '☀️' : action.category === 'network' ? '📡' : action.category === 'revenue' ? '💰' : '⚠️'}
+                                        {action.category === 'battery' ? '🔋' : action.category === 'solar' ? '☀️' : action.category === 'network' ? '📡' : action.category === 'revenue' ? '💰' : action.category === 'location' ? '📍' : '⚠️'}
                                         {' '}{action.category}
                                     </span>
                                     <div className="action-queue-text">

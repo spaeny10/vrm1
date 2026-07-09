@@ -1,7 +1,7 @@
 import { getBillingAtHeadquarters, getBillingPastCalloff, getRateCards, getRental, getRentalEvents, getRentals, getTrailer, getTrailers, getUnbilledDeployedTrailers, getVolumeTiers, insertAuditLog, insertRental, insertRentalEvent, insertTrailer, updateRental, updateTrailer } from '../db.js';
 import { requireRole } from '../middleware/auth.js';
 import { TERM_DAYS, buildTierCounter, computeRollback, parseDateUTC } from '../pricing.js';
-import { RENTAL_TRANSITIONS, buildPricingContext, computeAccruedThisMonth, computeMtdEngine, priceRental } from '../services/billing.js';
+import { RENTAL_TRANSITIONS, buildPricingContext, buildStatements, computeAccruedThisMonth, computeMtdEngine, priceRental } from '../services/billing.js';
 
 export function registerRentalsRoutes(app) {
 
@@ -215,6 +215,22 @@ app.get('/api/billing/summary', async (req, res) => {
 });
 
 // Revenue-leakage alerts
+// Per-customer monthly statements (invoice-ready)
+app.get('/api/billing/statements', async (req, res) => {
+    try {
+        const month = req.query.month;
+        if (!/^\d{4}-\d{2}$/.test(month || '')) {
+            return res.status(400).json({ success: false, error: 'month=YYYY-MM is required' });
+        }
+        const rentals = await getRentals({});
+        const ctx = await buildPricingContext();
+        const statements = buildStatements(rentals, ctx, month);
+        res.json({ success: true, ...statements });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 app.get('/api/billing/alerts', async (req, res) => {
     try {
         const [pastCalloff, atHq, unbilled] = await Promise.all([

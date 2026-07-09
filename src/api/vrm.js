@@ -774,3 +774,7 @@ export async function fetchRateCards(product) {
     const qs = product ? `?product=${encodeURIComponent(product)}` : '';
     return apiFetch(`${API_BASE}/pricing/rate-cards${qs}`);
 }
+
+export async function fetchBillingStatements(month) {
+    return apiFetch(`${API_BASE}/billing/statements?month=${encodeURIComponent(month)}`);
+}

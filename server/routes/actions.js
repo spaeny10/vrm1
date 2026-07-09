@@ -1,6 +1,6 @@
 import { acknowledgeAction as dbAcknowledgeAction, unacknowledgeAction as dbUnacknowledgeAction } from '../db.js';
 import { TRAILER_SPECS } from '../config.js';
-import { getAcknowledgedActions, getUpcomingMaintenance, getBillingPastCalloff, getBillingAtHeadquarters, getUnbilledDeployedTrailers } from '../db.js';
+import { getAcknowledgedActions, getUpcomingMaintenance, getBillingPastCalloff, getBillingAtHeadquarters, getUnbilledDeployedTrailers, getGpsSuggestions } from '../db.js';
 import { hasVrmData, todayStr } from '../lib/util.js';
 import { requireRole } from '../middleware/auth.js';
 import { computeAlerts } from '../services/alerts.js';
@@ -222,6 +222,30 @@ app.get('/api/action-queue', async (req, res) => {
                         severity: 'critical',
                         details: `Deployed at active site "${t.job_site_name}" with no open rental — revenue is leaking. Create a rental for this unit.`,
                         created_at: now,
+                    });
+                }
+            } catch { }
+        }
+
+        // Source: Pending GPS relocation suggestions (approve/reject inline)
+        if (dbAvailable) {
+            try {
+                const suggestions = await getGpsSuggestions('pending');
+                for (const sg of suggestions) {
+                    const target = sg.suggestion_type === 'reassign_existing' && sg.suggested_job_site_name
+                        ? `Suggest reassigning to ${sg.suggested_job_site_name}.`
+                        : 'No nearby site matched — suggest creating a new job site.';
+                    actions.push({
+                        key: `gps:suggestion:${sg.id}`,
+                        priority: 2,
+                        category: 'location',
+                        title: `Trailer moved ${Math.round(sg.distance_km * 10) / 10} km — ${sg.site_name}`,
+                        subtitle: sg.current_job_site_name ? `Was at ${sg.current_job_site_name}` : 'Unassigned',
+                        site_id: sg.site_id,
+                        suggestion_id: sg.id,
+                        severity: 'warning',
+                        details: `${target} Approving updates the trailer's job-site assignment.`,
+                        created_at: Number(sg.created_at) || now,
                     });
                 }
             } catch { }

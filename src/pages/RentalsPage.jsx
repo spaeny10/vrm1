@@ -5,9 +5,10 @@ import { useAuth } from '../components/AuthProvider'
 import { useToast } from '../components/ToastProvider'
 import {
     fetchRentals, fetchRental, createRental, updateRental, postRentalEvent,
-    fetchBillingSummary, fetchBillingAlerts,
+    fetchBillingSummary, fetchBillingAlerts, fetchBillingStatements,
     fetchTrailers, fetchJobSites, fetchCompanies, fetchRateCards,
 } from '../api/vrm'
+import { generateStatementPDF } from '../utils/statementPdf'
 import {
     STATUS_LABELS, STATUS_ACTIONS, EVENT_LABELS, TERM_LABELS, CYCLE_LABELS,
     formatDate, formatMoney, todayStr, toDateInput, pricingLabel,
@@ -31,6 +32,7 @@ function RentalsPage() {
     const toast = useToast()
 
     const [statusFilter, setStatusFilter] = useState('all')
+    const [viewMode, setViewMode] = useState('list') // 'list' | 'calendar' | 'statements'
     const [showNewRental, setShowNewRental] = useState(false)
     const [editingRental, setEditingRental] = useState(null)
     const [detailRental, setDetailRental] = useState(null) // { rental, events }
@@ -264,6 +266,24 @@ function RentalsPage() {
                 </p>
             )}
 
+            {/* View toggle */}
+            <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+                <div className="view-toggle">
+                    <button className={`view-toggle-btn ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')}>List</button>
+                    <button className={`view-toggle-btn ${viewMode === 'calendar' ? 'active' : ''}`} onClick={() => setViewMode('calendar')}>Calendar</button>
+                    <button className={`view-toggle-btn ${viewMode === 'statements' ? 'active' : ''}`} onClick={() => setViewMode('statements')}>Statements</button>
+                </div>
+            </div>
+
+            {viewMode === 'calendar' && (
+                <RentalsCalendar rentals={rentals} unitCell={unitCell} siteCell={siteCell} />
+            )}
+
+            {viewMode === 'statements' && (
+                <StatementsView />
+            )}
+
+            {viewMode === 'list' && (<>
             {/* Status tabs */}
             <div className="maint-tabs" style={{ marginBottom: 16 }}>
                 {STATUS_TABS.map(tab => (
@@ -353,6 +373,7 @@ function RentalsPage() {
                     </table>
                 )}
             </div>
+            </>)}
 
             {/* Rental detail drawer: summary + event timeline */}
             {detailRental && (
@@ -774,4 +795,221 @@ function EditRentalModal({ rental, jobSites, companies, rateCards, onSaved, onEr
     )
 }
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+const CAL_EVENT_TYPES = {
+    delivery_due: { label: 'Delivery due', dot: 'teal' },
+    delivered: { label: 'Delivered', dot: 'teal' },
+    calloff: { label: 'Call-off', dot: 'yellow' },
+    pickup: { label: 'Pickup', dot: 'red' },
+    return: { label: 'Returned', dot: 'green' },
+}
+
+function dayKey(d) {
+    return String(d).slice(0, 10)
+}
+
+// Month calendar of operational rental dates: deliveries due, call-offs,
+// pickups, and returns — the forward schedule and the recent history.
+function RentalsCalendar({ rentals, unitCell, siteCell }) {
+    const now = new Date()
+    const [calYear, setCalYear] = useState(now.getFullYear())
+    const [calMonth, setCalMonth] = useState(now.getMonth())
+    const [selectedDay, setSelectedDay] = useState(null)
+
+    const eventsByDay = useMemo(() => {
+        const map = {}
+        const add = (date, type, rental) => {
+            if (!date) return
+            const key = dayKey(date)
+            if (!map[key]) map[key] = []
+            map[key].push({ type, rental })
+        }
+        for (const r of rentals) {
+            if (r.status === 'cancelled') continue
+            if (r.status === 'reserved') add(r.reserved_at, 'delivery_due', r)
+            add(r.delivered_at, 'delivered', r)
+            add(r.calloff_at, 'calloff', r)
+            add(r.picked_up_at, 'pickup', r)
+            add(r.returned_at, 'return', r)
+        }
+        return map
+    }, [rentals])
+
+    const firstDow = new Date(calYear, calMonth, 1).getDay()
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate()
+    const days = [...Array(firstDow).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)]
+    const monthLabel = new Date(calYear, calMonth, 1).toLocaleDateString([], { month: 'long', year: 'numeric' })
+    const todayKey = dayKey(new Date().toISOString())
+
+    const keyFor = (day) => `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    const selectedEvents = selectedDay ? (eventsByDay[keyFor(selectedDay)] || []) : []
+
+    const prevMonth = () => { setSelectedDay(null); if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1) } else setCalMonth(m => m - 1) }
+    const nextMonth = () => { setSelectedDay(null); if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1) } else setCalMonth(m => m + 1) }
+
+    return (
+        <div className="maint-calendar-section">
+            <div className="cal-nav">
+                <button className="btn btn-sm btn-secondary" onClick={prevMonth}>&larr;</button>
+                <span className="cal-nav-label">{monthLabel}</span>
+                <button className="btn btn-sm btn-secondary" onClick={nextMonth}>&rarr;</button>
+                <span style={{ marginLeft: 16, fontSize: 12, color: 'var(--text-secondary)' }}>
+                    <span className="cal-day-dot cal-dot-teal" style={{ display: 'inline-block', marginRight: 4 }} />Delivery
+                    <span className="cal-day-dot cal-dot-yellow" style={{ display: 'inline-block', margin: '0 4px 0 12px' }} />Call-off
+                    <span className="cal-day-dot cal-dot-red" style={{ display: 'inline-block', margin: '0 4px 0 12px' }} />Pickup
+                    <span className="cal-day-dot cal-dot-green" style={{ display: 'inline-block', margin: '0 4px 0 12px' }} />Return
+                </span>
+            </div>
+            <div className="cal-grid">
+                {DAY_NAMES.map(d => <div key={d} className="cal-header">{d}</div>)}
+                {days.map((day, i) => {
+                    if (day === null) return <div key={`blank-${i}`} className="cal-day cal-day-blank" />
+                    const key = keyFor(day)
+                    const items = eventsByDay[key] || []
+                    return (
+                        <div
+                            key={day}
+                            className={`cal-day${key === todayKey ? ' cal-day-today' : ''}${day === selectedDay ? ' cal-day-selected' : ''}`}
+                            onClick={() => setSelectedDay(day === selectedDay ? null : day)}
+                        >
+                            <span className="cal-day-num">{day}</span>
+                            {items.length > 0 && (
+                                <div className="cal-day-dots">
+                                    {items.slice(0, 5).map((item, j) => (
+                                        <span key={j} className={`cal-day-dot cal-dot-${CAL_EVENT_TYPES[item.type].dot}`} />
+                                    ))}
+                                    {items.length > 5 && <span className="cal-day-more">+{items.length - 5}</span>}
+                                </div>
+                            )}
+                        </div>
+                    )
+                })}
+            </div>
+            {selectedDay && (
+                <div className="cal-day-detail">
+                    <h3>
+                        {new Date(calYear, calMonth, selectedDay).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+                        <span className="maint-group-count">{selectedEvents.length} event{selectedEvents.length !== 1 ? 's' : ''}</span>
+                    </h3>
+                    {selectedEvents.length === 0 ? (
+                        <p className="settings-desc">No rental activity on this day.</p>
+                    ) : (
+                        <table className="maint-table">
+                            <tbody>
+                                {selectedEvents.map((item, i) => (
+                                    <tr key={i}>
+                                        <td style={{ width: 120 }}>
+                                            <span className={`maint-status-badge maint-status-${CAL_EVENT_TYPES[item.type].dot === 'red' ? 'yellow' : CAL_EVENT_TYPES[item.type].dot === 'teal' ? 'blue' : CAL_EVENT_TYPES[item.type].dot}`}>
+                                                {CAL_EVENT_TYPES[item.type].label}
+                                            </span>
+                                        </td>
+                                        <td className="maint-title">{unitCell(item.rental)}</td>
+                                        <td>{siteCell(item.rental)}</td>
+                                        <td>{item.rental.company_name || '—'}</td>
+                                        <td><RentalStatusBadge status={item.rental.status} /></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
+        </div>
+    )
+}
+
+// Per-customer monthly statements with CSV/PDF export
+function StatementsView() {
+    const toast = useToast()
+    const [month, setMonth] = useState(todayStr().slice(0, 7))
+    const [data, setData] = useState(null)
+    const [loading, setLoading] = useState(false)
+
+    useEffect(() => {
+        setLoading(true)
+        fetchBillingStatements(month)
+            .then(setData)
+            .catch(err => { setData(null); toast.error(err.message) })
+            .finally(() => setLoading(false))
+    }, [month])
+
+    const exportCompanyCSV = (c) => {
+        const headers = ['Unit', 'Job Site', 'PO Number', 'Rate', 'Days in Month', 'Amount', 'Roll-Back', 'Line Total']
+        const rows = c.lines.map(l => [
+            l.unit_number, l.job_site_name || '', l.po_number || '',
+            l.effective_rate ?? '', l.days_in_month, l.amount, l.rollback_adjustment || '', l.line_total,
+        ])
+        rows.push([], ['', '', '', '', '', 'Subtotal', '', c.subtotal], ['', '', '', '', '', 'Roll-Back', '', c.rollback_total], ['', '', '', '', '', 'TOTAL', '', c.total])
+        downloadCSV(generateCSV(headers, rows), `statement-${c.company_name.replace(/[^\w-]+/g, '_')}-${month}.csv`)
+    }
+
+    return (
+        <div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 18, flexWrap: 'wrap' }}>
+                <label className="form-label" style={{ margin: 0 }}>Statement Month</label>
+                <input type="month" className="input" style={{ maxWidth: 180 }} value={month} onChange={e => setMonth(e.target.value)} />
+                {data && (
+                    <span style={{ marginLeft: 'auto', fontSize: 15 }}>
+                        Grand total: <strong>{formatMoney(data.grand_total)}</strong> across {data.companies.length} customer{data.companies.length !== 1 ? 's' : ''}
+                    </span>
+                )}
+            </div>
+
+            {loading ? (
+                <div className="page-loading"><div className="spinner" /><p>Building statements...</p></div>
+            ) : !data || data.companies.length === 0 ? (
+                <div className="empty-section"><p>No billable activity in {month}.</p></div>
+            ) : data.companies.map(c => (
+                <div key={c.company_id ?? 'none'} className="maint-table-section" style={{ marginBottom: 20 }}>
+                    <div className="maint-group-header">
+                        <h3>{c.company_name}</h3>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <strong>{formatMoney(c.total)}</strong>
+                            <button className="btn btn-sm btn-secondary" onClick={() => exportCompanyCSV(c)}>CSV</button>
+                            <button className="btn btn-sm btn-primary" onClick={() => generateStatementPDF(c, month)}>PDF</button>
+                        </div>
+                    </div>
+                    <table className="maint-table">
+                        <thead>
+                            <tr>
+                                <th>Unit</th><th>Job Site</th><th>PO #</th><th>Rate</th>
+                                <th style={{ textAlign: 'right' }}>Days</th>
+                                <th style={{ textAlign: 'right' }}>Amount</th>
+                                <th style={{ textAlign: 'right' }}>Roll-Back</th>
+                                <th style={{ textAlign: 'right' }}>Line Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {c.lines.map(l => (
+                                <tr key={l.rental_id}>
+                                    <td className="maint-title">{l.unit_number}</td>
+                                    <td>{l.job_site_name || '—'}</td>
+                                    <td>{l.po_number || '—'}</td>
+                                    <td style={{ fontSize: 13 }}>
+                                        {l.effective_rate
+                                            ? `${formatMoney(l.effective_rate)}/${CYCLE_LABELS[l.billing_cycle] || l.billing_cycle}${l.pricing_source === 'manual' ? ' (manual)' : ` · ${TERM_LABELS[l.commitment_term] || l.commitment_term}${l.volume_tier && l.volume_tier.discount_pct > 0 ? ` · ${l.volume_tier.name} −${l.volume_tier.discount_pct}%` : ''}`}`
+                                            : '—'}
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>{l.days_in_month}</td>
+                                    <td style={{ textAlign: 'right' }}>{formatMoney(l.amount)}</td>
+                                    <td style={{ textAlign: 'right' }}>{l.rollback_adjustment ? formatMoney(l.rollback_adjustment) : '—'}</td>
+                                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMoney(l.line_total)}</td>
+                                </tr>
+                            ))}
+                            <tr>
+                                <td colSpan={7} style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>
+                                    Subtotal {formatMoney(c.subtotal)}{c.rollback_total > 0 ? ` · Roll-back ${formatMoney(c.rollback_total)}` : ''} · Total
+                                </td>
+                                <td style={{ textAlign: 'right', fontWeight: 700 }}>{formatMoney(c.total)}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            ))}
+        </div>
+    )
+}
+
 export default RentalsPage
+
