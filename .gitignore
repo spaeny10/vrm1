@@ -5,6 +5,8 @@ test_hardcoded.js
 test_legacy.js
 test_semantic_search.js
 _check.js
+_debug_*.js
+*.local.js
 combined.json
 net_latest.json
 vrm_latest.json

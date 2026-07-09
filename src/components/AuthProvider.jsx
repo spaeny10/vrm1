@@ -48,8 +48,13 @@ export function AuthProvider({ children }) {
         setUser(null);
     }, []);
 
+    // Clear the forced-password-change flag after a successful change
+    const markPasswordChanged = useCallback(() => {
+        setUser(prev => (prev ? { ...prev, must_change_password: false } : prev));
+    }, []);
+
     return (
-        <AuthContext.Provider value={{ user, login, googleLogin, logout, loading, updateDisplayName }}>
+        <AuthContext.Provider value={{ user, login, googleLogin, logout, loading, updateDisplayName, markPasswordChanged }}>
             {children}
         </AuthContext.Provider>
     );
