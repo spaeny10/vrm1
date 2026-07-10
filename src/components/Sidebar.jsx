@@ -24,7 +24,7 @@ const ICONS = {
 // workspace; the home route changes meaning per workspace.
 const NAV = {
     fleet: [
-        { to: '/', label: 'Home', icon: 'home', end: true },
+        { to: '/', label: 'Fleet Home', icon: 'home', end: true },
         { to: '/rentals', label: 'Rentals', icon: 'dollar' },
         { to: '/trailers', label: 'Trailers', icon: 'truck' },
         { to: '/map', label: 'Map', icon: 'map' },
@@ -32,13 +32,13 @@ const NAV = {
         { to: '/companies', label: 'Companies', icon: 'building' },
     ],
     billing: [
-        { to: '/', label: 'Home', icon: 'home', end: true },
+        { to: '/', label: 'Billing Home', icon: 'home', end: true },
         { to: '/rentals', label: 'Rentals', icon: 'dollar', notStatements: true },
         { to: '/rentals?view=statements', label: 'Statements', icon: 'doc', statements: true },
         { to: '/companies', label: 'Companies', icon: 'building' },
     ],
     tech: [
-        { to: '/', label: 'Home', icon: 'home', end: true },
+        { to: '/', label: 'Tech Home', icon: 'home', end: true },
         { to: '/fleet', label: 'Fleet Details', icon: 'chart', alertBadge: true },
         { to: '/maintenance', label: 'Maintenance', icon: 'wrench' },
         { to: '/map', label: 'Map', icon: 'map' },
