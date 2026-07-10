@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useWorkspace } from './WorkspaceProvider'
 
 // ============================================================
 // Shared rental lifecycle UI: status labels/badges, lifecycle
@@ -51,6 +52,19 @@ export const STATUS_ACTIONS = {
         { event: 'pickup', label: 'Pickup' },
         { event: 'return', label: 'Return to HQ' },
     ],
+}
+
+// Who owns each lifecycle event: fleet moves trailers and handles the
+// customer's schedule; billing flips the money switch. The workspace
+// you're in determines which buttons you see (roles still gate writes).
+export const EVENT_OWNER = {
+    deliver: 'fleet',
+    calloff: 'fleet',
+    pickup: 'fleet',
+    return: 'fleet',
+    cancel: 'fleet',
+    start_billing: 'billing',
+    stop_billing: 'billing',
 }
 
 export const EVENT_LABELS = {
@@ -146,7 +160,10 @@ export function pricingLabel(r) {
 // Lifecycle action buttons for a rental row/card.
 // onAction(rental, event) should open the RentalEventModal.
 export function RentalActionButtons({ rental, onAction, size = 'sm' }) {
-    const actions = STATUS_ACTIONS[rental.status] || []
+    const { workspace } = useWorkspace()
+    // Fleet sees movement/customer-schedule actions, Billing sees the money
+    // switches, Tech sees rental context but takes no rental actions
+    const actions = (STATUS_ACTIONS[rental.status] || []).filter(a => EVENT_OWNER[a.event] === workspace)
     if (actions.length === 0) return null
     return (
         <>
