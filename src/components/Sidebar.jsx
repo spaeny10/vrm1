@@ -29,7 +29,6 @@ const NAV = {
         { to: '/trailers', label: 'Trailers', icon: 'truck' },
         { to: '/map', label: 'Map', icon: 'map' },
         { to: '/health', label: 'Fleet Health', icon: 'heart' },
-        { to: '/companies', label: 'Companies', icon: 'building' },
     ],
     billing: [
         { to: '/', label: 'Billing Home', icon: 'home', end: true },

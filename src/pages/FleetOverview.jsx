@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchTechStatus, fetchDeploymentSummary, createJobSite, fetchCompanies, approveGpsChange, rejectGpsChange } from '../api/vrm'
+import { fetchSites, fetchFleetLatest, fetchFleetCombined, fetchJobSites, fetchActionQueue, acknowledgeAction, fetchHealthGrades, fetchTechStatus, fetchDeploymentSummary, approveGpsChange, rejectGpsChange } from '../api/vrm'
 import TrailerCard from '../components/TrailerCard'
 import JobSiteCard from '../components/JobSiteCard'
 import QueryBar from '../components/QueryBar'
@@ -26,18 +26,6 @@ function FleetOverview({ techMode = false }) {
     const [showDeployedOnly, setShowDeployedOnly] = useState(true)
     const [techStatusFilter, setTechStatusFilter] = useState(null) // null | 'good' | 'watch' | 'attention'
     const [generatingPdf, setGeneratingPdf] = useState(false)
-    const [showAddSiteModal, setShowAddSiteModal] = useState(false)
-    const [newSite, setNewSite] = useState({ name: '', address: '', company_id: '' })
-    const [addingSite, setAddingSite] = useState(false)
-    const [companiesList, setCompaniesList] = useState([])
-
-    // Load companies when Add Site modal opens
-    useEffect(() => {
-        if (showAddSiteModal) {
-            fetchCompanies().then(d => setCompaniesList(d?.companies || [])).catch(() => { })
-        }
-    }, [showAddSiteModal])
-
     // Action queue data
     const fetchActionQueueFn = useCallback(() => fetchActionQueue(), [])
     const { data: actionQueueData, refetch: refetchActions } = useApiPolling(fetchActionQueueFn, 30000)
@@ -435,14 +423,6 @@ function FleetOverview({ techMode = false }) {
                             Export
                         </button>
                         <DataFreshness lastUpdated={lastUpdated} refetch={refetch} />
-                        {canEdit && (
-                            <button className="btn btn-sm btn-primary" onClick={() => setShowAddSiteModal(true)} title="Add new job site">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-                                </svg>
-                                Add Site
-                            </button>
-                        )}
                     </div>
                 </div>
                 <p className="page-subtitle">
@@ -868,61 +848,6 @@ function FleetOverview({ techMode = false }) {
                 </div>
             )}
 
-            {/* Add Site Modal */}
-            {showAddSiteModal && (
-                <div className="modal-overlay" onClick={() => setShowAddSiteModal(false)}>
-                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
-                        <div className="modal-header">
-                            <h2>Add New Site</h2>
-                            <button className="modal-close" onClick={() => setShowAddSiteModal(false)}>&times;</button>
-                        </div>
-                        <form onSubmit={async (e) => {
-                            e.preventDefault()
-                            if (!newSite.name.trim()) return
-                            setAddingSite(true)
-                            try {
-                                const payload = { ...newSite }
-                                if (payload.company_id) payload.company_id = parseInt(payload.company_id)
-                                else delete payload.company_id
-                                await createJobSite(payload)
-                                setShowAddSiteModal(false)
-                                setNewSite({ name: '', address: '', company_id: '' })
-                                refetch()
-                            } catch (err) {
-                                console.error('Failed to create site:', err)
-                            } finally {
-                                setAddingSite(false)
-                            }
-                        }} style={{ padding: '20px' }}>
-                            <div style={{ display: 'grid', gap: '14px' }}>
-                                <div>
-                                    <label className="form-label">Site Name *</label>
-                                    <input className="input" required value={newSite.name} onChange={e => setNewSite(s => ({ ...s, name: e.target.value }))} placeholder="e.g. Downtown Construction" />
-                                </div>
-                                <div>
-                                    <label className="form-label">Address</label>
-                                    <input className="input" value={newSite.address} onChange={e => setNewSite(s => ({ ...s, address: e.target.value }))} placeholder="123 Main St, Kansas City, KS" />
-                                </div>
-                                <div>
-                                    <label className="form-label">Company *</label>
-                                    <select className="input" value={newSite.company_id} onChange={e => setNewSite(s => ({ ...s, company_id: e.target.value }))}>
-                                        <option value="">— No company —</option>
-                                        {companiesList.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="modal-footer">
-                                <button type="button" className="btn btn-secondary" onClick={() => setShowAddSiteModal(false)}>Cancel</button>
-                                <button type="submit" className="btn btn-primary" disabled={!newSite.name.trim() || !newSite.company_id || addingSite}>
-                                    {addingSite ? 'Creating...' : 'Create Site'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
         </div>
     )
 }

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { fetchCompanies, createCompany, updateCompanyApi, fetchContacts, createContact, updateContactApi, deleteContactApi, fetchJobSites, updateJobSite, inviteContactToPortal } from '../api/vrm'
+import { fetchCompanies, createCompany, updateCompanyApi, fetchContacts, createContact, updateContactApi, deleteContactApi, fetchJobSites, updateJobSite, createJobSite, inviteContactToPortal } from '../api/vrm'
 import { useAuth } from '../components/AuthProvider'
 
 export default function Companies() {
@@ -21,6 +21,10 @@ export default function Companies() {
     const [inviteResult, setInviteResult] = useState(null) // { username, temp_password, sites_linked }
     const [editingContact, setEditingContact] = useState(null)
     const [linkingSiteForCompany, setLinkingSiteForCompany] = useState(null)
+    const [addSiteForCompany, setAddSiteForCompany] = useState(null) // company object
+    const [newSiteForm, setNewSiteForm] = useState({ name: '', address: '' })
+    const [savingSite, setSavingSite] = useState(false)
+    const [siteError, setSiteError] = useState(null)
 
     const loadCompanies = useCallback(async () => {
         try {
@@ -171,6 +175,27 @@ export default function Companies() {
             loadCompanies()
         } catch (err) {
             console.error('Failed to unlink site:', err)
+        }
+    }
+
+    // New sites are created in the customer's context — company comes from the card
+    const handleCreateSite = async () => {
+        setSavingSite(true)
+        setSiteError(null)
+        try {
+            await createJobSite({
+                name: newSiteForm.name.trim(),
+                address: newSiteForm.address.trim() || null,
+                company_id: addSiteForCompany.id,
+            })
+            setAddSiteForCompany(null)
+            setNewSiteForm({ name: '', address: '' })
+            loadJobSites()
+            loadCompanies()
+        } catch (err) {
+            setSiteError(err.message)
+        } finally {
+            setSavingSite(false)
         }
     }
 
@@ -353,9 +378,14 @@ export default function Companies() {
                                                         <button className="btn btn-sm btn-ghost" onClick={() => setLinkingSiteForCompany(null)}>Cancel</button>
                                                     </div>
                                                 ) : (
-                                                    <button className="btn btn-sm btn-ghost" onClick={() => setLinkingSiteForCompany(company.id)}>
-                                                        + Link Site
-                                                    </button>
+                                                    <span style={{ display: 'flex', gap: 6 }}>
+                                                        <button className="btn btn-sm btn-primary" onClick={() => { setAddSiteForCompany(company); setNewSiteForm({ name: '', address: '' }); setSiteError(null) }}>
+                                                            + New Site
+                                                        </button>
+                                                        <button className="btn btn-sm btn-ghost" onClick={() => setLinkingSiteForCompany(company.id)}>
+                                                            + Link Site
+                                                        </button>
+                                                    </span>
                                                 )
                                             )}
                                         </div>
@@ -387,6 +417,38 @@ export default function Companies() {
                         </div>
                     )
                 })}
+
+                {/* New Site modal (created pre-linked to the customer) */}
+                {addSiteForCompany && (
+                    <div className="modal-overlay" onClick={() => setAddSiteForCompany(null)}>
+                        <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+                            <div className="modal-header">
+                                <h2>New Site for {addSiteForCompany.name}</h2>
+                                <button className="modal-close" onClick={() => setAddSiteForCompany(null)}>&times;</button>
+                            </div>
+                            <div style={{ padding: 20 }}>
+                                <div style={{ marginBottom: 14 }}>
+                                    <label className="form-label">Site Name *</label>
+                                    <input className="input" value={newSiteForm.name} onChange={e => setNewSiteForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Downtown Construction" autoFocus />
+                                </div>
+                                <div style={{ marginBottom: 14 }}>
+                                    <label className="form-label">Address</label>
+                                    <input className="input" value={newSiteForm.address} onChange={e => setNewSiteForm(f => ({ ...f, address: e.target.value }))} placeholder="123 Main St, Kansas City, KS" />
+                                </div>
+                                <p className="settings-desc" style={{ marginBottom: 14 }}>
+                                    The site is linked to {addSiteForCompany.name} automatically. GPS coordinates fill in when the first trailer arrives.
+                                </p>
+                                {siteError && <p style={{ color: 'var(--danger, #e74c3c)', marginBottom: 12 }}>{siteError}</p>}
+                                <div className="modal-footer">
+                                    <button className="btn btn-secondary" onClick={() => setAddSiteForCompany(null)} disabled={savingSite}>Cancel</button>
+                                    <button className="btn btn-primary" onClick={handleCreateSite} disabled={savingSite || !newSiteForm.name.trim()}>
+                                        {savingSite ? 'Creating...' : 'Create Site'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {filtered.length === 0 && (
                     <div className="no-results">
