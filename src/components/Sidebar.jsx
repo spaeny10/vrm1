@@ -26,6 +26,7 @@ const NAV = {
     fleet: [
         { to: '/', label: 'Fleet Home', icon: 'home', end: true },
         { to: '/trailers', label: 'Trailers', icon: 'truck' },
+        { to: '/maintenance', label: 'Maintenance', icon: 'wrench' },
         { to: '/map', label: 'Map', icon: 'map' },
         { to: '/health', label: 'Fleet Health', icon: 'heart' },
     ],
@@ -38,7 +39,6 @@ const NAV = {
     tech: [
         { to: '/', label: 'Tech Home', icon: 'home', end: true },
         { to: '/fleet', label: 'Fleet Details', icon: 'chart', alertBadge: true },
-        { to: '/maintenance', label: 'Maintenance', icon: 'wrench' },
         { to: '/map', label: 'Map', icon: 'map' },
         { to: '/trailers', label: 'Trailers', icon: 'truck' },
     ],
