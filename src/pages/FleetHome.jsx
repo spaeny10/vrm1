@@ -52,8 +52,8 @@ function FleetHome() {
                 <div className="page-header-row">
                     <h1>Fleet Operations</h1>
                     <div className="page-header-actions">
-                        <Link to="/rentals" className="btn btn-primary">Rentals & Billing</Link>
                         <Link to="/trailers" className="btn btn-secondary">Trailers</Link>
+                        <Link to="/map" className="btn btn-secondary">Map</Link>
                     </div>
                 </div>
                 <p className="page-subtitle">Where the fleet is, what moves today, and what needs your decision</p>

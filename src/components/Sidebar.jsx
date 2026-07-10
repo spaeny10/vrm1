@@ -25,7 +25,6 @@ const ICONS = {
 const NAV = {
     fleet: [
         { to: '/', label: 'Fleet Home', icon: 'home', end: true },
-        { to: '/rentals', label: 'Rentals', icon: 'dollar' },
         { to: '/trailers', label: 'Trailers', icon: 'truck' },
         { to: '/map', label: 'Map', icon: 'map' },
         { to: '/health', label: 'Fleet Health', icon: 'heart' },
