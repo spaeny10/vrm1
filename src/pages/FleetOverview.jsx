@@ -98,10 +98,15 @@ function FleetOverview({ techMode = false }) {
 
     // GPS relocation suggestions: approve applies the reassignment,
     // reject dismisses it — same endpoints as the Settings review queue
-    const handleGpsSuggestion = async (suggestionId, approve) => {
+    const handleGpsSuggestion = async (action, approve) => {
+        let newSiteName = null
+        if (approve && action.suggestion_type === 'create_new') {
+            newSiteName = prompt('No nearby site matched. Name for the new job site:')
+            if (!newSiteName) return
+        }
         try {
-            if (approve) await approveGpsChange(suggestionId)
-            else await rejectGpsChange(suggestionId)
+            if (approve) await approveGpsChange(action.suggestion_id, newSiteName)
+            else await rejectGpsChange(action.suggestion_id)
             refetchActions()
         } catch (err) {
             console.error('Failed to resolve GPS suggestion:', err)
@@ -596,13 +601,13 @@ function FleetOverview({ techMode = false }) {
                                         <span style={{ display: 'flex', gap: 6 }}>
                                             <button
                                                 className="btn btn-sm btn-primary"
-                                                onClick={(e) => { e.stopPropagation(); handleGpsSuggestion(action.suggestion_id, true) }}
+                                                onClick={(e) => { e.stopPropagation(); handleGpsSuggestion(action, true) }}
                                             >
                                                 Approve
                                             </button>
                                             <button
                                                 className="btn btn-sm btn-ghost"
-                                                onClick={(e) => { e.stopPropagation(); handleGpsSuggestion(action.suggestion_id, false) }}
+                                                onClick={(e) => { e.stopPropagation(); handleGpsSuggestion(action, false) }}
                                             >
                                                 Reject
                                             </button>

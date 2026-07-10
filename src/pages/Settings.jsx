@@ -2,7 +2,7 @@
 import { Link } from 'react-router-dom'
 import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, deleteJobSiteApi, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings, fetchCommunications, fetchGpsChanges, approveGpsChange, rejectGpsChange, fetchCompanies } from '../api/vrm'
+import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, deleteJobSiteApi, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings, fetchCommunications, fetchCompanies } from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
 import { useAuth } from '../components/AuthProvider'
 
@@ -677,10 +677,6 @@ function Settings() {
     const [unlinkedDevices, setUnlinkedDevices] = useState([])
     const [linkingTrailerId, setLinkingTrailerId] = useState(null)
 
-    // GPS Change Suggestions state
-    const [gpsSuggestions, setGpsSuggestions] = useState([])
-    const [loadingSuggestions, setLoadingSuggestions] = useState(false)
-
     // Company linking state
     const [companies, setCompanies] = useState([])
     const [removingSiteId, setRemovingSiteId] = useState(null)
@@ -722,51 +718,6 @@ function Settings() {
             await loadGpsData()
         } catch (err) {
             toast.error('Error linking device: ' + err.message)
-        }
-    }
-
-    // GPS Change Suggestions handlers
-    const loadGpsSuggestions = async () => {
-        try {
-            const data = await fetchGpsChanges()
-            setGpsSuggestions(data.suggestions || [])
-        } catch (err) {
-            toast.error('Error loading GPS suggestions: ' + err.message)
-        }
-    }
-
-    const handleApproveSuggestion = async (suggestionId, suggestionType) => {
-        let siteName = null
-        if (suggestionType === 'create_new') {
-            siteName = prompt('Enter name for new site:')
-            if (!siteName) return
-        }
-
-        setLoadingSuggestions(true)
-        try {
-            await approveGpsChange(suggestionId, siteName)
-            toast.success('GPS change approved successfully!')
-            await loadGpsSuggestions()
-            refetchJobSites()
-        } catch (err) {
-            toast.error('Error approving GPS change: ' + err.message)
-        } finally {
-            setLoadingSuggestions(false)
-        }
-    }
-
-    const handleRejectSuggestion = async (suggestionId) => {
-        if (!confirm('Reject this GPS change suggestion? The trailer will stay at its current site.')) return
-
-        setLoadingSuggestions(true)
-        try {
-            await rejectGpsChange(suggestionId)
-            toast.success('GPS change rejected')
-            await loadGpsSuggestions()
-        } catch (err) {
-            toast.error('Error rejecting GPS change: ' + err.message)
-        } finally {
-            setLoadingSuggestions(false)
         }
     }
 
@@ -812,15 +763,6 @@ function Settings() {
         if (user?.role === 'admin') loadUsers()
     }, [user, loadUsers])
 
-    // Load GPS suggestions on mount for admin/technician
-    useEffect(() => {
-        if (user?.role === 'admin' || user?.role === 'technician') {
-            loadGpsSuggestions()
-            // Refresh every 5 minutes
-            const interval = setInterval(loadGpsSuggestions, 5 * 60 * 1000)
-            return () => clearInterval(interval)
-        }
-    }, [user])
 
     // Load companies for company column
     useEffect(() => {
@@ -979,24 +921,6 @@ function Settings() {
             refetchJobSites()
         } catch (err) {
             toast.error('Error renaming site: ' + err.message)
-        }
-    }
-
-    const handleStatusChange = async (siteId, newStatus) => {
-        try {
-            await updateJobSite(siteId, { status: newStatus })
-            refetchJobSites()
-        } catch (err) {
-            toast.error('Error updating status: ' + err.message)
-        }
-    }
-
-    const handleDateChange = async (siteId, field, value) => {
-        try {
-            await updateJobSite(siteId, { [field]: value || null })
-            refetchJobSites()
-        } catch (err) {
-            toast.error('Error updating date: ' + err.message)
         }
     }
 
@@ -1381,8 +1305,9 @@ function Settings() {
                         )}
                     </div>
                     <p className="settings-desc">
-                        Manage construction sites. Trailers are automatically grouped by GPS proximity (300m threshold).
-                        Click a name to rename. Use the Trailer Board below to drag trailers between sites.
+                        Site configuration: names, companies, geofences, and HQ. Trailers are automatically grouped by GPS
+                        proximity (300m threshold); use the Trailer Board below to drag trailers between sites.
+                        Deployment and billing lifecycle live on the Rentals page; trailer relocations are approved on the Fleet Home.
                     </p>
                     {sortedJobSites.length > 0 ? (
                         <>
@@ -1393,7 +1318,6 @@ function Settings() {
                                         <tr>
                                             <th>Name</th>
                                             <th>Company</th>
-                                            <th>Status</th>
                                             <th>Geofence</th>
                                             <th>Address</th>
                                             {isAdmin && <th>Actions</th>}
@@ -1422,7 +1346,6 @@ function Settings() {
                                                         {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                                     </select>
                                                 </td>
-                                                <td><select className={`status-select status-select-${js.status}`} value={js.status} onChange={e => handleStatusChange(js.id, e.target.value)} disabled={!canEdit}><option value="active">Active</option><option value="standby">Standby</option><option value="completed">Completed</option></select></td>
                                                 <td><input type="number" className="geofence-input" value={js.geofence_radius_m || 300} min={100} step={50} disabled={!canEdit} onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 100) updateJobSite(js.id, { geofence_radius_m: v }).then(() => refetchJobSites()) }} /></td>
                                                 <td className="jobsite-mgmt-address">{js.address || '—'}</td>
                                                 {isAdmin && (
@@ -1520,83 +1443,6 @@ function Settings() {
                         </div>
                     )}
                 </div>
-
-                {/* GPS Change Suggestions */}
-                {canEdit && (
-                    <div className="settings-card">
-                        <h2>🗺️ GPS Change Suggestions</h2>
-                        <p className="settings-desc">
-                            System automatically detects when trailers move more than 1km from their last known location.
-                            Review and approve/reject suggested reassignments.
-                        </p>
-
-                        {gpsSuggestions.length === 0 ? (
-                            <p style={{ color: 'var(--text-secondary)', marginTop: '12px' }}>
-                                ✓ No pending GPS change suggestions.
-                            </p>
-                        ) : (
-                            <div className="gps-suggestions-list">
-                                {gpsSuggestions.map(suggestion => (
-                                    <div key={suggestion.id} className="gps-suggestion-card">
-                                        <div className="suggestion-header">
-                                            <div>
-                                                <strong>{suggestion.site_name}</strong>
-                                                <span className="suggestion-distance">
-                                                    📍 Moved {suggestion.distance_km.toFixed(2)} km
-                                                </span>
-                                            </div>
-                                            <span className="suggestion-date">
-                                                {new Date(suggestion.created_at).toLocaleString()}
-                                            </span>
-                                        </div>
-
-                                        <div className="suggestion-details">
-                                            <div className="suggestion-row">
-                                                <span className="label">From:</span>
-                                                <span>{suggestion.current_job_site_name || 'Unknown site'}</span>
-                                            </div>
-                                            <div className="suggestion-row">
-                                                <span className="label">To:</span>
-                                                <span>
-                                                    {suggestion.suggestion_type === 'reassign_existing'
-                                                        ? `${suggestion.suggested_job_site_name} (existing site)`
-                                                        : '🆕 New site (to be created)'}
-                                                </span>
-                                            </div>
-                                            <div className="suggestion-coords">
-                                                <div>
-                                                    <span className="label">Old GPS:</span>
-                                                    {suggestion.old_latitude?.toFixed(6)}, {suggestion.old_longitude?.toFixed(6)}
-                                                </div>
-                                                <div>
-                                                    <span className="label">New GPS:</span>
-                                                    {suggestion.new_latitude.toFixed(6)}, {suggestion.new_longitude.toFixed(6)}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div className="suggestion-actions">
-                                            <button
-                                                className="btn btn-success"
-                                                onClick={() => handleApproveSuggestion(suggestion.id, suggestion.suggestion_type)}
-                                                disabled={loadingSuggestions}
-                                            >
-                                                ✓ Approve
-                                            </button>
-                                            <button
-                                                className="btn btn-secondary"
-                                                onClick={() => handleRejectSuggestion(suggestion.id)}
-                                                disabled={loadingSuggestions}
-                                            >
-                                                ✗ Reject
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )}
 
                 {/* GPS Verification */}
                 <div className="settings-card settings-card-wide">

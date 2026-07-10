@@ -258,6 +258,7 @@ app.get('/api/action-queue', async (req, res) => {
                         subtitle: sg.current_job_site_name ? `Was at ${sg.current_job_site_name}` : 'Unassigned',
                         site_id: sg.site_id,
                         suggestion_id: sg.id,
+                        suggestion_type: sg.suggestion_type,
                         severity: 'warning',
                         details: `${target} Approving updates the trailer's job-site assignment.`,
                         created_at: Number(sg.created_at) || now,

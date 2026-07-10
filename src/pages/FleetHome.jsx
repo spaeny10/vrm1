@@ -27,11 +27,16 @@ function FleetHome() {
 
     const [resolving, setResolving] = useState(null)
 
-    const handleSuggestion = async (suggestionId, approve) => {
-        setResolving(suggestionId)
+    const handleSuggestion = async (a, approve) => {
+        let newSiteName = null
+        if (approve && a.suggestion_type === 'create_new') {
+            newSiteName = prompt('No nearby site matched. Name for the new job site:')
+            if (!newSiteName) return
+        }
+        setResolving(a.suggestion_id)
         try {
-            if (approve) await approveGpsChange(suggestionId)
-            else await rejectGpsChange(suggestionId)
+            if (approve) await approveGpsChange(a.suggestion_id, newSiteName)
+            else await rejectGpsChange(a.suggestion_id)
             toast.success(approve ? 'Relocation approved — assignment updated' : 'Suggestion rejected')
             refetchQueue()
         } catch (err) {
@@ -104,14 +109,14 @@ function FleetHome() {
                                                 className="btn btn-sm btn-primary"
                                                 style={{ marginRight: 6 }}
                                                 disabled={resolving === a.suggestion_id}
-                                                onClick={() => handleSuggestion(a.suggestion_id, true)}
+                                                onClick={() => handleSuggestion(a, true)}
                                             >
                                                 Approve
                                             </button>
                                             <button
                                                 className="btn btn-sm btn-ghost"
                                                 disabled={resolving === a.suggestion_id}
-                                                onClick={() => handleSuggestion(a.suggestion_id, false)}
+                                                onClick={() => handleSuggestion(a, false)}
                                             >
                                                 Reject
                                             </button>
