@@ -1,5 +1,6 @@
 import { Routes, Route, useLocation } from 'react-router-dom'
 import { useAuth } from './components/AuthProvider'
+import { WorkspaceProvider, useWorkspace } from './components/WorkspaceProvider'
 import Sidebar from './components/Sidebar'
 import PortalSidebar from './components/PortalSidebar'
 import MobileHeader from './components/MobileHeader'
@@ -24,6 +25,8 @@ const FleetDetailsPage = lazy(() => import('./pages/FleetDetailsPage'))
 const MaintenancePage = lazy(() => import('./pages/MaintenancePage'))
 const RentalsPage = lazy(() => import('./pages/RentalsPage'))
 const TrailersPage = lazy(() => import('./pages/TrailersPage'))
+const FleetHome = lazy(() => import('./pages/FleetHome'))
+const BillingHome = lazy(() => import('./pages/BillingHome'))
 const Settings = lazy(() => import('./pages/Settings'))
 const HelpPage = lazy(() => import('./pages/HelpPage'))
 const PortalDashboard = lazy(() => import('./pages/PortalDashboard'))
@@ -36,6 +39,15 @@ function PageLoader() {
             <p style={{ color: 'var(--text-secondary)' }}>Loading...</p>
         </div>
     )
+}
+
+// The home route means something different per workspace:
+// Fleet -> operations home, Billing -> money home, Tech -> health triage
+function WorkspaceHome() {
+    const { workspace } = useWorkspace()
+    if (workspace === 'billing') return <BillingHome />
+    if (workspace === 'tech') return <FleetOverview techMode />
+    return <FleetHome />
 }
 
 function App() {
@@ -89,6 +101,7 @@ function App() {
     }
 
     return (
+        <WorkspaceProvider>
         <div className="app-layout">
             <MobileHeader onToggleSidebar={() => setMobileOpen(o => !o)} />
             <Sidebar mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
@@ -98,7 +111,8 @@ function App() {
                 <ErrorBoundary>
                     <Suspense fallback={<PageLoader />}>
                         <Routes>
-                            <Route path="/" element={<FleetOverview />} />
+                            <Route path="/" element={<WorkspaceHome />} />
+                            <Route path="/health" element={<FleetOverview />} />
                             <Route path="/site/:id" element={<JobSiteDetail />} />
                             <Route path="/trailer/:id" element={<TrailerDetail />} />
                             <Route path="/map" element={<MapView />} />
@@ -115,6 +129,7 @@ function App() {
                 </ErrorBoundary>
             </main>
         </div>
+        </WorkspaceProvider>
     )
 }
 

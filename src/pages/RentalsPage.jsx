@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { useAuth } from '../components/AuthProvider'
 import { useToast } from '../components/ToastProvider'
@@ -9,6 +9,8 @@ import {
     fetchTrailers, fetchJobSites, fetchCompanies, fetchRateCards,
 } from '../api/vrm'
 import { generateStatementPDF } from '../utils/statementPdf'
+import DispatchBoard from '../components/DispatchBoard'
+import { useWorkspace } from '../components/WorkspaceProvider'
 import {
     STATUS_LABELS, STATUS_ACTIONS, EVENT_LABELS, TERM_LABELS, CYCLE_LABELS,
     formatDate, formatMoney, todayStr, toDateInput, pricingLabel,
@@ -31,8 +33,18 @@ function RentalsPage() {
     const canEdit = user?.role === 'admin' || user?.role === 'technician'
     const toast = useToast()
 
+    const { workspace } = useWorkspace()
+    const [searchParams] = useSearchParams()
     const [statusFilter, setStatusFilter] = useState('all')
-    const [viewMode, setViewMode] = useState('list') // 'list' | 'calendar' | 'statements'
+    const [viewMode, setViewMode] = useState(() =>
+        ['list', 'by_site', 'calendar', 'statements'].includes(searchParams.get('view')) ? searchParams.get('view') : 'list'
+    )
+
+    // Sidebar "Statements" deep-link can fire while already on this page
+    useEffect(() => {
+        const v = searchParams.get('view')
+        if (['list', 'by_site', 'calendar', 'statements'].includes(v)) setViewMode(v)
+    }, [searchParams])
     const [showNewRental, setShowNewRental] = useState(false)
     const [editingRental, setEditingRental] = useState(null)
     const [detailRental, setDetailRental] = useState(null) // { rental, events }
@@ -74,18 +86,6 @@ function RentalsPage() {
         if (statusFilter === 'closed') return rentals.filter(r => r.status === 'closed' || r.status === 'cancelled')
         return rentals.filter(r => r.status === statusFilter)
     }, [rentals, statusFilter])
-
-    // Dispatch board: what needs to physically move
-    const dispatch = useMemo(() => {
-        const open = rentals.filter(r => r.status !== 'closed' && r.status !== 'cancelled')
-        return {
-            deliveries: open.filter(r => r.status === 'reserved')
-                .sort((a, b) => String(a.reserved_at).localeCompare(String(b.reserved_at))),
-            pickups: open.filter(r => (r.status === 'awaiting_pickup' || r.status === 'called_off') && !r.picked_up_at)
-                .sort((a, b) => String(a.calloff_at || a.billing_stop || '').localeCompare(String(b.calloff_at || b.billing_stop || ''))),
-            inTransit: open.filter(r => r.status === 'awaiting_pickup' && r.picked_up_at),
-        }
-    }, [rentals])
 
     // Group the filtered rentals by job site (unassigned last), with totals
     const bySiteGroups = useMemo(() => {
@@ -204,46 +204,8 @@ function RentalsPage() {
                 </div>
             </div>
 
-            {/* Dispatch board: physical moves needed */}
-            {(dispatch.deliveries.length > 0 || dispatch.pickups.length > 0 || dispatch.inTransit.length > 0) && (
-                <div className="maint-table-section" style={{ marginBottom: 20 }}>
-                    <div className="maint-group-header">
-                        <h3>Dispatch</h3>
-                        <span className="maint-group-count">
-                            {dispatch.deliveries.length} deliver · {dispatch.pickups.length} pick up · {dispatch.inTransit.length} in transit
-                        </span>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, padding: '12px 0' }}>
-                        <DispatchColumn
-                            title="Deliveries Due"
-                            empty="No pending deliveries"
-                            items={dispatch.deliveries}
-                            dateLabel={r => `Reserved ${formatDate(r.reserved_at)}`}
-                            canEdit={canEdit}
-                            onAction={(r, ev) => setActionModal({ rental: r, event: ev })}
-                            unitCell={unitCell} siteCell={siteCell}
-                        />
-                        <DispatchColumn
-                            title="Pickups Due"
-                            empty="No pending pickups"
-                            items={dispatch.pickups}
-                            dateLabel={r => r.calloff_at ? `Called off ${formatDate(r.calloff_at)}` : `Billing stopped ${formatDate(r.billing_stop)}`}
-                            canEdit={canEdit}
-                            onAction={(r, ev) => setActionModal({ rental: r, event: ev })}
-                            unitCell={unitCell} siteCell={siteCell}
-                        />
-                        <DispatchColumn
-                            title="In Transit"
-                            empty="Nothing in transit"
-                            items={dispatch.inTransit}
-                            dateLabel={r => `Picked up ${formatDate(r.picked_up_at)}`}
-                            canEdit={canEdit}
-                            onAction={(r, ev) => setActionModal({ rental: r, event: ev })}
-                            unitCell={unitCell} siteCell={siteCell}
-                        />
-                    </div>
-                </div>
-            )}
+            {/* Dispatch lives on the Fleet home; show here only in the Fleet workspace */}
+            {workspace === 'fleet' && <DispatchBoard />}
 
             {/* Revenue-leakage alerts */}
             {alerts.length > 0 && (
@@ -481,31 +443,6 @@ function RentalsTable({ rows, hideSite, canEdit, unitCell, siteCell, onRowClick,
                 ))}
             </tbody>
         </table>
-    )
-}
-
-function DispatchColumn({ title, empty, items, dateLabel, canEdit, onAction, unitCell, siteCell }) {
-    return (
-        <div>
-            <h4 style={{ margin: '0 0 8px', color: 'var(--text-secondary)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                {title} {items.length > 0 && <span className="maint-group-count">{items.length}</span>}
-            </h4>
-            {items.length === 0 ? (
-                <p className="settings-desc">{empty}</p>
-            ) : items.slice(0, 6).map(r => (
-                <div key={r.id} className="work-card" style={{ marginBottom: 8 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                        <strong>{unitCell(r)}</strong>
-                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{dateLabel(r)}</span>
-                    </div>
-                    <div style={{ fontSize: 13, margin: '4px 0 8px', color: 'var(--text-secondary)' }}>
-                        {siteCell(r)}{r.company_name ? <> · {r.company_name}</> : null}
-                    </div>
-                    {canEdit && <RentalActionButtons rental={r} onAction={onAction} />}
-                </div>
-            ))}
-            {items.length > 6 && <p className="settings-desc">+{items.length - 6} more…</p>}
-        </div>
     )
 }
 

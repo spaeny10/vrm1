@@ -11,7 +11,7 @@ import { generateFleetPDF } from '../utils/pdfReport'
 import { fetchFleetReportData } from '../api/vrm'
 import { useAuth } from '../components/AuthProvider'
 
-function FleetOverview() {
+function FleetOverview({ techMode = false }) {
     const navigate = useNavigate()
     const { user } = useAuth()
     const canEdit = user?.role === 'admin' || user?.role === 'technician'
@@ -41,7 +41,11 @@ function FleetOverview() {
     // Action queue data
     const fetchActionQueueFn = useCallback(() => fetchActionQueue(), [])
     const { data: actionQueueData, refetch: refetchActions } = useApiPolling(fetchActionQueueFn, 30000)
-    const actionItems = actionQueueData?.actions || []
+    // Tech workspace: the queue focuses on health & service — revenue and
+    // relocation decisions live on the Fleet and Billing homes
+    const actionItems = (actionQueueData?.actions || []).filter(
+        a => !techMode || (a.category !== 'revenue' && a.category !== 'location')
+    )
 
     // Health grades data
     const fetchHealthGradesFn = useCallback(() => fetchHealthGrades(), [])
@@ -467,7 +471,7 @@ function FleetOverview() {
             </div>
 
             {/* Deployment Status */}
-            {deployment.active_billing && (
+            {!techMode && deployment.active_billing && (
                 <div className="deploy-stat-bar">
                     <span className="deploy-stat-label">Deployment</span>
                     {deploymentFilter && (

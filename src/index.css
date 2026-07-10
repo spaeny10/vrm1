@@ -10176,3 +10176,51 @@ tr:hover .btn-hq-toggle {
 .table-link:hover {
     text-decoration: underline;
 }
+
+
+/* --- Workspace switcher --- */
+.workspace-switcher {
+    display: flex;
+    gap: 4px;
+    margin: 4px 12px 12px;
+    padding: 4px;
+    background: var(--bg-primary, #14161b);
+    border-radius: 8px;
+}
+
+.workspace-btn {
+    flex: 1;
+    padding: 6px 4px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary, #95a5a6);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.workspace-btn:hover {
+    color: var(--text-primary, #ecf0f1);
+}
+
+.workspace-btn.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+.sidebar-collapsed .workspace-switcher {
+    flex-direction: column;
+    margin: 4px 8px 12px;
+}
+
+.nav-group-label {
+    margin: 14px 20px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-secondary, #5a6472);
+    opacity: 0.7;
+}

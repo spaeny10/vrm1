@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from './AuthProvider'
+import { useWorkspace } from './WorkspaceProvider'
 import { useToast } from './ToastProvider'
 import { fetchRentals, postRentalEvent } from '../api/vrm'
 import {
@@ -14,7 +15,10 @@ import {
 // panel covers the day-to-day lifecycle actions in context.
 function RentalsInline({ jobSiteId, vrmSiteId, title = 'Rentals & Billing' }) {
     const { user } = useAuth()
+    const { workspace } = useWorkspace()
     const canEdit = user?.role === 'admin' || user?.role === 'technician'
+    // Tech workspace keeps rental context but drops the dollar figures
+    const hideMoney = workspace === 'tech'
     const toast = useToast()
 
     const [rentals, setRentals] = useState(null)
@@ -66,10 +70,10 @@ function RentalsInline({ jobSiteId, vrmSiteId, title = 'Rentals & Billing' }) {
                             {!jobSiteId && <th>Job Site</th>}
                             <th>Customer</th>
                             <th>PO #</th>
-                            <th>Rate</th>
+                            {!hideMoney && <th>Rate</th>}
                             <th>Billing Start</th>
                             <th>Days</th>
-                            <th>Total Due</th>
+                            {!hideMoney && <th>Total Due</th>}
                             <th>Status</th>
                             {canEdit && <th>Actions</th>}
                         </tr>
@@ -89,10 +93,10 @@ function RentalsInline({ jobSiteId, vrmSiteId, title = 'Rentals & Billing' }) {
                                 )}
                                 <td>{r.company_name || '—'}</td>
                                 <td>{r.po_number || '—'}</td>
-                                <td style={{ fontSize: 13 }}>{pricingLabel(r) || '—'}</td>
+                                {!hideMoney && <td style={{ fontSize: 13 }}>{pricingLabel(r) || '—'}</td>}
                                 <td className="maint-date">{formatDate(r.billing_start)}</td>
                                 <td>{r.days_on_rent ?? '—'}</td>
-                                <td className="maint-cost">{formatMoney(r.total_due ?? r.accrued_amount)}</td>
+                                {!hideMoney && <td className="maint-cost">{formatMoney(r.total_due ?? r.accrued_amount)}</td>}
                                 <td><RentalStatusBadge status={r.status} /></td>
                                 {canEdit && (
                                     <td className="maint-actions">
