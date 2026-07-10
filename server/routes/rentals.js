@@ -1,4 +1,4 @@
-import { getBillingAtHeadquarters, getBillingPastCalloff, getRateCards, getRental, getRentalEvents, getRentals, getTrailer, getTrailers, getUnbilledDeployedTrailers, getVolumeTiers, insertAuditLog, insertRental, insertRentalEvent, insertTrailer, updateRental, updateTrailer } from '../db.js';
+import { getBillingAtHeadquarters, getBillingPastCalloff, getDeliveredNotBilling, getRateCards, getRental, getRentalEvents, getRentals, getTrailer, getTrailers, getUnbilledDeployedTrailers, getVolumeTiers, insertAuditLog, insertRental, insertRentalEvent, insertTrailer, updateRental, updateTrailer } from '../db.js';
 import { requireRole } from '../middleware/auth.js';
 import { TERM_DAYS, buildTierCounter, computeRollback, parseDateUTC } from '../pricing.js';
 import { RENTAL_TRANSITIONS, buildPricingContext, buildStatements, computeAccruedThisMonth, computeMtdEngine, priceRental } from '../services/billing.js';
@@ -126,6 +126,11 @@ app.post('/api/rentals/:id/events', requireRole('admin', 'technician'), async (r
             return res.status(409).json({ success: false, error: `Cannot ${event_type} a rental in '${rental.status}' status` });
         }
 
+        // A trailer can't move without a destination: delivery requires a job site
+        if (event_type === 'deliver' && !rental.job_site_id) {
+            return res.status(400).json({ success: false, error: 'Assign a job site to this rental (Edit → Job Site) before marking it delivered' });
+        }
+
         // Billing can't stop before it started
         const date = event_date || new Date().toISOString().slice(0, 10);
         if (event_type === 'stop_billing' && rental.billing_start && new Date(date) < new Date(rental.billing_start)) {
@@ -237,10 +242,11 @@ app.get('/api/billing/statements', async (req, res) => {
 
 app.get('/api/billing/alerts', async (req, res) => {
     try {
-        const [pastCalloff, atHq, unbilled] = await Promise.all([
+        const [pastCalloff, atHq, unbilled, deliveredIdle] = await Promise.all([
             getBillingPastCalloff(),
             getBillingAtHeadquarters(),
             getUnbilledDeployedTrailers(),
+            getDeliveredNotBilling(),
         ]);
 
         const alerts = [
@@ -265,6 +271,16 @@ app.get('/api/billing/alerts', async (req, res) => {
                 unit_number: t.unit_number,
                 message: `${t.unit_number} is deployed at active site "${t.job_site_name}" with no open rental — revenue is leaking`,
             })),
+            ...deliveredIdle.map(r => {
+                const days = Math.floor((Date.now() - new Date(r.delivered_at).getTime()) / 86400000);
+                return {
+                    type: 'delivered_not_billing',
+                    severity: days >= 14 ? 'critical' : 'warning',
+                    rental_id: r.id,
+                    unit_number: r.unit_number,
+                    message: `${r.unit_number} was delivered to "${r.job_site_name || 'site'}" ${days} day${days !== 1 ? 's' : ''} ago but billing has not started`,
+                };
+            }),
         ];
 
         res.json({ success: true, alerts });

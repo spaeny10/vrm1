@@ -1,6 +1,6 @@
 import { acknowledgeAction as dbAcknowledgeAction, unacknowledgeAction as dbUnacknowledgeAction } from '../db.js';
 import { TRAILER_SPECS } from '../config.js';
-import { getAcknowledgedActions, getUpcomingMaintenance, getBillingPastCalloff, getBillingAtHeadquarters, getUnbilledDeployedTrailers, getGpsSuggestions } from '../db.js';
+import { getAcknowledgedActions, getUpcomingMaintenance, getBillingPastCalloff, getBillingAtHeadquarters, getUnbilledDeployedTrailers, getDeliveredNotBilling, getGpsSuggestions } from '../db.js';
 import { hasVrmData, todayStr } from '../lib/util.js';
 import { requireRole } from '../middleware/auth.js';
 import { computeAlerts } from '../services/alerts.js';
@@ -180,10 +180,11 @@ app.get('/api/action-queue', async (req, res) => {
         // Source: Revenue leakage (rental/billing mismatches)
         if (dbAvailable) {
             try {
-                const [pastCalloff, atHq, unbilled] = await Promise.all([
+                const [pastCalloff, atHq, unbilled, deliveredIdle] = await Promise.all([
                     getBillingPastCalloff(),
                     getBillingAtHeadquarters(),
                     getUnbilledDeployedTrailers(),
+                    getDeliveredNotBilling(),
                 ]);
                 for (const r of pastCalloff) {
                     actions.push({
@@ -221,6 +222,20 @@ app.get('/api/action-queue', async (req, res) => {
                         trailer_id: t.trailer_id,
                         severity: 'critical',
                         details: `Deployed at active site "${t.job_site_name}" with no open rental — revenue is leaking. Create a rental for this unit.`,
+                        created_at: now,
+                    });
+                }
+                for (const r of deliveredIdle) {
+                    const days = Math.floor((now - new Date(r.delivered_at).getTime()) / 86400000);
+                    actions.push({
+                        key: `revenue:idle:${r.id}`,
+                        priority: days >= 14 ? 1 : 3,
+                        category: 'revenue',
+                        title: `Delivered, not billing — ${r.unit_number}`,
+                        subtitle: r.job_site_name || r.company_name || 'Rental',
+                        rental_id: r.id,
+                        severity: days >= 14 ? 'critical' : 'warning',
+                        details: `Delivered ${days} day${days !== 1 ? 's' : ''} ago but billing has not started. Start billing on the Rentals page (or cancel if this delivery fell through).`,
                         created_at: now,
                     });
                 }

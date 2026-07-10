@@ -586,7 +586,7 @@ function NewRentalModal({ trailers, jobSites, companies, rateCards, onCreated, o
                         )}
                     </div>
                     <div style={{ marginBottom: 14 }}>
-                        <label className="form-label">Job Site</label>
+                        <label className="form-label">Job Site (required before delivery)</label>
                         <select className="input" value={form.job_site_id} onChange={set('job_site_id')}>
                             <option value="">— Select destination site —</option>
                             {jobSites.filter(js => !js.is_headquarters).map(js => (

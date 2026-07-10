@@ -168,6 +168,10 @@ app.post('/api/job-sites', requireRole('admin', 'technician'), async (req, res) 
     try {
         const { name } = req.body;
         if (!name) return res.status(400).json({ success: false, error: 'Name is required' });
+        // Sites belong to customers: a company is required (HQ is the exception)
+        if (!req.body.company_id && !req.body.is_headquarters) {
+            return res.status(400).json({ success: false, error: 'A company is required to create a job site. Add the company first under Companies.' });
+        }
 
         const created = await insertJobSite(req.body);
         if (!created) return res.status(500).json({ success: false, error: 'Could not create job site' });

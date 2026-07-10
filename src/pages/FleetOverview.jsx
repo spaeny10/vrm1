@@ -899,7 +899,7 @@ function FleetOverview({ techMode = false }) {
                                     <input className="input" value={newSite.address} onChange={e => setNewSite(s => ({ ...s, address: e.target.value }))} placeholder="123 Main St, Kansas City, KS" />
                                 </div>
                                 <div>
-                                    <label className="form-label">Company</label>
+                                    <label className="form-label">Company *</label>
                                     <select className="input" value={newSite.company_id} onChange={e => setNewSite(s => ({ ...s, company_id: e.target.value }))}>
                                         <option value="">— No company —</option>
                                         {companiesList.map(c => (
@@ -910,7 +910,7 @@ function FleetOverview({ techMode = false }) {
                             </div>
                             <div className="modal-footer">
                                 <button type="button" className="btn btn-secondary" onClick={() => setShowAddSiteModal(false)}>Cancel</button>
-                                <button type="submit" className="btn btn-primary" disabled={!newSite.name.trim() || addingSite}>
+                                <button type="submit" className="btn btn-primary" disabled={!newSite.name.trim() || !newSite.company_id || addingSite}>
                                     {addingSite ? 'Creating...' : 'Create Site'}
                                 </button>
                             </div>

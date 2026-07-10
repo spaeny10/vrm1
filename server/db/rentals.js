@@ -223,6 +223,20 @@ export async function getBillingAtHeadquarters() {
     return result.rows;
 }
 
+// Delivered rentals that never started billing — trailers on site earning
+// nothing. Billing is deliberately a separate switch from delivery, so this
+// list is the "did we forget to flip it?" check.
+export async function getDeliveredNotBilling() {
+    if (!pool) return [];
+    const result = await pool.query(`
+        ${RENTAL_JOIN}
+        WHERE r.status = 'delivered'
+          AND r.delivered_at IS NOT NULL
+        ORDER BY r.delivered_at
+    `);
+    return result.rows;
+}
+
 // Trailers deployed on an active customer site with no open rental (unbilled units)
 export async function getUnbilledDeployedTrailers() {
     if (!pool) return [];
