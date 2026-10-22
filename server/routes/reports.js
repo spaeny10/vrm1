@@ -132,7 +132,8 @@ app.get('/api/reports/fleet', async (req, res) => {
         // Group energy trends by date for fleet totals
         const energyByDate = {};
         for (const e of energyTrends) {
-            const d = e.date;
+            // pg returns DATE columns as Date objects; normalize to yyyy-mm-dd
+            const d = e.date instanceof Date ? e.date.toISOString().slice(0, 10) : String(e.date);
             if (!energyByDate[d]) energyByDate[d] = { date: d, yield_wh: 0, consumed_wh: 0 };
             energyByDate[d].yield_wh += parseFloat(e.yield_wh) || 0;
             energyByDate[d].consumed_wh += parseFloat(e.consumed_wh) || 0;
@@ -147,7 +148,7 @@ app.get('/api/reports/fleet', async (req, res) => {
                     total_trailers: trailers.length,
                     online: onlineTrailers.length,
                     avg_soc: Math.round(avgSoc * 10) / 10,
-                    total_yield_today_kwh: Math.round(totalYieldToday) / 1000,
+                    total_yield_today_kwh: Math.round(totalYieldToday * 10) / 10,
                     active_alerts: alerts.length,
                 },
                 grade_distribution: gradeDistribution,

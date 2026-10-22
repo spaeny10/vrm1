@@ -32,15 +32,15 @@ Database tables:
    Columns: id SERIAL, device_name TEXT, timestamp BIGINT (ms),
    online BOOLEAN, signal_bar INTEGER (0-5), rsrp REAL (dBm, good > -90, fair > -105, poor < -105),
    rsrq REAL (dB), rssi REAL (dBm), sinr REAL (dB, higher=better),
-   carrier TEXT, technology TEXT (LTE/5G/etc), usage_mb REAL (cumulative MB),
+   carrier TEXT, technology TEXT (LTE/5G/etc), usage_mb REAL (running total for the CURRENT DAY per device — never SUM across snapshots; use MAX per device per day),
    tx_mb REAL, rx_mb REAL, client_count INTEGER, uptime INTEGER (seconds), wan_ip TEXT
 
 3. job_sites — Construction locations (one row per physical location)
    Columns: id SERIAL, name TEXT, latitude DOUBLE PRECISION, longitude DOUBLE PRECISION,
    address TEXT, status TEXT ('active'|'standby'|'completed'), notes TEXT,
-   uid TEXT, customer_name TEXT, primary_contact_name TEXT, primary_contact_phone TEXT,
-   primary_contact_email TEXT, secondary_contact_name TEXT, secondary_contact_phone TEXT, secondary_contact_email TEXT,
-   created_at BIGINT (ms), updated_at BIGINT (ms)
+   uid TEXT, company_id INTEGER REFERENCES companies(id) (the customer), is_headquarters BOOLEAN,
+   geofence_radius_m INTEGER, created_at BIGINT (ms), updated_at BIGINT (ms)
+   NOTE: job_sites.customer_name is legacy and always empty — use companies via company_id.
 
 4. trailer_assignments — Links trailers to job sites
    Columns: id SERIAL, site_id INTEGER (VRM idSite, UNIQUE), site_name TEXT,
@@ -71,6 +71,19 @@ Database tables:
 8. site_notes — Communications and log of interactions per job site
    Columns: id SERIAL, job_site_id INTEGER REFERENCES job_sites(id),
    note TEXT, author TEXT, created_at BIGINT (ms)
+
+9. companies — Customers. Columns: id SERIAL, name TEXT, city TEXT, state TEXT
+
+10. trailers — Fleet asset registry. Columns: id SERIAL, unit_number TEXT, vrm_site_id INTEGER
+   (= site_snapshots.site_id = trailer_assignments.site_id), status TEXT
+   ('available'|'reserved'|'on_rent'|'in_transit'|'maintenance'|'retired'), product_code TEXT
+
+11. rentals — One row per trailer rental. Columns: id SERIAL, trailer_id INTEGER REFERENCES trailers(id),
+   job_site_id INTEGER, company_id INTEGER, po_number TEXT, reserved_at DATE, delivered_at DATE,
+   billing_start DATE, calloff_at DATE, billing_stop DATE, picked_up_at DATE, returned_at DATE,
+   commitment_term TEXT ('monthly'|'6_month'|'1_year'), rate_amount NUMERIC (manual override, usually NULL),
+   status TEXT ('reserved'|'delivered'|'billing'|'called_off'|'awaiting_pickup'|'closed'|'cancelled')
+   "On rent" / "billing" = status IN ('billing','called_off'). Open rentals = status NOT IN ('closed','cancelled').
 
    Energy Deficit Context:
    - A "deficit" occurs when consumed_wh > yield_wh on a given date
@@ -105,12 +118,12 @@ Intelligence vocabulary (available in live context below):
 
 Examples:
 - "trailers at Downtown site" → JOIN trailer_assignments + job_sites WHERE js.name ILIKE '%downtown%'
-- "how many trailers does X have" → JOIN trailer_assignments ta ON ta.job_site_id = js.id WHERE js.customer_name ILIKE '%X%'
+- "how many trailers does X have" → rentals r JOIN companies c ON c.id = r.company_id WHERE c.name ILIKE '%X%' AND r.status NOT IN ('closed','cancelled')
 - "read notes for site X" → JOIN site_notes sn ON sn.job_site_id = js.id WHERE js.name ILIKE '%X%'
 - "which sites have most maintenance costs" → SUM(labor_cost_cents + parts_cost_cents) from maintenance_logs GROUP BY job_site_id
 - "low battery trailers" → DISTINCT ON site_snapshots for latest where battery_soc < 30
 - "site rankings by SOC" → analytics_daily_metrics AVG(avg_soc) GROUP BY site_id, JOIN job_sites
-- "data usage this week" → aggregate pepwave_snapshots usage_mb grouped by device_name
+- "data usage this week" → per device per day take MAX(usage_mb), then SUM those daily maxima
 - "underperforming trailers" → use intelligence metrics from live context
 - "what's the solar score for trailer X" → use intelligence metrics from live context
 `;
@@ -132,7 +145,11 @@ app.post('/api/analyze/trailer/:id', aiLimiter, async (req, res) => {
     }
 
     try {
-        const intel = await computeTrailerIntelligence(siteId);
+        // Intelligence is null when VRM data is stale (offline trailers) —
+        // exactly the units that most need diagnosis, so analyze with what we have
+        const intel = (await computeTrailerIntelligence(siteId)) || {
+            site_name: snapshot.site_name, location: {}, solar: {}, battery: {}, energy: {}, stale: true,
+        };
         const alerts = computeAlerts().filter(a => a.site_id === siteId);
         const energyHistory = dailyEnergy.get(siteId) || {};
 
@@ -386,7 +403,19 @@ app.post('/api/query', aiLimiter, async (req, res) => {
                 parsed.sql = null;
             } else if (dbPool) {
                 try {
-                    const result = await dbPool.query(parsed.sql);
+                    const client = await dbPool.connect();
+                    let result;
+                    try {
+                        await client.query('BEGIN TRANSACTION READ ONLY');
+                        await client.query("SET LOCAL statement_timeout = '8s'");
+                        result = await client.query(parsed.sql);
+                        await client.query('ROLLBACK');
+                    } catch (e) {
+                        await client.query('ROLLBACK').catch(() => { });
+                        throw e;
+                    } finally {
+                        client.release();
+                    }
                     parsed.data = result.rows.slice(0, 50);
 
                     // Ask Claude to refine the answer with the actual data

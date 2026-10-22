@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import express from 'express';
 import { getAllSiteNotes, getAuditLog, getJobSiteByPhone, getUnreadNotificationCount, getUserNotifications, insertSiteNote, markAllNotificationsRead, markNotificationRead } from '../db.js';
 import { requireRole } from '../middleware/auth.js';

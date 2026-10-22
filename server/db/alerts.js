@@ -8,6 +8,16 @@ export async function getActiveAlerts() {
     return result.rows;
 }
 
+export async function updateActiveAlert(siteId, severity, streakDays, deficitWh) {
+    if (!pool) return null;
+    const result = await pool.query(
+        `UPDATE alert_history SET severity = $2, streak_days = $3, deficit_wh = $4
+         WHERE site_id = $1 AND resolved_at IS NULL RETURNING *`,
+        [siteId, severity, streakDays, deficitWh]
+    );
+    return result.rows[0] || null;
+}
+
 export async function insertAlertHistory(siteId, siteName, severity, streakDays, deficitWh) {
     if (!pool) return null;
     const result = await pool.query(

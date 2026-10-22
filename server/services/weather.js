@@ -4,8 +4,17 @@ import { weatherCache } from '../state.js';
 // ============================================================
 // Weather / Solar Irradiance (Open-Meteo, free, no API key)
 // ============================================================
+export function weatherCacheKey(latitude, longitude) {
+    return `${Math.round(latitude * 10) / 10},${Math.round(longitude * 10) / 10}`;
+}
+
+// Cached weather for a location without triggering a fetch
+export function getCachedWeather(latitude, longitude) {
+    return weatherCache.get(weatherCacheKey(latitude, longitude))?.data || null;
+}
+
 export async function fetchSolarIrradiance(latitude, longitude) {
-    const cacheKey = `${Math.round(latitude * 10) / 10},${Math.round(longitude * 10) / 10}`;
+    const cacheKey = weatherCacheKey(latitude, longitude);
     const cached = weatherCache.get(cacheKey);
     if (cached && Date.now() - cached.fetchedAt < WEATHER_CACHE_TTL) {
         return cached.data;

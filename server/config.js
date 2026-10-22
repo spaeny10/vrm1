@@ -9,12 +9,13 @@ import Anthropic from '@anthropic-ai/sdk';
 export const PORT = process.env.PORT || 3001;
 export const VRM_TOKEN = process.env.VRM_API_TOKEN;
 export const VRM_USER_ID = process.env.VRM_USER_ID;
-export const VRM_BASE = 'https://vrmapi.victronenergy.com/v2';
+// API bases are overridable so a local simulator can stand in (scripts/demo)
+export const VRM_BASE = process.env.VRM_API_BASE || 'https://vrmapi.victronenergy.com/v2';
 
 // InControl2 credentials
 export const IC2_CLIENT_ID = process.env.IC2_CLIENT_ID;
 export const IC2_CLIENT_SECRET = process.env.IC2_CLIENT_SECRET;
-export const IC2_BASE = 'https://api.ic.peplink.com';
+export const IC2_BASE = process.env.IC2_API_BASE || 'https://api.ic.peplink.com';
 export const IC2_ORG_ID = 'VdYVxn';
 export const IC2_GROUP_ID = 1;
 

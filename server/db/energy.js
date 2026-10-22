@@ -36,7 +36,8 @@ export async function getAllDailyEnergy(days = 14) {
     if (!pool) return [];
     const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
     const result = await pool.query(
-        `SELECT site_id, date, site_name, yield_wh, consumed_wh, soc_start_of_day, expected_yield_wh
+        `SELECT site_id, date, site_name, yield_wh, consumed_wh, soc_start_of_day, expected_yield_wh,
+                battery_soc_eod, mppt_state_eod
          FROM daily_energy_summary
          WHERE date >= $1::date
          ORDER BY site_id, date ASC`,

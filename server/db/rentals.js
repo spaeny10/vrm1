@@ -37,8 +37,8 @@ export async function getTrailer(id) {
 export async function insertTrailer(t) {
     if (!pool) return null;
     const result = await pool.query(`
-        INSERT INTO trailers (unit_number, vin, vrm_site_id, ic2_device_id, status, home_base_job_site_id, purchase_date, condition_notes)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO trailers (unit_number, vin, vrm_site_id, ic2_device_id, status, home_base_job_site_id, purchase_date, condition_notes, product_code)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *
     `, [
         t.unit_number,
@@ -49,6 +49,7 @@ export async function insertTrailer(t) {
         t.home_base_job_site_id || null,
         t.purchase_date || null,
         t.condition_notes || null,
+        t.product_code || 'BV1305',
     ]);
     return result.rows[0];
 }

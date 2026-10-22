@@ -1,116 +1,119 @@
-import { getCustomerSiteAccess, getJobSite, getJobSites, getSiteContacts, getTrailerAssignments, getTrailersByJobSite, upsertCustomerSiteAccess } from '../db.js';
-import { hasVrmData } from '../lib/util.js';
+import {
+    getCustomerSiteAccess, getJobSite, getJobSites, getSiteContacts, getTrailersByJobSite,
+    upsertCustomerSiteAccess, getCustomerVisibleNotes, insertSiteNote,
+} from '../db.js';
+import { hasVrmData, getPepwaveForTrailer } from '../lib/util.js';
 import { requireRole } from '../middleware/auth.js';
 import { snapshotCache } from '../state.js';
+
+// Customer-facing trailer summary: charge and solar only, and offline units
+// stay in the list (marked offline) rather than silently disappearing
+function portalTrailer(assignment) {
+    const snap = snapshotCache.get(assignment.site_id);
+    const live = hasVrmData(snap);
+    const pw = getPepwaveForTrailer(assignment);
+    return {
+        site_id: assignment.site_id,
+        site_name: assignment.site_name,
+        online: live || !!pw?.online,
+        battery_soc: live ? snap.battery_soc : null,
+        solar_watts: live ? snap.solar_watts : null,
+        solar_yield_today: live ? snap.solar_yield_today : null,
+    };
+}
+
+function siteSummary(js, trailers) {
+    const withSoc = trailers.filter(t => t.battery_soc != null);
+    const avgSoc = withSoc.length ? Math.round(withSoc.reduce((s, t) => s + t.battery_soc, 0) / withSoc.length) : null;
+    return {
+        id: js.id,
+        uid: js.uid,
+        name: js.name,
+        status: js.status,
+        address: js.address,
+        trailer_count: trailers.length,
+        trailers_online: trailers.filter(t => t.online).length,
+        avg_soc: avgSoc,
+        worst_status: trailers.some(t => !t.online) ? 'offline'
+            : trailers.some(t => t.battery_soc != null && t.battery_soc < 20) ? 'critical'
+            : trailers.some(t => t.battery_soc != null && t.battery_soc < 50) ? 'warning' : 'ok',
+    };
+}
+
+async function customerSiteIds(req) {
+    const access = await getCustomerSiteAccess(req.user.id);
+    return access.map(a => a.job_site_id);
+}
+
+function customerOnly(req, res, next) {
+    if (!req.user || req.user.role !== 'customer') {
+        return res.status(403).json({ error: 'Customer access only' });
+    }
+    next();
+}
+
+async function requireSiteAccess(req, res, next) {
+    const siteId = parseInt(req.params.id);
+    const ids = await customerSiteIds(req);
+    if (!ids.includes(siteId)) return res.status(403).json({ error: 'No access to this site' });
+    req.siteId = siteId;
+    next();
+}
 
 export function registerPortalRoutes(app) {
 
 // --- Customer Portal ---
-app.get('/api/portal/sites', async (req, res) => {
+app.get('/api/portal/sites', customerOnly, async (req, res) => {
     try {
-        if (!req.user || req.user.role !== 'customer') {
-            return res.status(403).json({ error: 'Customer access only' });
-        }
-        const access = await getCustomerSiteAccess(req.user.id);
-        const siteIds = access.map(a => a.job_site_id);
+        const siteIds = await customerSiteIds(req);
         if (siteIds.length === 0) return res.json({ sites: [] });
-
-        const jobSites = await getJobSites();
-        const assignments = await getTrailerAssignments();
-
-        // Build a map of site_id -> job_site_id from trailer_assignments
-        const trailerToJobSite = new Map();
-        for (const a of assignments) {
-            if (a.job_site_id != null) {
-                trailerToJobSite.set(a.site_id, a.job_site_id);
-            }
-        }
-
-        const sites = jobSites
-            .filter(js => siteIds.includes(js.id))
-            .map(js => {
-                const trailers = [];
-                // Find VRM-connected trailers assigned to this job site
-                for (const [siteId, snap] of snapshotCache) {
-                    if (trailerToJobSite.get(siteId) === js.id && hasVrmData(snap)) {
-                        trailers.push({
-                            site_id: siteId,
-                            site_name: snap.site_name,
-                            battery_soc: snap.battery_soc,
-                            solar_watts: snap.solar_watts,
-                            solar_yield_today: snap.solar_yield_today,
-                        });
-                    }
-                }
-                const onlineTrailers = trailers.filter(t => t.battery_soc != null);
-                const avgSoc = onlineTrailers.length > 0
-                    ? Math.round(onlineTrailers.reduce((s, t) => s + t.battery_soc, 0) / onlineTrailers.length)
-                    : null;
-                return {
-                    id: js.id,
-                    name: js.name,
-                    status: js.status,
-                    address: js.address,
-                    trailer_count: trailers.length,
-                    trailers_online: onlineTrailers.length,
-                    avg_soc: avgSoc,
-                    trailers,
-                    worst_status: trailers.some(t => t.battery_soc != null && t.battery_soc < 20) ? 'critical'
-                        : trailers.some(t => t.battery_soc != null && t.battery_soc < 50) ? 'warning' : 'ok',
-                };
-            });
+        const jobSites = (await getJobSites()).filter(js => siteIds.includes(js.id));
+        const sites = await Promise.all(jobSites.map(async js => {
+            const trailers = (await getTrailersByJobSite(js.id)).map(portalTrailer);
+            return { ...siteSummary(js, trailers), trailers };
+        }));
         res.json({ sites });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-app.get('/api/portal/site/:id', async (req, res) => {
+app.get('/api/portal/site/:id', customerOnly, requireSiteAccess, async (req, res) => {
     try {
-        if (!req.user || req.user.role !== 'customer') {
-            return res.status(403).json({ error: 'Customer access only' });
-        }
-        const siteId = parseInt(req.params.id);
-        const access = await getCustomerSiteAccess(req.user.id);
-        if (!access.some(a => a.job_site_id === siteId)) {
-            return res.status(403).json({ error: 'No access to this site' });
-        }
-        const js = await getJobSite(siteId);
+        const js = await getJobSite(req.siteId);
         if (!js) return res.status(404).json({ error: 'Site not found' });
-
-        const siteAssignments = await getTrailersByJobSite(siteId);
-        const trailers = siteAssignments
-            .filter(a => hasVrmData(snapshotCache.get(a.site_id)))
-            .map(a => {
-                const snap = snapshotCache.get(a.site_id);
-                return {
-                    site_id: a.site_id,
-                    site_name: a.site_name,
-                    battery_soc: snap?.battery_soc ?? null,
-                    solar_watts: snap?.solar_watts ?? null,
-                    solar_yield_today: snap?.solar_yield_today ?? null,
-                };
-            });
-        const onlineTrailers = trailers.filter(t => t.battery_soc != null);
-        const avgSoc = onlineTrailers.length > 0
-            ? Math.round(onlineTrailers.reduce((s, t) => s + t.battery_soc, 0) / onlineTrailers.length)
-            : null;
-
-        // Source contact info from CRM instead of legacy job_sites columns
-        const siteContacts = await getSiteContacts(siteId);
+        const trailers = (await getTrailersByJobSite(req.siteId)).map(portalTrailer);
+        const siteContacts = await getSiteContacts(req.siteId);
         const primaryContact = siteContacts.find(c => c.is_primary) || siteContacts[0];
-
         res.json({
             site: {
-                ...js,
+                ...siteSummary(js, trailers),
                 primary_contact_name: primaryContact?.name || null,
                 primary_contact_phone: primaryContact?.phone || null,
-                trailer_count: trailers.length,
-                trailers_online: onlineTrailers.length,
-                avg_soc: avgSoc,
                 trailers,
             },
         });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Shared message thread: customers see only notes shared with them
+app.get('/api/portal/site/:id/notes', customerOnly, requireSiteAccess, async (req, res) => {
+    try {
+        res.json({ notes: await getCustomerVisibleNotes(req.siteId) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/portal/site/:id/notes', customerOnly, requireSiteAccess, async (req, res) => {
+    try {
+        const note = String(req.body.note || '').trim();
+        if (!note) return res.status(400).json({ error: 'Message is required' });
+        if (note.length > 4000) return res.status(400).json({ error: 'Message is too long' });
+        const created = await insertSiteNote(req.siteId, note, req.user.display_name, [], null, [], true);
+        res.status(201).json({ note: { id: created.id, note: created.note, author: created.author, created_at: created.created_at } });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

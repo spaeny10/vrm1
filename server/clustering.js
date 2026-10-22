@@ -1,6 +1,6 @@
 import {
     getTrailersWithGps, getJobSites, insertJobSite, updateJobSite,
-    upsertTrailerAssignment, getTrailersByJobSite
+    upsertTrailerAssignment, getPool
 } from './db.js';
 
 /**
@@ -26,6 +26,25 @@ async function reverseGeocode(lat, lng) {
         if (state) parts.push(state);
         if (zip) parts.push(zip);
         return { city, state, address: parts.join(', ') || null };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Forward geocode a free-text address to coordinates (Nominatim, US only).
+ * Used when a site is created from an address so it lands on the map and
+ * can be matched by arriving trailers.
+ */
+export async function forwardGeocode(address) {
+    if (!address || !address.trim()) return null;
+    try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=${encodeURIComponent(address)}`;
+        const res = await fetch(url, { headers: { 'User-Agent': 'BIGView-OMNI/1.0' } });
+        if (!res.ok) return null;
+        const [hit] = await res.json();
+        if (!hit) return null;
+        return { latitude: parseFloat(hit.lat), longitude: parseFloat(hit.lon) };
     } catch {
         return null;
     }
@@ -91,146 +110,107 @@ function clusterTrailers(trailers, thresholdMeters = 300) {
 }
 
 /**
- * Run clustering and reconcile with existing job_sites in the database.
- * - Matches clusters to existing job sites by GPS proximity (not just overlap)
- * - Creates new job sites for unmatched clusters
- * - Respects manual_override on trailer assignments
- * - Never moves headquarters coordinates
- * - Each job site can only be matched by one cluster
+ * Place UNASSIGNED trailers onto job sites by GPS.
+ *
+ * Trailers already assigned to a site are left alone: when one moves, GPS
+ * change detection raises a relocation suggestion for a human to approve,
+ * and geofence checks flag breaches. (Re-clustering assigned trailers used
+ * to silently undo both, and dragged site locations along with one unit.)
+ *
+ * For each cluster of unassigned trailers, in order:
+ *   1. an open rental's destination site, if the GPS is consistent with it
+ *   2. the nearest existing site within MATCH_DISTANCE_M
+ *   3. a new auto-named site (reverse geocoded)
+ * A site's coordinates are only set automatically when it has none.
  */
+const MATCH_DISTANCE_M = 2000;
+
+async function openRentalSiteByVrm() {
+    const pool = getPool();
+    if (!pool) return new Map();
+    const { rows } = await pool.query(`
+        SELECT t.vrm_site_id, r.job_site_id
+        FROM rentals r JOIN trailers t ON t.id = r.trailer_id
+        WHERE r.status IN ('delivered', 'billing', 'called_off', 'awaiting_pickup')
+          AND r.picked_up_at IS NULL AND r.job_site_id IS NOT NULL AND t.vrm_site_id IS NOT NULL
+    `);
+    return new Map(rows.map(r => [r.vrm_site_id, r.job_site_id]));
+}
+
 export async function runClustering(thresholdMeters = 300) {
     const trailers = await getTrailersWithGps();
-    if (trailers.length === 0) {
-        console.log('  Clustering: No trailers with GPS data yet');
-        return { jobSites: 0, trailers: 0 };
+    const unassigned = trailers.filter(t => !t.manual_override && t.job_site_id == null);
+    if (unassigned.length === 0) {
+        return { jobSites: 0, created: 0, updated: 0, trailers: 0 };
     }
 
-    // Separate manual overrides — don't recluster these
-    const autoTrailers = trailers.filter(t => !t.manual_override);
-    const clusters = clusterTrailers(autoTrailers, thresholdMeters);
-
-    const existingJobSites = await getJobSites();
-
-    // Build map: job_site_id -> set of site_ids currently assigned
-    const existingAssignments = new Map();
-    for (const js of existingJobSites) {
-        const assigned = await getTrailersByJobSite(js.id);
-        existingAssignments.set(js.id, new Set(assigned.map(a => a.site_id)));
-    }
+    const clusters = clusterTrailers(unassigned, thresholdMeters);
+    const jobSites = await getJobSites();
+    const rentalSites = await openRentalSiteByVrm();
 
     let created = 0;
     let updated = 0;
-    const matchedJobSiteIds = new Set(); // Track which job sites are already claimed
 
     for (const cluster of clusters) {
-        const clusterSiteIds = new Set(cluster.trailers.map(t => t.site_id));
+        let jobSiteId = null;
 
-        // Step 1: Find best match by GPS proximity to existing job site centroids
-        let bestMatch = null;
-        let bestDistance = Infinity;
-        const MAX_GPS_MATCH_DISTANCE = 10000; // 10km
-
-        for (const js of existingJobSites) {
-            if (matchedJobSiteIds.has(js.id)) continue; // Already claimed by another cluster
-            if (!js.latitude || !js.longitude) continue;
-
-            const dist = haversineMeters(js.latitude, js.longitude,
-                cluster.centroid_lat, cluster.centroid_lng);
-            if (dist < MAX_GPS_MATCH_DISTANCE && dist < bestDistance) {
-                bestDistance = dist;
-                bestMatch = js.id;
+        // 1. Rental intent: all rentals in the cluster agree on a destination
+        const intended = [...new Set(cluster.trailers.map(t => rentalSites.get(t.site_id)).filter(Boolean))];
+        if (intended.length === 1) {
+            const js = jobSites.find(s => s.id === intended[0]);
+            if (js && (!js.latitude || !js.longitude
+                || haversineMeters(js.latitude, js.longitude, cluster.centroid_lat, cluster.centroid_lng) < MATCH_DISTANCE_M)) {
+                jobSiteId = js.id;
             }
         }
 
-        // Step 2: If no GPS match, fall back to overlap — but only if geographically reasonable
-        if (!bestMatch) {
-            let bestOverlap = 0;
-            for (const [jobSiteId, assignedIds] of existingAssignments) {
-                if (matchedJobSiteIds.has(jobSiteId)) continue;
-                const overlap = [...clusterSiteIds].filter(id => assignedIds.has(id)).length;
-                if (overlap > bestOverlap) {
-                    // Verify the matched site is geographically close (or has no coordinates)
-                    const js = existingJobSites.find(s => s.id === jobSiteId);
-                    if (js && js.latitude && js.longitude) {
-                        const dist = haversineMeters(js.latitude, js.longitude,
-                            cluster.centroid_lat, cluster.centroid_lng);
-                        if (dist > MAX_GPS_MATCH_DISTANCE) continue; // Too far, skip
-                    }
-                    bestOverlap = overlap;
-                    bestMatch = jobSiteId;
-                }
+        // 2. Nearest existing site
+        if (!jobSiteId) {
+            let best = null, bestDist = Infinity;
+            for (const js of jobSites) {
+                if (!js.latitude || !js.longitude) continue;
+                const d = haversineMeters(js.latitude, js.longitude, cluster.centroid_lat, cluster.centroid_lng);
+                if (d < MATCH_DISTANCE_M && d < bestDist) { best = js; bestDist = d; }
             }
+            if (best) jobSiteId = best.id;
         }
 
-        let jobSiteId;
-        if (bestMatch) {
-            jobSiteId = bestMatch;
-            matchedJobSiteIds.add(bestMatch); // Claim this job site
-
-            // Update centroid — but never move headquarters
-            const existingSite = existingJobSites.find(s => s.id === bestMatch);
-            if (existingSite && !existingSite.is_headquarters) {
-                const needsUpdate = !existingSite.latitude || !existingSite.longitude
-                    || haversineMeters(existingSite.latitude, existingSite.longitude,
-                        cluster.centroid_lat, cluster.centroid_lng) > 200;
-                if (needsUpdate) {
-                    await updateJobSite(bestMatch, {
-                        latitude: cluster.centroid_lat,
-                        longitude: cluster.centroid_lng,
-                    });
-                }
+        if (jobSiteId) {
+            const js = jobSites.find(s => s.id === jobSiteId);
+            if (js && !js.is_headquarters && (!js.latitude || !js.longitude)) {
+                await updateJobSite(jobSiteId, { latitude: cluster.centroid_lat, longitude: cluster.centroid_lng });
+                js.latitude = cluster.centroid_lat;
+                js.longitude = cluster.centroid_lng;
             }
             updated++;
         } else {
-            // Create new job site — reverse geocode for name
-            let siteName = `Site ${existingJobSites.length + created + 1}`;
+            // 3. New auto-named site
+            let siteName = `Site ${jobSites.length + 1}`;
             let address = null;
             const geo = await reverseGeocode(cluster.centroid_lat, cluster.centroid_lng);
             if (geo) {
                 siteName = `${geo.city}, ${geo.state}`.replace(/, $/, '');
                 address = geo.address;
-                // Disambiguate if name already exists
-                const existingNames = existingJobSites.map(s => s.name);
-                if (existingNames.some(n => n === siteName || n.startsWith(siteName + ' #'))) {
-                    const count = existingNames.filter(n => n === siteName || n.startsWith(siteName + ' #')).length;
-                    siteName = `${siteName} #${count + 1}`;
-                }
+                const taken = jobSites.filter(s => s.name === siteName || s.name.startsWith(siteName + ' #')).length;
+                if (taken) siteName = `${siteName} #${taken + 1}`;
             }
             const newSite = await insertJobSite({
-                name: siteName,
-                latitude: cluster.centroid_lat,
-                longitude: cluster.centroid_lng,
-                address,
+                name: siteName, latitude: cluster.centroid_lat, longitude: cluster.centroid_lng, address,
             });
             jobSiteId = newSite.id;
-            existingJobSites.push({ id: jobSiteId, name: siteName });
-            matchedJobSiteIds.add(jobSiteId);
+            jobSites.push(newSite);
             created++;
-            // Rate limit Nominatim
-            await new Promise(r => setTimeout(r, 1100));
+            await new Promise(r => setTimeout(r, 1100));  // Nominatim rate limit
         }
 
-        // Assign all trailers in this cluster to the job site
         for (const trailer of cluster.trailers) {
-            await upsertTrailerAssignment(
-                trailer.site_id,
-                trailer.site_name,
-                trailer.latitude,
-                trailer.longitude,
-                jobSiteId
-            );
+            await upsertTrailerAssignment(trailer.site_id, trailer.site_name, trailer.latitude, trailer.longitude, jobSiteId);
         }
     }
 
     const totalAssigned = clusters.reduce((sum, c) => sum + c.trailers.length, 0);
-    console.log(`  Clustering complete: ${clusters.length} sites (${created} new, ${updated} matched), ${totalAssigned} trailers assigned`);
-
-    return {
-        jobSites: clusters.length,
-        created,
-        updated,
-        trailers: totalAssigned,
-    };
+    console.log(`  Clustering: placed ${totalAssigned} unassigned trailers (${created} new sites, ${updated} existing)`);
+    return { jobSites: clusters.length, created, updated, trailers: totalAssigned };
 }
 
 export { haversineMeters, clusterTrailers };

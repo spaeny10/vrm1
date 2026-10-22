@@ -154,6 +154,8 @@ export async function applySchema(client) {
         await client.query(`CREATE INDEX IF NOT EXISTS idx_site_notes_tags ON site_notes USING GIN (tags)`);
         await client.query(`ALTER TABLE site_notes ADD COLUMN IF NOT EXISTS updated_at BIGINT`);
         await client.query(`ALTER TABLE site_notes ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE`);
+        // Notes are internal unless shared: the customer portal only shows these
+        await client.query(`ALTER TABLE site_notes ADD COLUMN IF NOT EXISTS customer_visible BOOLEAN DEFAULT FALSE`);
 
         // Note read receipts
         await client.query(`
@@ -287,8 +289,13 @@ export async function applySchema(client) {
 
         // Auto-flag Big View HQ as headquarters
         await client.query(`UPDATE job_sites SET is_headquarters = TRUE WHERE name ILIKE '%big view hq%' AND (is_headquarters IS NULL OR is_headquarters = FALSE)`);
-        // Fix: clustering bug overwrote HQ coordinates with remote site GPS — clear them
-        await client.query(`UPDATE job_sites SET latitude = NULL, longitude = NULL WHERE is_headquarters = TRUE AND latitude IS NOT NULL`);
+        // One-time fix (historical): clustering once overwrote HQ coordinates
+        // with remote GPS. Runs once so admin-set HQ locations survive deploys.
+        const hqFix = await client.query(`SELECT 1 FROM settings WHERE key = 'hq_coords_reset_v1'`);
+        if (hqFix.rows.length === 0) {
+            await client.query(`UPDATE job_sites SET latitude = NULL, longitude = NULL WHERE is_headquarters = TRUE AND latitude IS NOT NULL`);
+            await client.query(`INSERT INTO settings (key, value) VALUES ('hq_coords_reset_v1', '1') ON CONFLICT (key) DO NOTHING`);
+        }
         console.log('  ✓ Deployment management columns ready');
 
         // Promote VRM diagnostic fields from JSONB to dedicated columns

@@ -16,12 +16,12 @@ export async function computeDailyMetrics(dateStr) {
             AVG(ss.battery_soc) as avg_soc,
             MIN(ss.battery_soc) as min_soc,
             MAX(ss.battery_soc) as max_soc,
-            MAX(ss.solar_yield_today) / 1000.0 as solar_yield_kwh,
+            MAX(ss.solar_yield_today) as solar_yield_kwh,
             AVG(ss.battery_voltage) as avg_voltage,
             (SELECT AVG(ps.signal_bar) FROM pepwave_snapshots ps
              INNER JOIN trailer_assignments ta ON ps.device_name = ta.site_name AND ta.site_id = ss.site_id
              WHERE ps.timestamp >= $2 AND ps.timestamp < $3) as avg_signal_bar,
-            (SELECT MAX(ps.usage_mb) - MIN(ps.usage_mb) FROM pepwave_snapshots ps
+            (SELECT MAX(ps.usage_mb) FROM pepwave_snapshots ps
              INNER JOIN trailer_assignments ta ON ps.device_name = ta.site_name AND ta.site_id = ss.site_id
              WHERE ps.timestamp >= $2 AND ps.timestamp < $3) as data_usage_mb,
             CASE

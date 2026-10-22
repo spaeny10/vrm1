@@ -15,15 +15,17 @@ app.get('/api/users', requireRole('admin'), async (req, res) => {
 
 app.post('/api/users', requireRole('admin'), async (req, res) => {
     try {
-        const { username, password, display_name, role } = req.body;
-        if (!username || !password || !display_name) {
-            return res.status(400).json({ error: 'Username, password, and display name required' });
+        const { username, password, role } = req.body;
+        const display_name = (req.body.display_name || '').trim() || username;
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username and password required' });
         }
-        if (!['admin', 'technician', 'viewer'].includes(role || 'viewer')) {
+        if (!['admin', 'technician', 'viewer', 'customer'].includes(role || 'viewer')) {
             return res.status(400).json({ error: 'Invalid role' });
         }
         const hash = await bcrypt.hash(password, 10);
-        const user = await createUser(username, hash, display_name, role || 'viewer');
+        // New accounts get an admin-chosen password: make them set their own
+        const user = await createUser(username, hash, display_name, role || 'viewer', true);
         res.json({ success: true, user });
     } catch (err) {
         if (err.message?.includes('unique') || err.code === '23505') {
@@ -68,7 +70,8 @@ app.post('/api/users/:id/reset-password', requireRole('admin'), async (req, res)
             return res.status(400).json({ error: 'Password must be at least 4 characters' });
         }
         const hash = await bcrypt.hash(new_password, 10);
-        const user = await updateUser(parseInt(req.params.id), { password_hash: hash });
+        // Admin-set passwords are temporary: the user picks their own at next login
+        const user = await updateUser(parseInt(req.params.id), { password_hash: hash, must_change_password: true });
         if (!user) return res.status(404).json({ error: 'User not found' });
         res.json({ success: true });
     } catch (err) {

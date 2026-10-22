@@ -42,9 +42,11 @@ export async function buildDigestData() {
 
     // Count IC2-only trailers (have Pepwave but no VRM data)
     let ic2OnlyCount = 0;
+    const vrmNames = new Set([...snapshotCache.values()].map(s => s.site_name));
     for (const [deviceName, pw] of pepwaveCache) {
-        if (!snapshotCache.has(pw.site_id || deviceName)) {
-            const jobSiteId = trailerJobSites.get(pw.site_id);
+        if (!vrmNames.has(deviceName)) {
+            const siteId = pw.id != null ? -pw.id : null;
+            const jobSiteId = siteId != null ? trailerJobSites.get(siteId) : null;
             if (!jobSiteId || !hqJobSiteIds.has(jobSiteId)) {
                 ic2OnlyCount++;
             }
@@ -66,7 +68,7 @@ export async function buildDigestData() {
             // Yesterday's EOD SOC and yield from daily_energy_summary
             const energyResult = await db.query(`
                 SELECT
-                    AVG(soc_start_of_day) as avg_soc,
+                    AVG(battery_soc_eod) as avg_soc,
                     SUM(yield_wh) / 1000.0 as total_yield_kwh,
                     COUNT(*) as trailer_count
                 FROM daily_energy_summary
@@ -81,10 +83,13 @@ export async function buildDigestData() {
 
             // Yesterday's network data usage
             const networkResult = await db.query(`
-                SELECT SUM(usage_mb) / 1024.0 as total_gb
-                FROM pepwave_snapshots
-                WHERE timestamp >= extract(epoch from date $1) * 1000
-                AND timestamp < extract(epoch from (date $1 + interval '1 day')) * 1000
+                SELECT SUM(day_mb) / 1024.0 as total_gb FROM (
+                    SELECT MAX(usage_mb) AS day_mb
+                    FROM pepwave_snapshots
+                    WHERE timestamp >= extract(epoch from $1::date) * 1000
+                    AND timestamp < extract(epoch from ($1::date + interval '1 day')) * 1000
+                    GROUP BY device_name
+                ) per_device
             `, [yesterdayStr]);
 
             if (networkResult.rows[0]) {
@@ -216,12 +221,12 @@ export async function buildDigestData() {
                 SELECT
                     AVG(rsrp) as avg_signal,
                     device_name,
-                    SUM(usage_mb) / 1024.0 as total_gb
+                    MAX(usage_mb) / 1024.0 as total_gb
                 FROM pepwave_snapshots
-                WHERE timestamp >= extract(epoch from date $1) * 1000
-                AND timestamp < extract(epoch from (date $1 + interval '1 day')) * 1000
+                WHERE timestamp >= extract(epoch from $1::date) * 1000
+                AND timestamp < extract(epoch from ($1::date + interval '1 day')) * 1000
                 GROUP BY device_name
-                HAVING SUM(usage_mb) > 500
+                HAVING MAX(usage_mb) > 500
                 ORDER BY total_gb DESC
                 LIMIT 5
             `, [yesterdayStr]);
@@ -234,8 +239,8 @@ export async function buildDigestData() {
             const signalResult = await db.query(`
                 SELECT AVG(rsrp) as avg_signal
                 FROM pepwave_snapshots
-                WHERE timestamp >= extract(epoch from date $1) * 1000
-                AND timestamp < extract(epoch from (date $1 + interval '1 day')) * 1000
+                WHERE timestamp >= extract(epoch from $1::date) * 1000
+                AND timestamp < extract(epoch from ($1::date + interval '1 day')) * 1000
             `, [yesterdayStr]);
 
             if (signalResult.rows[0]) {
@@ -296,10 +301,6 @@ export function scheduleDigest() {
     const recipients = (process.env.DIGEST_RECIPIENTS || '')
         .split(',').map(e => e.trim()).filter(Boolean);
 
-    if (recipients.length === 0) {
-        console.log('  Digest scheduling skipped: no DIGEST_RECIPIENTS configured');
-        return;
-    }
 
     const cronExpr = `${minute} ${hour} * * *`;
     cron.schedule(cronExpr, async () => {
@@ -316,7 +317,7 @@ export function scheduleDigest() {
                         .map(m => ({
                             title: m.title,
                             job_site_name: m.job_site_name || 'Unknown',
-                            scheduled_date: new Date(m.scheduled_date).toISOString().slice(0, 10),
+                            scheduled_date: new Date(Number(m.scheduled_date)).toISOString().slice(0, 10),
                         }));
                 } catch { }
             }
@@ -350,5 +351,5 @@ export function scheduleDigest() {
         }
     }, { timezone: tz });
 
-    console.log(`  ✓ Digest scheduled at ${time} ${tz} → ${recipients.join(', ')}`);
+    console.log(`  ✓ Digest scheduled at ${time} ${tz} → ${recipients.length ? recipients.join(', ') : 'subscribed users only'}`);
 }

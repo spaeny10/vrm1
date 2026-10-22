@@ -22,7 +22,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
         }
         await updateUser(user.id, { last_login: Date.now() });
         const token = jwt.sign(
-            { id: user.id, username: user.username, role: user.role },
+            { id: user.id, username: user.username, role: user.role, display_name: user.display_name },
             JWT_SECRET,
             { expiresIn: JWT_EXPIRES_IN }
         );
@@ -132,7 +132,7 @@ app.post('/api/auth/google', async (req, res) => {
         await updateUser(user.id, { last_login: Date.now() });
 
         const token = jwt.sign(
-            { id: user.id, username: user.username, role: user.role },
+            { id: user.id, username: user.username, role: user.role, display_name: user.display_name },
             JWT_SECRET,
             { expiresIn: JWT_EXPIRES_IN }
         );

@@ -2,7 +2,7 @@ import {
     dailyEnergy, trailerJobSiteMap, snapshotCache, dbAvailable,
 } from '../state.js';
 import { todayStr, mpptStateToString, extractMpptState } from '../lib/util.js';
-import { getTrailerAssignments, insertAlertHistory, resolveAlert, getActiveAlerts } from '../db.js';
+import { getTrailerAssignments, insertAlertHistory, resolveAlert, getActiveAlerts, updateActiveAlert } from '../db.js';
 import { sendAlertEmail, sendAlertResolvedEmail, isEmailConfigured, checkRateLimit, markNotified } from '../email.js';
 
 // ============================================================
@@ -134,13 +134,22 @@ export async function persistAlertHistory(currentAlerts) {
         const activeSiteIds = new Set(currentAlerts.map(a => a.site_id));
         const dbSiteIds = new Set(activeDbAlerts.map(a => a.site_id));
 
-        // Insert new alerts
+        // Insert new alerts; keep active ones current as streaks grow
+        const activeBySite = new Map(activeDbAlerts.map(a => [a.site_id, a]));
         for (const alert of currentAlerts) {
-            if (!dbSiteIds.has(alert.site_id)) {
-                const totalDeficit = alert.deficit_days?.reduce((s, d) => s + (d.deficit_wh || 0), 0) || 0;
+            const totalDeficit = alert.deficit_days?.reduce((s, d) => s + (d.deficit_wh || 0), 0) || 0;
+            const existing = activeBySite.get(alert.site_id);
+            if (!existing) {
                 await insertAlertHistory(alert.site_id, alert.site_name, alert.severity, alert.streak_days, totalDeficit);
                 // Send email notification (rate-limited, fire-and-forget)
                 if (isEmailConfigured() && !checkRateLimit(alert.site_id)) {
+                    markNotified(alert.site_id);
+                    sendAlertEmail(alert).catch(err => console.error('  Alert email error:', err.message));
+                }
+            } else if (existing.severity !== alert.severity || existing.streak_days !== alert.streak_days) {
+                await updateActiveAlert(alert.site_id, alert.severity, alert.streak_days, totalDeficit);
+                // Escalation to critical is worth a fresh email even inside the rate-limit window
+                if (alert.severity === 'critical' && existing.severity !== 'critical' && isEmailConfigured()) {
                     markNotified(alert.site_id);
                     sendAlertEmail(alert).catch(err => console.error('  Alert email error:', err.message));
                 }

@@ -96,14 +96,26 @@ export async function getSiteNote(noteId) {
     return result.rows[0] || null;
 }
 
-export async function insertSiteNote(jobSiteId, noteText, author = 'system', mentions = [], parentId = null, tags = []) {
+export async function insertSiteNote(jobSiteId, noteText, author = 'system', mentions = [], parentId = null, tags = [], customerVisible = false) {
     if (!pool) return null;
     const result = await pool.query(
-        `INSERT INTO site_notes (job_site_id, note, author, mentions, parent_id, tags, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [jobSiteId, noteText, author, JSON.stringify(mentions), parentId, JSON.stringify(tags), Date.now()]
+        `INSERT INTO site_notes (job_site_id, note, author, mentions, parent_id, tags, created_at, customer_visible)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [jobSiteId, noteText, author, JSON.stringify(mentions), parentId, JSON.stringify(tags), Date.now(), !!customerVisible]
     );
     return result.rows[0];
+}
+
+// Customer portal thread: only notes shared with the customer (or written by them)
+export async function getCustomerVisibleNotes(jobSiteId, limit = 50) {
+    if (!pool) return [];
+    const result = await pool.query(
+        `SELECT id, note, author, created_at FROM site_notes
+         WHERE job_site_id = $1 AND customer_visible = TRUE AND parent_id IS NULL
+         ORDER BY created_at DESC LIMIT $2`,
+        [jobSiteId, limit]
+    );
+    return result.rows;
 }
 
 export async function updateSiteNote(noteId, newText) {

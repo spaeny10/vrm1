@@ -388,12 +388,26 @@ export async function sendDigestEmail(recipients, digestData) {
         }
     }
 
+    // === OVERDUE MAINTENANCE ===
+    let maintenanceSection = '';
+    const overdue = digestData.overdue_maintenance || [];
+    if (overdue.length > 0) {
+        const rows = overdue.map(m =>
+            `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${m.title}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#7f8c8d;">${m.job_site_name}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#e74c3c; text-align:right;">${m.scheduled_date}</td></tr>`
+        ).join('');
+        maintenanceSection = `
+            <h2 style="margin:0 0 10px; color:#ecf0f1; font-size:16px;">🔧 Overdue Field Service</h2>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:24px;">
+                ${rows}
+            </table>`;
+    }
+
     // === ALL SYSTEMS NOMINAL ===
     const noIssues = (criticalItems.length === 0 && watchItems.length === 0)
         ? '<p style="color:#2ecc71; font-size:14px; margin:0 0 20px;">✓ All systems nominal. No critical issues to report.</p>'
         : '';
 
-    const bodyContent = `${yesterdaySection}${currentSection}${noIssues}${needsAttentionSection}${performanceSection}${networkSection}`;
+    const bodyContent = `${yesterdaySection}${currentSection}${noIssues}${needsAttentionSection}${maintenanceSection}${performanceSection}${networkSection}`;
 
     const today = new Date().toISOString().slice(0, 10);
     const subject = `BIGView OMNI — Morning Digest for ${today}`;

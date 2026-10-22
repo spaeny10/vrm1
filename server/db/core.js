@@ -3,6 +3,14 @@ import { applySchema } from './schema.js';
 
 const { Pool } = pg;
 
+// Type parsing: node-pg's defaults return DATE as a UTC-midnight Date
+// (shows a day early in US timezones), BIGINT as a string (our ms
+// timestamps and COUNT(*) values), and NUMERIC as a string (money).
+// All BIGINTs here are epoch-ms or counts, well under 2^53.
+pg.types.setTypeParser(1082, v => v);                                  // DATE -> 'YYYY-MM-DD'
+pg.types.setTypeParser(20, v => (v === null ? null : Number(v)));      // BIGINT -> number
+pg.types.setTypeParser(1700, v => (v === null ? null : parseFloat(v))); // NUMERIC -> number
+
 export let pool = null;
 
 export async function initDb() {

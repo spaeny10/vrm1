@@ -1,5 +1,5 @@
-import { runClustering } from '../clustering.js';
-import { assignContactToSite, assignTrailerToJobSite, deleteJobSite, deleteSiteNote, getCompanies, getJobSite, getJobSites, getNoteReaders, getNotesByTrailer, getReplies, getSiteContacts, getSiteNote, getSiteNotes, getTrailerAssignments, getTrailersByJobSite, getUsers, insertAuditLog, insertJobSite, insertNotification, insertSiteNote, markNoteRead, removeContactFromSite, togglePinNote, updateJobSite, updateSiteNote } from '../db.js';
+import { runClustering, forwardGeocode } from '../clustering.js';
+import { assignContactToSite, assignTrailerToJobSite, deleteJobSite, deleteSiteNote, getCompanies, getJobSite, getJobSites, getNoteReaders, getNotesByTrailer, getReplies, getSiteContacts, getSiteNote, getSiteNotes, getTrailerAssignments, getTrailersByJobSite, getUsers, insertAuditLog, insertJobSite, insertNotification, insertSiteNote, markNoteRead, removeContactFromSite, togglePinNote, updateJobSite, updateSiteNote, getCompany } from '../db.js';
 import { sendMentionNotification } from '../email.js';
 import { hasVrmData } from '../lib/util.js';
 import { requireRole } from '../middleware/auth.js';
@@ -116,6 +116,10 @@ app.get('/api/job-sites/:id', async (req, res) => {
     try {
         const jobSite = await getJobSite(parseInt(req.params.id));
         if (!jobSite) return res.status(404).json({ success: false, error: 'Job site not found' });
+        if (jobSite.company_id) {
+            const company = await getCompany(jobSite.company_id);
+            jobSite.company_name = company?.name || null;
+        }
 
         const trailers = await getTrailersByJobSite(jobSite.id);
         const enrichedTrailers = trailers.map(t => {
@@ -139,7 +143,13 @@ app.get('/api/job-sites/:id', async (req, res) => {
 app.put('/api/job-sites/:id', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const siteId = parseInt(req.params.id);
-        const updated = await updateJobSite(siteId, req.body);
+        const changes = { ...req.body };
+        // A new address without explicit coordinates moves the site pin
+        if (changes.address && changes.latitude === undefined && changes.longitude === undefined) {
+            const geo = await forwardGeocode(changes.address);
+            if (geo) Object.assign(changes, geo);
+        }
+        const updated = await updateJobSite(siteId, changes);
         if (!updated) return res.status(404).json({ success: false, error: 'Job site not found' });
         const actor = req.user ? req.user.display_name : 'system';
         insertAuditLog('site', siteId, 'site_updated', { fields: Object.keys(req.body) }, actor).catch(() => { });
@@ -173,7 +183,12 @@ app.post('/api/job-sites', requireRole('admin', 'technician'), async (req, res) 
             return res.status(400).json({ success: false, error: 'A company is required to create a job site. Add the company first under Companies.' });
         }
 
-        const created = await insertJobSite(req.body);
+        const site = { ...req.body };
+        if ((site.latitude == null || site.longitude == null) && site.address) {
+            const geo = await forwardGeocode(site.address);
+            if (geo) Object.assign(site, geo);
+        }
+        const created = await insertJobSite(site);
         if (!created) return res.status(500).json({ success: false, error: 'Could not create job site' });
         const actor = req.user ? req.user.display_name : 'system';
         insertAuditLog('site', created.id, 'site_created', { name: created.name, uid: created.uid }, actor).catch(() => { });
@@ -226,11 +241,11 @@ app.get('/api/trailers/:siteId/notes', async (req, res) => {
 // POST new site note (with @mention notifications + audit log)
 app.post('/api/job-sites/:id/notes', async (req, res) => {
     try {
-        const { note, mentions, parent_id, tags } = req.body;
+        const { note, mentions, parent_id, tags, customer_visible } = req.body;
         if (!note) return res.status(400).json({ success: false, error: 'Note is required' });
         const author = req.user ? req.user.display_name : 'system';
         const siteId = parseInt(req.params.id);
-        const created = await insertSiteNote(siteId, note, author, mentions || [], parent_id || null, tags || []);
+        const created = await insertSiteNote(siteId, note, author, mentions || [], parent_id || null, tags || [], !!customer_visible);
 
         // Audit log
         insertAuditLog('site', siteId, 'note_added', { note_id: created.id, mentions, tags }, author).catch(() => { });
@@ -259,7 +274,7 @@ app.post('/api/job-sites/:id/notes', async (req, res) => {
                         'mention',
                         `${author} mentioned you`,
                         `"${note.length > 80 ? note.slice(0, 80) + '…' : note}" on ${site?.name || `Site #${siteId}`}`,
-                        `/sites/${siteId}`
+                        `/site/${siteId}`
                     ).catch(err => console.error('[Notification] Insert failed:', err.message));
                 }
             }
@@ -445,7 +460,7 @@ app.post('/api/job-sites/recluster', requireRole('admin'), async (req, res) => {
         if (!dbAvailable) {
             return res.json({ success: false, error: 'Database not connected' });
         }
-        const threshold = parseInt(req.body?.threshold) || 200;
+        const threshold = parseInt(req.body?.threshold) || 300;
         const result = await runClustering(threshold);
         // Clear stale geofence alerts — assignments/coordinates may have changed
         geofenceAlerts.clear();

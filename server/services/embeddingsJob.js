@@ -23,7 +23,17 @@ export async function generateEmbeddingsAsync() {
         }
 
         // Get current devices from pepwave cache
-        const devices = Array.from(pepwaveCache.values()).filter(d => d.name);
+        // Live cache records nest radio data under .cellular; the embedder
+        // expects the flat pepwave_snapshots row shape
+        const devices = Array.from(pepwaveCache.values()).filter(d => d.name).map(d => ({
+            device_name: d.name,
+            online: d.online,
+            signal_bar: d.cellular?.signal_bar ?? null,
+            rsrp: d.cellular?.signal?.rsrp ?? null,
+            carrier: d.cellular?.carrier || null,
+            technology: d.cellular?.technology || null,
+            timestamp: d.timestamp,
+        }));
         if (devices.length > 0) {
             const deviceEmbeddings = await embedPepwaveDevices(devices);
             for (const emb of deviceEmbeddings) {

@@ -103,9 +103,9 @@ app.get('/api/action-queue', async (req, res) => {
                         priority,
                         category: 'maintenance',
                         title: daysUntil < 0 ? `Overdue: ${item.title}` : `Due in ${Math.ceil(daysUntil)}d: ${item.title}`,
-                        subtitle: item.job_site_name || item.site_name || 'Unassigned',
+                        subtitle: [item.trailer_name, item.job_site_name].filter(Boolean).join(' · ') || 'Unassigned',
                         site_id: item.site_id,
-                        site_name: item.site_name,
+                        site_name: item.trailer_name || null,
                         severity,
                         details: { maintenance_id: item.id, scheduled_date: scheduled, visit_type: item.visit_type },
                         created_at: item.created_at || now,
@@ -142,6 +142,7 @@ app.get('/api/action-queue', async (req, res) => {
                         title: `SOC critical in ~${daysToCritical} days`,
                         subtitle: snapshot.site_name,
                         site_id: siteId,
+                        severity: daysToCritical <= 1 ? 'critical' : 'warning',
                         details: `Current SOC: ${snapshot.battery_soc}%, avg consumption: ${Math.round(avgConsumption)}Wh/day`,
                     });
                 }
@@ -154,21 +155,23 @@ app.get('/api/action-queue', async (req, res) => {
                 actions.push({
                     key: `geofence:suggest:${siteId}`,
                     priority: 2,
-                    category: 'network',
+                    category: 'location',
+                    severity: 'warning',
                     title: `Unassigned Trailer Near Site`,
                     subtitle: `${gf.site_name}`,
                     site_id: siteId,
                     details: `Trailer is ${gf.distance_m}m from ${gf.suggested_site.name}. Consider assigning it.`,
                 });
             } else {
-                let detailsMsg = `Trailer is ${gf.distance_m}m from assigned job site (radius: 500m).`;
+                let detailsMsg = `Trailer is ${gf.distance_m}m from its assigned job site (geofence ${gf.geofence_radius_m || 500}m).`;
                 if (gf.suggested_site) {
                     detailsMsg += ` Suggestion: Assign to ${gf.suggested_site.name} (${gf.suggested_site.distance_m}m away).`;
                 }
                 actions.push({
                     key: `geofence:${siteId}`,
                     priority: 2,
-                    category: 'network',
+                    category: 'location',
+                    severity: 'critical',
                     title: `Geofence breach: ${gf.distance_m}m from site`,
                     subtitle: `${gf.site_name} — ${gf.job_site_name}`,
                     site_id: siteId,

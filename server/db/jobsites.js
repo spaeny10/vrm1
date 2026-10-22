@@ -47,9 +47,9 @@ export async function insertJobSite(site) {
     const result = await pool.query(
         `INSERT INTO job_sites (
             name, latitude, longitude, address, status, notes, uid, company_id,
-            created_at, updated_at
+            is_headquarters, geofence_radius_m, created_at, updated_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
          RETURNING *`,
         [
             site.name,
@@ -60,6 +60,8 @@ export async function insertJobSite(site) {
             site.notes || null,
             uid,
             site.company_id || null,
+            !!site.is_headquarters,
+            site.geofence_radius_m || 500,
             Date.now()
         ]
     );

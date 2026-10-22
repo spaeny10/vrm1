@@ -312,7 +312,8 @@ export function computeHealthGrade(siteId) {
     const pw = getPepwaveForTrailer({ site_name: snapshot.site_name, ic2_device_id: null, site_id: siteId });
     let networkScore = 50; // default if no data
     if (pw) {
-        networkScore = pw.online ? (pw.signal_bar >= 3 ? 100 : pw.signal_bar >= 1 ? 60 : 30) : 0;
+        const bars = pw.cellular?.signal_bar ?? pw.signal_bar ?? null;
+        networkScore = pw.online ? (bars >= 3 ? 100 : bars >= 1 ? 60 : 30) : 0;
     }
     totalScore += networkScore * 0.15;
     weights += 0.15;
@@ -408,36 +409,28 @@ export function computeSocTrend(siteId) {
     const siteEnergy = dailyEnergy.get(siteId);
     if (!siteEnergy) return null;
 
+    // Compare like with like: end-of-day SOC across completed days. (Mixing
+    // a morning reading with a live one turns normal overnight drain into a
+    // false "declining" trend.) Need three days to call it a trend.
     const today = todayStr();
-    const recentDays = Object.entries(siteEnergy)
-        .filter(([d]) => d <= today)
+    const points = Object.entries(siteEnergy)
+        .filter(([d, v]) => d < today && v && v.battery_soc_eod != null)
         .sort(([a], [b]) => a.localeCompare(b))
-        .slice(-4); // last 4 days for trend
+        .slice(-4)
+        .map(([, v]) => Number(v.battery_soc_eod));
 
-    if (recentDays.length < 2) return null;
+    if (points.length < 3) return null;
 
-    // Use socStartOfDay for each day + current SOC for today
-    const points = [];
-    for (const [dateStr] of recentDays) {
-        // Check socStartOfDay for this site's historical start-of-day SOC
-        const sEntry = socStartOfDay.get(siteId);
-        if (sEntry && sEntry.date === dateStr) {
-            points.push(sEntry.soc);
-        }
-    }
+    // Least-squares slope (SOC % per day)
+    const n = points.length;
+    const xMean = (n - 1) / 2;
+    const yMean = points.reduce((s, y) => s + y, 0) / n;
+    let num = 0, den = 0;
+    points.forEach((y, x) => { num += (x - xMean) * (y - yMean); den += (x - xMean) ** 2; });
+    const slopePerDay = den ? num / den : 0;
 
-    // If we don't have enough start-of-day points, use current snapshot
-    const snapshot = snapshotCache.get(siteId);
-    if (snapshot?.battery_soc !== null && points.length > 0) {
-        points.push(snapshot.battery_soc);
-    }
-
-    if (points.length < 2) return null;
-
-    // Simple slope: (last - first) / days
-    const slopePerDay = (points[points.length - 1] - points[0]) / (points.length - 1);
-    const currentSoc = points[points.length - 1];
-    const declining = slopePerDay < -0.5;
+    const currentSoc = snapshotCache.get(siteId)?.battery_soc ?? points[n - 1];
+    const declining = slopePerDay < -3;  // >3 %/day sustained, not noise
 
     let daysUntilCritical = null;
     if (declining && currentSoc > 20) {

@@ -107,7 +107,7 @@ export async function pollIc2Devices() {
         let dbUsageFallback = {};
         if (dbAvailable) {
             try {
-                const pool = (await import('./db.js')).getPool();
+                const pool = getPool();
                 const fbResult = await pool.query(`
                     SELECT DISTINCT ON (device_name) device_name, usage_mb, tx_mb, rx_mb
                     FROM pepwave_snapshots

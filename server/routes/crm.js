@@ -115,14 +115,12 @@ app.post('/api/contacts/:id/invite', requireRole('admin', 'technician'), async (
         const hash = await bcrypt.hash(tempPassword, 10);
 
         // Create the customer user account
-        const newUser = await createUser(contact.email.toLowerCase(), hash, contact.name, 'customer');
+        const newUser = await createUser(contact.email.toLowerCase(), hash, contact.name, 'customer', true);
 
         // Auto-link site access from contact's site assignments
         const siteIds = await getContactSiteIds(contactId);
         if (siteIds.length > 0) {
-            for (const siteId of siteIds) {
-                await upsertCustomerSiteAccess(newUser.id, siteId);
-            }
+            await upsertCustomerSiteAccess(newUser.id, siteIds);
         }
 
         // Store portal user reference on contact

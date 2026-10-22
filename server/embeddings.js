@@ -177,7 +177,7 @@ export async function embedAlerts(alerts) {
 
     return alerts.map((alert, i) => ({
         contentType: 'alert',
-        contentId: `${alert.site_id}-${Date.now()}`,
+        contentId: `active-${alert.site_id}`,  // one row per site's current alert, updated in place
         contentText: texts[i],
         embedding: embeddings[i],
         metadata: {

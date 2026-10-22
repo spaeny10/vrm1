@@ -10,6 +10,9 @@ export function authMiddleware(req, res, next) {
     try {
         const token = authHeader.split(' ')[1];
         const decoded = jwt.verify(token, JWT_SECRET);
+        // Tokens issued before display_name was added to the payload fall
+        // back to the username so authorship/audit never reads "system"
+        if (!decoded.display_name) decoded.display_name = decoded.username;
         req.user = decoded;
         next();
     } catch {
@@ -32,8 +35,17 @@ export function requireRole(...roles) {
 export function apiAuthGate(req, res, next) {
     if (req.path === '/auth/login' || req.path === '/auth/google' || req.path === '/health'
         || req.path === '/webhooks/twilio') return next();
-    authMiddleware(req, res, next);
+    authMiddleware(req, res, () => {
+        // Customer accounts are portal-only: internal routes expose every
+        // customer's sites, rates and staff notes
+        if (req.user.role === 'customer' && !CUSTOMER_ALLOWED.some(re => re.test(req.path))) {
+            return res.status(403).json({ error: 'Not available to customer accounts' });
+        }
+        next();
+    });
 }
+
+const CUSTOMER_ALLOWED = [/^\/auth\//, /^\/portal\//, /^\/notifications(\/|$)/];
 
 // Rate limiters — SINGLETONS. aiLimiter is one shared bucket across all
 // AI endpoints (/api/query and /api/analyze/trailer/:id); creating a

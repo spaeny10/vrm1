@@ -32,7 +32,11 @@ export function updateDailyEnergy(siteId, siteName, yieldToday, consumedAh, volt
         }
 
         const acc = consumptionAccumulator.get(siteId);
-        if (acc && acc.date === date && consumptionW !== null) {
+        if (acc && acc.date === date && consumptionW === null) {
+            // Missing reading this poll: keep the running total, skip the interval
+            acc.lastTimestamp = now;
+            if (acc.wh > 0) { consumedWh = Math.round(acc.wh); consumptionSource = 'DC power accumulation'; }
+        } else if (acc && acc.date === date) {
             const elapsedHours = (now - acc.lastTimestamp) / 3600000;
             // Guard against unreasonable gaps (>10 min means server was probably down)
             if (elapsedHours > 0 && elapsedHours < 0.17) {
@@ -124,6 +128,10 @@ export async function seedDailyEnergyFromDb() {
                     yield_wh: row.yield_wh != null ? Number(row.yield_wh) : null,
                     consumed_wh: row.consumed_wh != null ? Number(row.consumed_wh) : null,
                     expected_yield_wh: row.expected_yield_wh != null ? Number(row.expected_yield_wh) : null,
+                    // End-of-day state drives throttle detection in isRealDeficit —
+                    // without it every reloaded day reads as a real deficit
+                    battery_soc_eod: row.battery_soc_eod != null ? Number(row.battery_soc_eod) : null,
+                    mppt_state_eod: row.mppt_state_eod != null ? Number(row.mppt_state_eod) : null,
                     updated: Date.now(),
                 };
             }

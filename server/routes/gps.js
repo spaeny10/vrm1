@@ -1,3 +1,4 @@
+import { getCachedWeather } from '../services/weather.js';
 import { runClustering } from '../clustering.js';
 import { IC2_CLIENT_ID, IC2_CLIENT_SECRET, IC2_GROUP_ID, IC2_ORG_ID } from '../config.js';
 import { getGpsSuggestions, getJobSites, getPool, getTrailerAssignments, insertAuditLog, insertJobSite, linkIc2Device, updateGpsSuggestionStatus, updateTrailerGps, upsertTrailerAssignment } from '../db.js';
@@ -94,6 +95,10 @@ app.post('/api/gps-changes/:id/reject', requireRole('admin', 'technician'), asyn
         if (!result) {
             return res.status(404).json({ error: 'Suggestion not found or already resolved' });
         }
+        await getPool().query(
+            `UPDATE trailer_assignments SET last_gps_lat = $1, last_gps_lon = $2, last_gps_update = $3 WHERE site_id = $4`,
+            [result.new_latitude, result.new_longitude, Date.now(), result.site_id]
+        );
 
         res.json({ success: true });
     } catch (err) {
@@ -151,8 +156,7 @@ app.get('/api/map/sites', async (req, res) => {
                 const geofenceBreached = trailers.some(t => geofenceAlerts.has(t.site_id));
 
                 // Attach cached weather data if available
-                const cacheKey = `${js.latitude.toFixed(2)},${js.longitude.toFixed(2)}`;
-                const weather = weatherCache.get(cacheKey);
+                const weather = getCachedWeather(js.latitude, js.longitude);
 
                 return {
                     id: js.id,
