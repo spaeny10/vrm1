@@ -111,6 +111,7 @@ import { registerActionsRoutes } from './routes/actions.js';
 import { registerReportsRoutes } from './routes/reports.js';
 import { registerPortalRoutes } from './routes/portal.js';
 import { registerDigestRoutesRoutes } from './routes/digestRoutes.js';
+import { registerBoardRoutes } from './routes/board.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -142,6 +143,7 @@ app.get('/api/health', (req, res) => {
 
 // --- Route modules (order preserved from the original monolith) ---
 registerAuthRoutes(app);
+registerBoardRoutes(app);
 registerUsersRoutes(app);
 registerSitesRoutes(app);
 registerFleetRoutes(app);

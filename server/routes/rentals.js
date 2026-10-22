@@ -255,7 +255,7 @@ app.get('/api/billing/alerts', async (req, res) => {
                 severity: 'warning',
                 rental_id: r.id,
                 unit_number: r.unit_number,
-                message: `${r.unit_number} is still billing but was called off ${new Date(r.calloff_at).toLocaleDateString()} — stop billing or clear the calloff date`,
+                message: `${r.unit_number} was called off ${new Date(r.calloff_at + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} but is still billing — stop billing or clear the call-off date`,
             })),
             ...atHq.map(r => ({
                 type: 'billing_at_hq',

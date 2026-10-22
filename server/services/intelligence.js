@@ -367,6 +367,11 @@ export function computeTechStatus(siteId, alertsMap) {
         reasons.push(`Critical SOC: ${soc.toFixed(0)}%`);
     }
 
+    // Battery overheating (LiFePO4 charging is unsafe above ~45°C)
+    if (snapshot.battery_temp != null && snapshot.battery_temp >= 45) {
+        reasons.push(`Battery hot: ${Number(snapshot.battery_temp).toFixed(0)}°C`);
+    }
+
     // Energy deficit streak >= 5 days
     const deficitStreak = alertsMap?.[siteId] ?? 0;
     if (deficitStreak >= 5) {
@@ -387,6 +392,10 @@ export function computeTechStatus(siteId, alertsMap) {
     // Low SOC (20-40%)
     if (soc !== null && soc >= 20 && soc < 40) {
         watchReasons.push(`Low SOC: ${soc.toFixed(0)}%`);
+    }
+
+    if (snapshot.battery_temp != null && snapshot.battery_temp >= 40) {
+        watchReasons.push(`Battery warm: ${Number(snapshot.battery_temp).toFixed(0)}°C`);
     }
 
     // SOC declining > 2%/day (but not yet critical-imminent)

@@ -52,8 +52,8 @@ app.post('/api/auth/change-password', async (req, res) => {
         if (!current_password || !new_password) {
             return res.status(400).json({ error: 'Current and new password required' });
         }
-        if (new_password.length < 4) {
-            return res.status(400).json({ error: 'Password must be at least 4 characters' });
+        if (new_password.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters' });
         }
         const user = await getUserByUsername(req.user.username);
         if (!user) return res.status(404).json({ error: 'User not found' });
@@ -67,14 +67,23 @@ app.post('/api/auth/change-password', async (req, res) => {
     }
 });
 
-// Update own profile (display name)
+// Update own profile (display name, email, morning digest)
 app.put('/api/auth/profile', async (req, res) => {
     try {
-        const { display_name } = req.body;
-        if (!display_name || !display_name.trim()) {
-            return res.status(400).json({ error: 'Display name is required' });
+        const { display_name, email, digest_enabled } = req.body;
+        const updates = {};
+        if (display_name !== undefined) {
+            if (!display_name.trim()) return res.status(400).json({ error: 'Display name is required' });
+            updates.display_name = display_name.trim();
         }
-        await updateUser(req.user.id, { display_name: display_name.trim() });
+        if (email !== undefined) {
+            const e = (email || '').trim();
+            if (e && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return res.status(400).json({ error: 'Enter a valid email address' });
+            updates.email = e || null;
+        }
+        if (digest_enabled !== undefined) updates.digest_enabled = !!digest_enabled;
+        if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update' });
+        await updateUser(req.user.id, updates);
         const updated = await getUserById(req.user.id);
         res.json({ success: true, user: updated });
     } catch (err) {

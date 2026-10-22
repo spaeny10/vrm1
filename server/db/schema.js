@@ -267,9 +267,9 @@ export async function applySchema(client) {
         new_latitude DOUBLE PRECISION NOT NULL,
         new_longitude DOUBLE PRECISION NOT NULL,
         distance_km REAL NOT NULL,
-        current_job_site_id INTEGER REFERENCES job_sites(id),
+        current_job_site_id INTEGER REFERENCES job_sites(id) ON DELETE SET NULL,
         current_job_site_name TEXT,
-        suggested_job_site_id INTEGER REFERENCES job_sites(id),
+        suggested_job_site_id INTEGER REFERENCES job_sites(id) ON DELETE SET NULL,
         suggested_job_site_name TEXT,
         suggestion_type TEXT NOT NULL,
         status TEXT DEFAULT 'pending',
@@ -281,6 +281,17 @@ export async function applySchema(client) {
         await client.query(`CREATE INDEX IF NOT EXISTS idx_gps_suggestions_status ON gps_change_suggestions(status)`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_gps_suggestions_site ON gps_change_suggestions(site_id)`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_gps_suggestions_created ON gps_change_suggestions(created_at DESC)`);
+        // Older databases created these FKs without ON DELETE, which blocks deleting a site
+        for (const col of ['current_job_site_id', 'suggested_job_site_id']) {
+            const fk = `gps_change_suggestions_${col}_fkey`;
+            const { rows } = await client.query(
+                `SELECT confdeltype FROM pg_constraint WHERE conname = $1`, [fk]);
+            if (rows[0] && rows[0].confdeltype !== 'n') {
+                await client.query(`ALTER TABLE gps_change_suggestions DROP CONSTRAINT ${fk},
+                    ADD CONSTRAINT ${fk} FOREIGN KEY (${col}) REFERENCES job_sites(id) ON DELETE SET NULL`);
+            }
+        }
+        await client.query(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS portal_user_id INTEGER`);
 
         // Add company_id FK to job_sites
         await client.query(`ALTER TABLE job_sites ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL`);

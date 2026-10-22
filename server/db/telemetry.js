@@ -110,7 +110,7 @@ export async function getPepwaveDailyUsage(deviceName, days = 30) {
     const result = await pool.query(
         `SELECT
           DATE(to_timestamp(timestamp / 1000)) as day,
-          MAX(usage_mb) - MIN(usage_mb) as daily_usage_mb,
+          MAX(usage_mb) as daily_usage_mb,
           AVG(rsrp) as avg_rsrp,
           MIN(rsrp) as min_rsrp,
           MAX(signal_bar) as max_signal_bar,

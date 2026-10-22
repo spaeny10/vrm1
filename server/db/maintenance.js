@@ -134,6 +134,8 @@ export async function getMaintenanceStats() {
             COUNT(*) FILTER (WHERE status = 'scheduled'
                 AND scheduled_date >= $1
                 AND scheduled_date <= $2) as upcoming_week,
+            COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress_count,
+            COUNT(*) FILTER (WHERE status = 'completed' AND completed_date >= $3) as completed_mtd,
             COALESCE(SUM(labor_cost_cents + parts_cost_cents) FILTER (
                 WHERE status = 'completed'
                 AND completed_date >= $3
@@ -161,7 +163,7 @@ export async function getMaintenanceCostsByJobSite(days = 30) {
             COALESCE(SUM(ml.labor_cost_cents + ml.parts_cost_cents), 0) as total_cost_cents
          FROM job_sites js
          INNER JOIN maintenance_logs ml ON ml.job_site_id = js.id
-            AND ml.created_at >= $1
+            AND COALESCE(ml.completed_date, ml.created_at) >= $1
             AND ml.status != 'cancelled'
          WHERE js.status = 'active'
          GROUP BY js.id, js.name
@@ -368,8 +370,10 @@ export async function updateIssueTemplate(id, updates) {
 export async function getMaintenanceCalendar(startMs, endMs, technicianId) {
     if (!pool) return [];
     let query = `
-        SELECT m.*, j.name AS job_site_name, u.display_name AS assigned_technician_name
+        SELECT m.*, j.name AS job_site_name, u.display_name AS assigned_technician_name,
+               ta.site_name AS trailer_name
         FROM maintenance_logs m
+        LEFT JOIN trailer_assignments ta ON m.site_id = ta.site_id
         LEFT JOIN job_sites j ON m.job_site_id = j.id
         LEFT JOIN users u ON m.assigned_technician_id = u.id
         WHERE m.status != 'cancelled'

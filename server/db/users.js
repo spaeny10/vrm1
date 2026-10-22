@@ -22,7 +22,7 @@ export async function getUserByUsername(username) {
 export async function getUserById(id) {
     if (!pool) return null;
     const result = await pool.query(
-        `SELECT id, username, display_name, role, active, created_at, must_change_password FROM users WHERE id = $1`,
+        `SELECT id, username, display_name, role, active, created_at, must_change_password, email, digest_enabled FROM users WHERE id = $1`,
         [id]
     );
     return result.rows[0] || null;

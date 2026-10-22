@@ -227,10 +227,8 @@ app.get('/api/intelligence/trailer/:id', async (req, res) => {
     try {
         const siteId = parseInt(req.params.id);
         const intel = await computeTrailerIntelligence(siteId);
-        if (!intel) {
-            return res.status(404).json({ success: false, error: 'Trailer not found or no data' });
-        }
-        res.json({ success: true, intelligence: intel });
+        // No live data (stale/offline unit) is a normal state, not an error
+        res.json({ success: true, intelligence: intel || null });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -266,7 +264,7 @@ app.get('/api/fleet/intelligence', async (req, res) => {
         const withAutonomy = results.filter(r => r.battery.days_of_autonomy !== null);
         const withPerformance = results.filter(r => r.solar.panel_performance_pct !== null);
 
-        const underperforming = results.filter(r => r.solar.avg_7d_score !== null && r.solar.avg_7d_score < 50);
+        const underperforming = results.filter(r => r.solar.avg_7d_score !== null && r.solar.avg_7d_score < 50 && !r.solar.score_adjustment_reason);
         const lowAutonomy = results.filter(r => r.battery.days_of_autonomy !== null && r.battery.days_of_autonomy < 1.5);
 
         res.json({

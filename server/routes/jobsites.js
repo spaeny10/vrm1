@@ -1,5 +1,5 @@
 import { runClustering, forwardGeocode } from '../clustering.js';
-import { assignContactToSite, assignTrailerToJobSite, deleteJobSite, deleteSiteNote, getCompanies, getJobSite, getJobSites, getNoteReaders, getNotesByTrailer, getReplies, getSiteContacts, getSiteNote, getSiteNotes, getTrailerAssignments, getTrailersByJobSite, getUsers, insertAuditLog, insertJobSite, insertNotification, insertSiteNote, markNoteRead, removeContactFromSite, togglePinNote, updateJobSite, updateSiteNote, getCompany } from '../db.js';
+import { assignContactToSite, assignTrailerToJobSite, deleteJobSite, deleteSiteNote, getCompanies, getJobSite, getJobSites, getNoteReaders, getNotesByTrailer, getReplies, getSiteContacts, getSiteNote, getSiteNotes, getTrailerAssignments, getTrailersByJobSite, getUsers, insertAuditLog, insertJobSite, insertNotification, insertSiteNote, markNoteRead, removeContactFromSite, togglePinNote, updateJobSite, updateSiteNote, getCompany, syncContactPortalSite } from '../db.js';
 import { sendMentionNotification } from '../email.js';
 import { hasVrmData } from '../lib/util.js';
 import { requireRole } from '../middleware/auth.js';
@@ -239,7 +239,7 @@ app.get('/api/trailers/:siteId/notes', async (req, res) => {
 });
 
 // POST new site note (with @mention notifications + audit log)
-app.post('/api/job-sites/:id/notes', async (req, res) => {
+app.post('/api/job-sites/:id/notes', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const { note, mentions, parent_id, tags, customer_visible } = req.body;
         if (!note) return res.status(400).json({ success: false, error: 'Note is required' });
@@ -324,7 +324,7 @@ app.delete('/api/job-sites/:id/notes/:noteId', async (req, res) => {
 });
 
 // PUT toggle pin on a note (admin/tech only)
-app.put('/api/job-sites/:id/notes/:noteId/pin', async (req, res) => {
+app.put('/api/job-sites/:id/notes/:noteId/pin', requireRole('admin', 'technician'), async (req, res) => {
     try {
         const noteId = parseInt(req.params.noteId);
         const { pinned } = req.body;
@@ -425,6 +425,7 @@ app.post('/api/job-sites/:id/contacts', requireRole('admin', 'technician'), asyn
         const { contact_id, role } = req.body;
         if (!contact_id) return res.status(400).json({ success: false, error: 'contact_id is required' });
         const result = await assignContactToSite(parseInt(req.params.id), contact_id, role || 'on-site');
+        await syncContactPortalSite(contact_id, parseInt(req.params.id), true);
         res.status(201).json({ success: true, assignment: result });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -434,6 +435,7 @@ app.post('/api/job-sites/:id/contacts', requireRole('admin', 'technician'), asyn
 app.delete('/api/job-sites/:siteId/contacts/:contactId', requireRole('admin', 'technician'), async (req, res) => {
     try {
         await removeContactFromSite(parseInt(req.params.siteId), parseInt(req.params.contactId));
+        await syncContactPortalSite(parseInt(req.params.contactId), parseInt(req.params.siteId), false);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });

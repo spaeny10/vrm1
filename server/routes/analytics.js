@@ -140,12 +140,16 @@ app.post('/api/analytics/backfill', requireRole('admin'), async (req, res) => {
         const rows = await getAllDailyEnergy(days);
         for (const row of rows) {
             const siteId = row.site_id;
-            const dateStr = new Date(row.date).toISOString().slice(0, 10);
+            const dateStr = typeof row.date === 'string' ? row.date.slice(0, 10) : new Date(row.date).toISOString().slice(0, 10);
             if (!dailyEnergy.has(siteId)) {
                 dailyEnergy.set(siteId, {});
             }
             const siteData = dailyEnergy.get(siteId);
+            // Merge so the end-of-day SOC / charger state that throttle detection relies on survives
             siteData[dateStr] = {
+                ...siteData[dateStr],
+                battery_soc_eod: row.battery_soc_eod ?? siteData[dateStr]?.battery_soc_eod ?? null,
+                mppt_state_eod: row.mppt_state_eod ?? siteData[dateStr]?.mppt_state_eod ?? null,
                 site_name: row.site_name || `Site ${siteId}`,
                 yield_wh: row.yield_wh != null ? Number(row.yield_wh) : null,
                 consumed_wh: row.consumed_wh != null ? Number(row.consumed_wh) : null,

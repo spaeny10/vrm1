@@ -1,6 +1,9 @@
 import bcrypt from 'bcryptjs';
-import { createUser, deleteUser, getUsers, updateUser } from '../db.js';
+import { createUser, deleteUser, getUsers, insertAuditLog, updateUser } from '../db.js';
 import { requireRole } from '../middleware/auth.js';
+
+const audit = (req, userId, action, details) =>
+    insertAuditLog('user', userId, action, details, req.user?.display_name).catch(() => { });
 
 export function registerUsersRoutes(app) {
 
@@ -20,12 +23,16 @@ app.post('/api/users', requireRole('admin'), async (req, res) => {
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password required' });
         }
+        if (password.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
         if (!['admin', 'technician', 'viewer', 'customer'].includes(role || 'viewer')) {
             return res.status(400).json({ error: 'Invalid role' });
         }
         const hash = await bcrypt.hash(password, 10);
         // New accounts get an admin-chosen password: make them set their own
         const user = await createUser(username, hash, display_name, role || 'viewer', true);
+        audit(req, user.id, 'user_created', { username, role: role || 'viewer' });
         res.json({ success: true, user });
     } catch (err) {
         if (err.message?.includes('unique') || err.code === '23505') {
@@ -37,14 +44,19 @@ app.post('/api/users', requireRole('admin'), async (req, res) => {
 
 app.put('/api/users/:id', requireRole('admin'), async (req, res) => {
     try {
-        const { display_name, role, active, digest_enabled } = req.body;
+        const { display_name, role, active, digest_enabled, email } = req.body;
+        if (role !== undefined && !['admin', 'technician', 'viewer', 'customer'].includes(role)) {
+            return res.status(400).json({ error: 'Invalid role' });
+        }
         const updates = {};
         if (display_name !== undefined) updates.display_name = display_name;
         if (role !== undefined) updates.role = role;
         if (active !== undefined) updates.active = active;
         if (digest_enabled !== undefined) updates.digest_enabled = digest_enabled;
+        if (email !== undefined) updates.email = (email || '').trim() || null;
         const user = await updateUser(parseInt(req.params.id), updates);
         if (!user) return res.status(404).json({ error: 'User not found' });
+        audit(req, user.id, 'user_updated', updates);
         res.json({ success: true, user });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -57,6 +69,7 @@ app.delete('/api/users/:id', requireRole('admin'), async (req, res) => {
             return res.status(400).json({ error: 'Cannot deactivate your own account' });
         }
         await deleteUser(parseInt(req.params.id));
+        audit(req, parseInt(req.params.id), 'user_deactivated', {});
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -66,13 +79,14 @@ app.delete('/api/users/:id', requireRole('admin'), async (req, res) => {
 app.post('/api/users/:id/reset-password', requireRole('admin'), async (req, res) => {
     try {
         const { new_password } = req.body;
-        if (!new_password || new_password.length < 4) {
-            return res.status(400).json({ error: 'Password must be at least 4 characters' });
+        if (!new_password || new_password.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters' });
         }
         const hash = await bcrypt.hash(new_password, 10);
         // Admin-set passwords are temporary: the user picks their own at next login
         const user = await updateUser(parseInt(req.params.id), { password_hash: hash, must_change_password: true });
         if (!user) return res.status(404).json({ error: 'User not found' });
+        audit(req, user.id, 'password_reset', {});
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });

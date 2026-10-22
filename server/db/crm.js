@@ -119,6 +119,22 @@ export async function setContactPortalUserId(contactId, userId) {
     await pool.query(`UPDATE contacts SET portal_user_id = $1 WHERE id = $2`, [userId, contactId]);
 }
 
+// Keep an invited contact's portal access in step with their site assignments
+export async function syncContactPortalSite(contactId, jobSiteId, granted) {
+    if (!pool) return;
+    if (granted) {
+        await pool.query(
+            `INSERT INTO customer_site_access (user_id, job_site_id)
+             SELECT portal_user_id, $2 FROM contacts WHERE id = $1 AND portal_user_id IS NOT NULL
+             ON CONFLICT DO NOTHING`, [contactId, jobSiteId]);
+    } else {
+        await pool.query(
+            `DELETE FROM customer_site_access
+             WHERE job_site_id = $2 AND user_id = (SELECT portal_user_id FROM contacts WHERE id = $1)`,
+            [contactId, jobSiteId]);
+    }
+}
+
 // ============================================================
 // Site Contacts (junction)
 // ============================================================

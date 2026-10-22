@@ -50,5 +50,5 @@ const CUSTOMER_ALLOWED = [/^\/auth\//, /^\/portal\//, /^\/notifications(\/|$)/];
 // Rate limiters — SINGLETONS. aiLimiter is one shared bucket across all
 // AI endpoints (/api/query and /api/analyze/trailer/:id); creating a
 // second instance would double the quota.
-export const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, message: { error: 'Too many login attempts, try again in 15 minutes' } });
+export const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: parseInt(process.env.LOGIN_RATE_LIMIT_MAX) || 15, message: { error: 'Too many login attempts, try again in 15 minutes' } });
 export const aiLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, message: { error: 'Too many AI requests, try again in a minute' } });
