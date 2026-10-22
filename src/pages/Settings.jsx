@@ -1,1618 +1,1422 @@
-﻿import { Fragment, useState, useCallback, useMemo, useEffect } from 'react'
-import { Link } from 'react-router-dom'
-import { DndContext, PointerSensor, useSensors, useSensor, useDraggable, useDroppable, DragOverlay } from '@dnd-kit/core'
+﻿import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchSettings, updateSettings, purgeData, fetchJobSites, updateJobSite, deleteJobSiteApi, reclusterJobSites, assignTrailer, fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword, fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device, fetchCustomerSiteAccess, updateCustomerSiteAccess, fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail, updateSolarScoreSettings, fetchCommunications, fetchCompanies } from '../api/vrm'
+import {
+    apiGet, apiPut, changePassword, fetchSettings, updateSettings, purgeData, updateSolarScoreSettings,
+    fetchJobSites, fetchBoardTrailers, reclusterJobSites, assignTrailer,
+    fetchUsers, createUserAccount, updateUserAccount, deleteUserAccount, resetUserPassword,
+    fetchCustomerSiteAccess, updateCustomerSiteAccess,
+    fetchGpsTrailers, refreshGps, fetchUnlinkedIc2Devices, linkIc2Device,
+    fetchDigestPreview, fetchEmailConfigStatus, sendTestEmail,
+} from '../api/vrm'
 import { useToast } from '../components/ToastProvider'
 import { useAuth } from '../components/AuthProvider'
+import { useWorkspace } from '../components/WorkspaceProvider'
+import {
+    Page, Card, Stats, Stat, Dot, Badge, Tabs, Chips, Search, Field, Modal,
+    Empty, AllClear, Loading, DataTable, KV, Icon,
+} from '../ui'
+import { HEALTH, fmtAgo, fmtDate, fmtDateTime, fmtKwh, fmtNum, fmtPct, plural } from '../ui/format'
 
-function DraggableTrailerRow({ trailer, jobSite, children }) {
-    const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-        id: `trailer-${trailer.site_id}`,
-        data: { trailerId: trailer.site_id, fromJobSiteId: jobSite.id, trailerName: trailer.site_name },
-    })
-    return (
-        <tr
-            ref={setNodeRef}
-            className={`trailer-assign-row ${isDragging ? 'dragging' : ''}`}
-            {...listeners}
-            {...attributes}
-            style={{ opacity: isDragging ? 0.4 : 1, cursor: 'grab' }}
-        >
-            {children}
-        </tr>
-    )
+// ============================================================
+// Settings (admins) / Account (everyone else).
+// Each concern lives in its own tab; non-admins only get their account
+// (plus GPS & devices for staff working in the Fleet workspace).
+// ============================================================
+
+const MIN_PASSWORD = 8
+
+const ROLES = {
+    admin: { label: 'Admin', tone: 'info', desc: 'Full access, including users and settings' },
+    technician: { label: 'Technician', tone: 'plain', desc: 'Staff: can edit trailers, sites, rentals and service' },
+    viewer: { label: 'Viewer', tone: 'plain', desc: 'Read-only access to the staff app' },
+    customer: { label: 'Customer', tone: 'off', desc: 'Read-only portal, limited to the sites you grant' },
 }
 
-function DroppableJobSiteRow({ jobSiteId, isOver, children }) {
-    const { setNodeRef } = useDroppable({ id: `jobsite-${jobSiteId}` })
-    return (
-        <tr
-            ref={setNodeRef}
-            className={`jobsite-mgmt-row ${isOver ? 'drop-target' : ''}`}
-        >
-            {children}
-        </tr>
-    )
-}
+export default function Settings() {
+    const { user } = useAuth()
+    const { workspace } = useWorkspace()
+    const isAdmin = user?.role === 'admin'
+    // GPS tools are staff work owned by the Fleet Manager; admins always see them.
+    const showGps = isAdmin || (user?.role === 'technician' && workspace === 'fleet')
 
-function CommunicationLogSection({ jobSites, toast }) {
-    const [notes, setNotes] = useState([])
-    const [total, setTotal] = useState(0)
-    const [loading, setLoading] = useState(false)
-    const [filters, setFilters] = useState({ site_id: '', author: '', search: '', date_from: '', date_to: '' })
-    const [page, setPage] = useState(0)
-    const perPage = 25
+    const tabs = [
+        { key: 'account', label: 'Account' },
+        ...(isAdmin ? [{ key: 'users', label: 'Users' }, { key: 'notifications', label: 'Notifications' }, { key: 'rules', label: 'Fleet rules' }] : []),
+        ...(showGps ? [{ key: 'gps', label: 'GPS & devices' }] : []),
+        ...(isAdmin ? [{ key: 'activity', label: 'Activity' }] : []),
+    ]
 
-    const loadNotes = useCallback(async (pg = 0) => {
-        setLoading(true)
-        try {
-            const params = { limit: perPage, offset: pg * perPage }
-            if (filters.site_id) params.site_id = filters.site_id
-            if (filters.author) params.author = filters.author
-            if (filters.search) params.search = filters.search
-            if (filters.date_from) params.date_from = new Date(filters.date_from).getTime()
-            if (filters.date_to) params.date_to = new Date(filters.date_to + 'T23:59:59').getTime()
-            const data = await fetchCommunications(params)
-            setNotes(data?.notes || [])
-            setTotal(data?.total || 0)
-            setPage(pg)
-        } catch (err) {
-            toast.error('Error loading communications: ' + err.message)
-        }
-        setLoading(false)
-    }, [filters, toast])
-
-    useEffect(() => { loadNotes(0) }, [loadNotes])
-
-    const totalPages = Math.ceil(total / perPage)
-
-    const formatTime = (ts) => {
-        if (!ts) return '—'
-        return new Date(Number(ts)).toLocaleString()
-    }
-
-    const updateFilter = (key, value) => {
-        setFilters(f => ({ ...f, [key]: value }))
-    }
+    const [params, setParams] = useSearchParams()
+    const requested = params.get('tab')
+    const tab = tabs.some(t => t.key === requested) ? requested : 'account'
+    const setTab = (key) => setParams(key === 'account' ? {} : { tab: key }, { replace: true })
 
     return (
-        <div className="settings-card settings-card-wide">
-            <div className="settings-card-header">
-                <h2>📋 Communication Log</h2>
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{total} total entries</span>
+        <Page title={isAdmin ? 'Settings' : 'Account'}
+            sub={isAdmin ? 'Your account, users, notifications and fleet-wide rules' : 'Your profile and password'}>
+            <div>
+                {tabs.length > 1 && <Tabs tabs={tabs} value={tab} onChange={setTab} />}
+                {tab === 'account' && <AccountTab />}
+                {tab === 'users' && isAdmin && <UsersTab />}
+                {tab === 'notifications' && isAdmin && <NotificationsTab />}
+                {tab === 'rules' && isAdmin && <FleetRulesTab />}
+                {tab === 'gps' && showGps && <GpsTab isAdmin={isAdmin} />}
+                {tab === 'activity' && isAdmin && <ActivityTab />}
             </div>
-            <p className="settings-desc">
-                All site notes and communications across every job site. Use filters to narrow results.
-            </p>
-
-            {/* Filters */}
-            <div className="comm-log-filters">
-                <div className="comm-filter-group">
-                    <label>Site</label>
-                    <select value={filters.site_id} onChange={e => updateFilter('site_id', e.target.value)}>
-                        <option value="">All Sites</option>
-                        {jobSites.filter(js => js.status === 'active').map(js => (
-                            <option key={js.id} value={js.id}>{js.name}</option>
-                        ))}
-                    </select>
-                </div>
-                <div className="comm-filter-group">
-                    <label>Author</label>
-                    <input type="text" placeholder="Filter by author..." value={filters.author} onChange={e => updateFilter('author', e.target.value)} />
-                </div>
-                <div className="comm-filter-group">
-                    <label>Search</label>
-                    <input type="text" placeholder="Search note text..." value={filters.search} onChange={e => updateFilter('search', e.target.value)} />
-                </div>
-                <div className="comm-filter-group">
-                    <label>From</label>
-                    <input type="date" className="date-input" value={filters.date_from} onChange={e => updateFilter('date_from', e.target.value)} />
-                </div>
-                <div className="comm-filter-group">
-                    <label>To</label>
-                    <input type="date" className="date-input" value={filters.date_to} onChange={e => updateFilter('date_to', e.target.value)} />
-                </div>
-                <div className="comm-filter-group" style={{ alignSelf: 'flex-end' }}>
-                    <button className="btn btn-sm btn-ghost" onClick={() => setFilters({ site_id: '', author: '', search: '', date_from: '', date_to: '' })}>Clear</button>
-                </div>
-            </div>
-
-            {/* Results */}
-            {loading ? (
-                <div className="empty-section"><p>Loading...</p></div>
-            ) : notes.length === 0 ? (
-                <div className="empty-section"><p>No communication entries found.</p></div>
-            ) : (
-                <div className="jobsite-mgmt-table-wrapper">
-                    <table className="maint-table">
-                        <thead>
-                            <tr>
-                                <th>Site</th>
-                                <th>Author</th>
-                                <th style={{ width: '45%' }}>Note</th>
-                                <th>Mentions</th>
-                                <th>Date</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {notes.map(n => (
-                                <tr key={n.id} className="maint-row">
-                                    <td>
-                                        <span className="comm-log-site-name">{n.site_name || `Site #${n.job_site_id}`}</span>
-                                        <span className="comm-log-site-uid">UID {n.job_site_id}</span>
-                                    </td>
-                                    <td className="maint-title">{n.author}</td>
-                                    <td>
-                                        <span className="comm-log-note">{n.note}</span>
-                                    </td>
-                                    <td>
-                                        {n.mentions && n.mentions.length > 0 ? (
-                                            <div className="comm-log-mentions">
-                                                {(typeof n.mentions === 'string' ? JSON.parse(n.mentions) : n.mentions).map((m, i) => (
-                                                    <span key={i} className="mention-tag-sm">@{m}</span>
-                                                ))}
-                                            </div>
-                                        ) : '—'}
-                                    </td>
-                                    <td className="comm-log-date">{formatTime(n.created_at)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            )}
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-                <div className="comm-log-pagination">
-                    <button className="btn btn-sm btn-ghost" disabled={page === 0} onClick={() => loadNotes(page - 1)}>← Prev</button>
-                    <span className="comm-log-page-info">Page {page + 1} of {totalPages}</span>
-                    <button className="btn btn-sm btn-ghost" disabled={page >= totalPages - 1} onClick={() => loadNotes(page + 1)}>Next →</button>
-                </div>
-            )}
-        </div>
+        </Page>
     )
 }
 
-function CustomerAccountsSection({ jobSites, toast, loadUsers }) {
-    const [customers, setCustomers] = useState([])
-    const [loading, setLoading] = useState(true)
-    const [showCreate, setShowCreate] = useState(false)
-    const [newCustomer, setNewCustomer] = useState({ username: '', password: '', display_name: '', email: '' })
-    const [creating, setCreating] = useState(false)
-    const [editingSites, setEditingSites] = useState(null) // userId
-    const [selectedSites, setSelectedSites] = useState([])
-    const [siteSearch, setSiteSearch] = useState('')
+// ------------------------------------------------------------
+// Shared bits
+// ------------------------------------------------------------
+function ConfirmModal({ title, children, confirmLabel, danger, busy, onConfirm, onClose }) {
+    return (
+        <Modal title={title} onClose={onClose} footer={<>
+            <button className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className={danger ? 'btn danger solid' : 'btn primary'} onClick={onConfirm} disabled={busy}>
+                {busy ? 'Working…' : confirmLabel}
+            </button>
+        </>}>
+            <div style={{ display: 'grid', gap: 10 }}>{children}</div>
+        </Modal>
+    )
+}
 
-    const loadCustomers = useCallback(async () => {
-        setLoading(true)
-        try {
-            const data = await fetchUsers()
-            setCustomers((data.users || []).filter(u => u.role === 'customer'))
-        } catch (err) {
-            toast.error('Error loading customers: ' + err.message)
-        }
-        setLoading(false)
-    }, [toast])
+function passwordProblem(pw, confirm) {
+    if (!pw) return null
+    if (pw.length < MIN_PASSWORD) return `Use at least ${MIN_PASSWORD} characters.`
+    if (confirm != null && confirm && pw !== confirm) return "Passwords don't match."
+    return null
+}
 
-    useEffect(() => { loadCustomers() }, [loadCustomers])
+function fmtBytes(bytes) {
+    if (!bytes) return '—'
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+    return `${(bytes / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${units[i]}`
+}
 
-    const handleCreate = async (e) => {
+function humanize(s) {
+    if (!s) return ''
+    const t = String(s).replace(/_/g, ' ').trim()
+    return t.charAt(0).toUpperCase() + t.slice(1)
+}
+
+// ------------------------------------------------------------
+// Account
+// ------------------------------------------------------------
+function AccountTab() {
+    const { user, updateDisplayName, markPasswordChanged } = useAuth()
+    const toast = useToast()
+
+    const [name, setName] = useState(user?.display_name || '')
+    const [savingName, setSavingName] = useState(false)
+    const nameChanged = name.trim() && name.trim() !== (user?.display_name || '')
+
+    const saveName = async (e) => {
         e.preventDefault()
-        if (!newCustomer.username.trim() || !newCustomer.password.trim()) return
-        setCreating(true)
+        if (!nameChanged) return
+        setSavingName(true)
         try {
-            await createUserAccount({
-                username: newCustomer.username.trim(),
-                password: newCustomer.password,
-                display_name: newCustomer.display_name.trim() || null,
-                role: 'customer',
-            })
-            toast.success(`Customer "${newCustomer.username}" created`)
-            setNewCustomer({ username: '', password: '', display_name: '', email: '' })
-            setShowCreate(false)
-            loadCustomers()
-            loadUsers()
+            await updateDisplayName(name.trim())
+            toast.success('Display name updated')
         } catch (err) {
-            toast.error('Error creating customer: ' + err.message)
+            toast.error(err.message)
         }
-        setCreating(false)
+        setSavingName(false)
     }
 
-    const handleEditSites = async (userId) => {
-        try {
-            const data = await fetchCustomerSiteAccess(userId)
-            setSelectedSites(data.sites || [])
-            setEditingSites(userId)
-        } catch (err) {
-            toast.error('Error loading site access: ' + err.message)
-        }
-    }
+    const [pw, setPw] = useState({ current: '', next: '', confirm: '' })
+    const [savingPw, setSavingPw] = useState(false)
+    const pwProblem = passwordProblem(pw.next, pw.confirm)
+    const pwReady = pw.current && pw.next && pw.confirm && !pwProblem
 
-    const handleSaveSites = async () => {
+    const savePassword = async (e) => {
+        e.preventDefault()
+        if (!pwReady) return
+        setSavingPw(true)
         try {
-            await updateCustomerSiteAccess(editingSites, selectedSites)
-            toast.success('Site access updated')
-            setEditingSites(null)
+            await changePassword(pw.current, pw.next)
+            markPasswordChanged?.()
+            setPw({ current: '', next: '', confirm: '' })
+            toast.success('Password changed')
         } catch (err) {
-            toast.error('Error updating site access: ' + err.message)
+            toast.error(err.message)
         }
-    }
-
-    const toggleSite = (siteId) => {
-        setSelectedSites(prev =>
-            prev.includes(siteId) ? prev.filter(id => id !== siteId) : [...prev, siteId]
-        )
+        setSavingPw(false)
     }
 
     return (
-        <div className="settings-card settings-card-wide">
-            <div className="settings-card-header">
-                <h2>Customer Portal</h2>
-                <button className="btn btn-primary" onClick={() => setShowCreate(true)}>+ Add Customer</button>
+        <div className="grid-2">
+            <div className="stack">
+                <Card title="Profile">
+                    <form className="form" onSubmit={saveName}>
+                        <KV items={[
+                            ['Username', <span className="mono" key="u">{user?.username}</span>],
+                            ['Role', <Badge key="r" tone={ROLES[user?.role]?.tone}>{ROLES[user?.role]?.label || user?.role}</Badge>],
+                        ]} />
+                        <Field label="Display name" hint="Shown in the sidebar, on notes and in the activity log.">
+                            <input className="input" value={name} onChange={e => setName(e.target.value)} maxLength={80} />
+                        </Field>
+                        <div className="btn-row">
+                            <button className="btn" type="submit" disabled={!nameChanged || savingName}>{savingName ? 'Saving…' : 'Save name'}</button>
+                        </div>
+                    </form>
+                </Card>
+                {user?.role !== 'customer' && <MyDigestCard />}
             </div>
-            <p className="settings-desc">
-                Customer accounts have read-only access to their assigned job sites. Create customer users and assign which sites they can see.
-            </p>
 
-            {showCreate && (
-                <div className="maint-form-overlay" onClick={() => setShowCreate(false)}>
-                    <div className="maint-form-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
-                        <div className="maint-form-header">
-                            <h2>Create Customer</h2>
-                            <button className="detail-close" onClick={() => setShowCreate(false)}>✕</button>
-                        </div>
-                        <form onSubmit={handleCreate} className="maint-form">
-                            <div className="maint-form-grid">
-                                <div className="form-group">
-                                    <label>Username *</label>
-                                    <input type="text" value={newCustomer.username} onChange={e => setNewCustomer(p => ({ ...p, username: e.target.value }))} placeholder="customer-username" required autoFocus />
-                                </div>
-                                <div className="form-group">
-                                    <label>Password *</label>
-                                    <input type="password" value={newCustomer.password} onChange={e => setNewCustomer(p => ({ ...p, password: e.target.value }))} placeholder="password" required />
-                                </div>
-                                <div className="form-group">
-                                    <label>Display Name</label>
-                                    <input type="text" value={newCustomer.display_name} onChange={e => setNewCustomer(p => ({ ...p, display_name: e.target.value }))} placeholder="Company Name" />
-                                </div>
-                            </div>
-                            <div className="maint-form-actions">
-                                <button type="button" className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
-                                <button type="submit" className="btn btn-primary" disabled={creating}>{creating ? 'Creating...' : 'Create Customer'}</button>
-                            </div>
-                        </form>
+            <Card title="Change password">
+                <form className="form" onSubmit={savePassword}>
+                    <Field label="Current password">
+                        <input className="input" type="password" autoComplete="current-password" value={pw.current}
+                            onChange={e => setPw(p => ({ ...p, current: e.target.value }))} />
+                    </Field>
+                    <Field label="New password" hint={`At least ${MIN_PASSWORD} characters.`}>
+                        <input className="input" type="password" autoComplete="new-password" value={pw.next}
+                            onChange={e => setPw(p => ({ ...p, next: e.target.value }))} />
+                    </Field>
+                    <Field label="Confirm new password">
+                        <input className="input" type="password" autoComplete="new-password" value={pw.confirm}
+                            onChange={e => setPw(p => ({ ...p, confirm: e.target.value }))} />
+                    </Field>
+                    {pwProblem && <div className="callout warn">{pwProblem}</div>}
+                    <div className="btn-row">
+                        <button className="btn primary" type="submit" disabled={!pwReady || savingPw}>{savingPw ? 'Changing…' : 'Change password'}</button>
                     </div>
-                </div>
-            )}
-
-            {editingSites && (() => {
-                const activeSites = jobSites
-                    .filter(js => js.status === 'active')
-                    .filter(js => {
-                        if (!siteSearch.trim()) return true
-                        const q = siteSearch.toLowerCase()
-                        return js.name.toLowerCase().includes(q) ||
-                            (js.address || '').toLowerCase().includes(q) ||
-                            String(js.id).includes(q)
-                    })
-                return (
-                    <div className="modal-overlay" onClick={() => { setEditingSites(null); setSiteSearch('') }}>
-                        <div className="modal-content assign-sites-modal" onClick={e => e.stopPropagation()}>
-                            <div className="modal-header">
-                                <div>
-                                    <h2>Assign Sites</h2>
-                                    <span className="assign-sites-count">
-                                        {selectedSites.length} of {jobSites.filter(js => js.status === 'active').length} selected
-                                    </span>
-                                </div>
-                                <button className="modal-close" onClick={() => { setEditingSites(null); setSiteSearch('') }}>&times;</button>
-                            </div>
-
-                            <div className="assign-sites-search">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}>
-                                    <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-                                </svg>
-                                <input
-                                    type="text"
-                                    className="input"
-                                    placeholder="Search by name, address, or UID..."
-                                    value={siteSearch}
-                                    onChange={e => setSiteSearch(e.target.value)}
-                                    autoFocus
-                                    style={{ paddingLeft: 36, width: '100%' }}
-                                />
-                            </div>
-
-                            <div className="assign-sites-list">
-                                {activeSites.length === 0 ? (
-                                    <div className="empty-section" style={{ padding: 20 }}>
-                                        <p>No sites match "{siteSearch}"</p>
-                                    </div>
-                                ) : activeSites.map(js => {
-                                    const isChecked = selectedSites.includes(js.id)
-                                    return (
-                                        <div
-                                            key={js.id}
-                                            className={`assign-site-card ${isChecked ? 'assign-site-card-selected' : ''}`}
-                                            onClick={() => toggleSite(js.id)}
-                                        >
-                                            <div className={`assign-site-check ${isChecked ? 'assign-site-check-on' : ''}`}>
-                                                {isChecked && (
-                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3">
-                                                        <polyline points="20 6 9 17 4 12" />
-                                                    </svg>
-                                                )}
-                                            </div>
-                                            <div className="assign-site-info">
-                                                <div className="assign-site-name-row">
-                                                    <span className="assign-site-name">{js.name}</span>
-                                                    <span className="assign-site-uid">UID {js.id}</span>
-                                                </div>
-                                                {js.address && (
-                                                    <span className="assign-site-address">{js.address}</span>
-                                                )}
-                                            </div>
-                                            <span className="assign-site-trailer-count">
-                                                {js.trailer_count || 0} trailer{(js.trailer_count || 0) !== 1 ? 's' : ''}
-                                            </span>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-
-                            <div className="modal-footer">
-                                <button className="btn btn-secondary" onClick={() => { setEditingSites(null); setSiteSearch('') }}>Cancel</button>
-                                <button className="btn btn-primary" onClick={handleSaveSites}>
-                                    Save Access ({selectedSites.length} site{selectedSites.length !== 1 ? 's' : ''})
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )
-            })()}
-
-            {loading ? (
-                <div className="empty-section"><p>Loading customers...</p></div>
-            ) : customers.length === 0 ? (
-                <div className="empty-section"><p>No customer accounts yet. Click "Add Customer" to create one.</p></div>
-            ) : (
-                <div className="jobsite-mgmt-table-wrapper">
-                    <table className="maint-table">
-                        <thead><tr><th>Username</th><th>Display Name</th><th>Sites</th><th>Actions</th></tr></thead>
-                        <tbody>
-                            {customers.map(c => (
-                                <tr key={c.id} className="maint-row">
-                                    <td className="maint-title">{c.username}</td>
-                                    <td>{c.display_name || '—'}</td>
-                                    <td>
-                                        <button className="btn btn-sm btn-secondary" onClick={() => handleEditSites(c.id)}>
-                                            Manage Sites
-                                        </button>
-                                    </td>
-                                    <td>
-                                        <button className="btn btn-sm btn-ghost" onClick={() => { deleteUserAccount(c.id).then(() => { loadCustomers(); loadUsers() }).catch(err => toast.error(err.message)) }}>
-                                            Remove
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            )}
+                </form>
+            </Card>
         </div>
     )
 }
 
-function DigestSettingsSection({ toast }) {
-    const [showPreview, setShowPreview] = useState(false)
-    const [preview, setPreview] = useState(null)
-    const [loadingPreview, setLoadingPreview] = useState(false)
-    const [sendingEmail, setSendingEmail] = useState(false)
-    const [emailStatus, setEmailStatus] = useState(null)
+function MyDigestCard() {
+    const toast = useToast()
+    const [me, setMe] = useState(null)
+    const [email, setEmail] = useState('')
+    const [saving, setSaving] = useState(false)
 
     useEffect(() => {
-        // Load email config status on mount
-        fetchEmailConfigStatus()
-            .then(data => setEmailStatus(data))
-            .catch(err => console.error('Failed to load email status:', err))
+        apiGet('/auth/me').then(d => { setMe(d.user); setEmail(d.user?.email || '') }).catch(() => setMe(null))
     }, [])
 
-    const handlePreview = async () => {
-        setLoadingPreview(true)
+    const save = async (updates, message) => {
+        setSaving(true)
         try {
-            const data = await fetchDigestPreview()
-            setPreview(data.digest)
-            setShowPreview(true)
+            const d = await apiPut('/auth/profile', updates)
+            setMe(d.user)
+            setEmail(d.user?.email || '')
+            toast.success(message)
         } catch (err) {
-            toast.error('Error loading preview: ' + err.message)
+            toast.error(err.message)
         }
-        setLoadingPreview(false)
+        setSaving(false)
     }
 
-    const handleTestEmail = async (type) => {
-        setSendingEmail(true)
+    const emailChanged = email.trim() !== (me?.email || '')
+
+    return (
+        <Card title="Morning digest email">
+            {!me ? <Loading /> : (
+                <div className="form">
+                    <Field label="Email address" hint="Where the digest and @mention notifications are sent.">
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" />
+                            <button className="btn" type="button" disabled={!emailChanged || saving}
+                                onClick={() => save({ email: email.trim() }, 'Email updated')}>Save</button>
+                        </div>
+                    </Field>
+                    <label className="check">
+                        <input type="checkbox" checked={!!me.digest_enabled} disabled={saving || !me.email}
+                            onChange={e => save({ digest_enabled: e.target.checked }, e.target.checked ? 'Subscribed to the morning digest' : 'Unsubscribed from the morning digest')} />
+                        Send me the morning fleet digest
+                    </label>
+                    {!me.email && <span className="faint" style={{ fontSize: 12.5 }}>Add an email address first.</span>}
+                </div>
+            )}
+        </Card>
+    )
+}
+
+// ------------------------------------------------------------
+// Users
+// ------------------------------------------------------------
+function UsersTab() {
+    const { user: me } = useAuth()
+    const toast = useToast()
+    const fetchFn = useCallback(() => fetchUsers(), [])
+    const { data, loading, refetch } = useApiPolling(fetchFn, 120000)
+    const users = useMemo(() => data?.users || [], [data])
+
+    const [q, setQ] = useState('')
+    const [filter, setFilter] = useState('active')
+    const [creating, setCreating] = useState(false)
+    const [editing, setEditing] = useState(null)
+    const [resetting, setResetting] = useState(null)
+    const [deleting, setDeleting] = useState(null)
+    const [siteAccess, setSiteAccess] = useState(null)
+    const [busy, setBusy] = useState(false)
+
+    const counts = useMemo(() => ({
+        active: users.filter(u => u.active !== false).length,
+        inactive: users.filter(u => u.active === false).length,
+        all: users.length,
+    }), [users])
+
+    const rows = useMemo(() => {
+        const term = q.trim().toLowerCase()
+        return users.filter(u => {
+            if (filter === 'active' && u.active === false) return false
+            if (filter === 'inactive' && u.active !== false) return false
+            return !term || [u.username, u.display_name, u.email, u.role].some(v => v && String(v).toLowerCase().includes(term))
+        })
+    }, [users, q, filter])
+
+    const doDelete = async () => {
+        setBusy(true)
         try {
-            const result = await sendTestEmail(type)
-            if (result.success) {
-                toast.success(`Test ${type} email sent to: ${result.recipients.join(', ')}`)
-            } else {
-                toast.error(result.error || 'Failed to send test email')
-            }
+            await deleteUserAccount(deleting.id)
+            toast.success(`${deleting.display_name || deleting.username} can no longer sign in`)
+            setDeleting(null)
+            refetch()
         } catch (err) {
-            toast.error('Error sending test email: ' + err.message)
+            toast.error(err.message)
         }
-        setSendingEmail(false)
+        setBusy(false)
+    }
+
+    const columns = [
+        {
+            key: 'name', label: 'User', sort: u => (u.display_name || u.username).toLowerCase(),
+            render: u => (
+                <div>
+                    <span className="primary">{u.display_name || u.username}</span>
+                    {u.id === me.id && <span className="faint"> (you)</span>}
+                    <div className="sub"><span className="mono">{u.username}</span>{u.google_id ? ' · Google sign-in' : ''}{u.email ? ` · ${u.email}` : ''}</div>
+                </div>
+            ),
+        },
+        { key: 'role', label: 'Role', sort: u => u.role, render: u => <Badge tone={ROLES[u.role]?.tone}>{ROLES[u.role]?.label || u.role}</Badge> },
+        {
+            key: 'active', label: 'Status', sort: u => (u.active === false ? 1 : 0),
+            render: u => u.active === false ? <Badge tone="off">Deactivated</Badge> : <Badge tone="ok" dot>Active</Badge>,
+        },
+        {
+            key: 'last_login', label: 'Last sign-in', sort: u => (u.last_login ? Number(u.last_login) : 0),
+            render: u => u.last_login ? <span title={fmtDateTime(u.last_login)}>{fmtAgo(u.last_login)}</span> : <span className="faint">Never</span>,
+        },
+        {
+            key: 'digest', label: 'Digest', sort: u => (u.digest_enabled ? 1 : 0),
+            render: u => !u.digest_enabled ? <span className="faint">Off</span>
+                : u.email ? <Badge tone="ok">On</Badge>
+                    : <span title="Subscribed, but no email address on file"><Badge tone="warn">On · no email</Badge></span>,
+        },
+        {
+            key: 'actions', label: '', render: u => (
+                <div className="btn-row" style={{ justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                    {u.role === 'customer' && <button className="btn sm" onClick={() => setSiteAccess(u)}>Site access</button>}
+                    <button className="btn sm ghost" onClick={() => setEditing(u)}>Edit</button>
+                    {!u.google_id && <button className="btn sm ghost" onClick={() => setResetting(u)}>Reset password</button>}
+                    {u.id !== me.id && u.active !== false && <button className="btn sm ghost danger" onClick={() => setDeleting(u)}>Delete</button>}
+                </div>
+            ),
+        },
+    ]
+
+    return (
+        <div>
+            <div className="toolbar">
+                <Search value={q} onChange={setQ} placeholder="Search name, username, role…" />
+                <Chips value={filter} onChange={setFilter} options={[
+                    { key: 'active', label: 'Active', count: counts.active },
+                    { key: 'inactive', label: 'Deactivated', count: counts.inactive },
+                    { key: 'all', label: 'All', count: counts.all },
+                ]} />
+                <div className="spacer" />
+                <button className="btn primary" onClick={() => setCreating(true)}><Icon name="plus" />Add user</button>
+            </div>
+            <Card flush foot="Customers only see the job sites you grant under Site access. Digest emails go to subscribed users that have an email address (from Google sign-in).">
+                {loading && !data ? <Loading /> : (
+                    <DataTable columns={columns} rows={rows} initialSort={{ key: 'name', dir: 'asc' }}
+                        empty={<Empty compact title="No users match">Try a different search or filter.</Empty>} />
+                )}
+            </Card>
+
+            {creating && <CreateUserModal onClose={() => setCreating(false)} onDone={(u) => { setCreating(false); refetch(); if (u?.role === 'customer') setSiteAccess(u) }} />}
+            {editing && <EditUserModal target={editing} isSelf={editing.id === me.id} onClose={() => setEditing(null)} onDone={() => { setEditing(null); refetch() }} />}
+            {resetting && <ResetPasswordModal target={resetting} onClose={() => setResetting(null)} />}
+            {siteAccess && <SiteAccessModal target={siteAccess} onClose={() => setSiteAccess(null)} />}
+            {deleting && (
+                <ConfirmModal title="Delete user" confirmLabel="Delete user" danger busy={busy} onConfirm={doDelete} onClose={() => setDeleting(null)}>
+                    <p>Delete <b>{deleting.display_name || deleting.username}</b> (<span className="mono">{deleting.username}</span>)?</p>
+                    <p className="muted">They can no longer sign in. Their past notes and activity stay in the record, and the account moves to the Deactivated list, where you can reactivate it from Edit.</p>
+                </ConfirmModal>
+            )}
+        </div>
+    )
+}
+
+function RoleSelect({ value, onChange, disabled }) {
+    return (
+        <Field label="Role" hint={ROLES[value]?.desc}>
+            <select className="select" value={value} onChange={e => onChange(e.target.value)} disabled={disabled}>
+                {Object.entries(ROLES).map(([k, r]) => <option key={k} value={k}>{r.label}</option>)}
+            </select>
+        </Field>
+    )
+}
+
+function CreateUserModal({ onClose, onDone }) {
+    const toast = useToast()
+    const [f, setF] = useState({ username: '', display_name: '', role: 'technician', password: '' })
+    const [saving, setSaving] = useState(false)
+    const problem = passwordProblem(f.password)
+    const ready = f.username.trim() && f.password && !problem
+    const set = (k) => (e) => setF(p => ({ ...p, [k]: e.target.value }))
+
+    const submit = async (e) => {
+        e.preventDefault()
+        if (!ready) return
+        setSaving(true)
+        try {
+            const res = await createUserAccount({
+                username: f.username.trim(),
+                password: f.password,
+                display_name: f.display_name.trim() || null,
+                role: f.role,
+            })
+            toast.success(`Created ${res.user?.display_name || f.username.trim()}`)
+            onDone(res.user)
+        } catch (err) {
+            toast.error(err.message)
+            setSaving(false)
+        }
     }
 
     return (
-        <div className="settings-card">
-            <h2>Email Notifications</h2>
+        <Modal title="Add user" onClose={onClose} footer={<>
+            <button className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className="btn primary" type="submit" form="create-user" disabled={!ready || saving}>{saving ? 'Creating…' : 'Create user'}</button>
+        </>}>
+            <form id="create-user" className="form" onSubmit={submit}>
+                <div className="form-row" style={{ alignItems: 'start' }}>
+                    <Field label="Username">
+                        <input className="input" value={f.username} onChange={set('username')} autoFocus autoComplete="off" />
+                    </Field>
+                    <Field label="Display name" hint="Optional. Defaults to the username.">
+                        <input className="input" value={f.display_name} onChange={set('display_name')} />
+                    </Field>
+                </div>
+                <RoleSelect value={f.role} onChange={role => setF(p => ({ ...p, role }))} />
+                <Field label="Temporary password" hint={problem || `At least ${MIN_PASSWORD} characters. Share it with them privately.`}>
+                    <input className="input" type="password" value={f.password} onChange={set('password')} autoComplete="new-password" />
+                </Field>
+                <div className="callout">
+                    <Icon name="alert" size={16} />
+                    <span>They'll be asked to choose their own password the first time they sign in.{f.role === 'customer' ? ' After creating, pick which job sites this customer can see.' : ''}</span>
+                </div>
+            </form>
+        </Modal>
+    )
+}
 
-            {emailStatus && (
-                <div style={{ marginBottom: 12, padding: 10, background: emailStatus.configured ? 'rgba(46, 204, 113, 0.08)' : 'rgba(231, 76, 60, 0.08)', border: `1px solid ${emailStatus.configured ? '#2ecc71' : '#e74c3c'}`, borderRadius: 'var(--radius)', fontSize: '12px' }}>
-                    <div style={{ fontWeight: 600, color: emailStatus.configured ? '#2ecc71' : '#e74c3c' }}>
-                        {emailStatus.configured ? '✓ SendGrid Configured' : '✗ SendGrid Not Configured'}
+function EditUserModal({ target, isSelf, onClose, onDone }) {
+    const toast = useToast()
+    const [f, setF] = useState({
+        display_name: target.display_name || '',
+        email: target.email || '',
+        role: target.role,
+        active: target.active !== false,
+        digest_enabled: !!target.digest_enabled,
+    })
+    const [saving, setSaving] = useState(false)
+
+    const submit = async (e) => {
+        e.preventDefault()
+        const updates = {}
+        if (f.display_name.trim() && f.display_name.trim() !== (target.display_name || '')) updates.display_name = f.display_name.trim()
+        if (f.email.trim() !== (target.email || '')) updates.email = f.email.trim()
+        if (!isSelf && f.role !== target.role) updates.role = f.role
+        if (!isSelf && f.active !== (target.active !== false)) updates.active = f.active
+        if (f.digest_enabled !== !!target.digest_enabled) updates.digest_enabled = f.digest_enabled
+        if (!Object.keys(updates).length) return onClose()
+        setSaving(true)
+        try {
+            await updateUserAccount(target.id, updates)
+            toast.success(`Updated ${f.display_name.trim() || target.username}`)
+            onDone()
+        } catch (err) {
+            toast.error(err.message)
+            setSaving(false)
+        }
+    }
+
+    return (
+        <Modal title={`Edit ${target.display_name || target.username}`} onClose={onClose} footer={<>
+            <button className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className="btn primary" type="submit" form="edit-user" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
+        </>}>
+            <form id="edit-user" className="form" onSubmit={submit}>
+                <Field label="Display name">
+                    <input className="input" value={f.display_name} onChange={e => setF(p => ({ ...p, display_name: e.target.value }))} />
+                </Field>
+                <Field label="Email">
+                    <input className="input" type="email" value={f.email} onChange={e => setF(p => ({ ...p, email: e.target.value }))} placeholder="Used for the digest and @mentions" />
+                </Field>
+                <RoleSelect value={f.role} onChange={role => setF(p => ({ ...p, role }))} disabled={isSelf} />
+                <label className="check">
+                    <input type="checkbox" checked={f.active} disabled={isSelf} onChange={e => setF(p => ({ ...p, active: e.target.checked }))} />
+                    Account is active (can sign in)
+                </label>
+                <label className="check">
+                    <input type="checkbox" checked={f.digest_enabled} onChange={e => setF(p => ({ ...p, digest_enabled: e.target.checked }))} />
+                    Receives the morning digest email
+                </label>
+                {f.digest_enabled && !f.email.trim() && <div className="callout warn">Add an email address, or the digest has nowhere to go.</div>}
+                {isSelf && <span className="faint" style={{ fontSize: 12.5 }}>You can't change your own role or deactivate yourself.</span>}
+            </form>
+        </Modal>
+    )
+}
+
+function ResetPasswordModal({ target, onClose }) {
+    const toast = useToast()
+    const [pw, setPw] = useState('')
+    const [saving, setSaving] = useState(false)
+    const problem = passwordProblem(pw)
+
+    const submit = async (e) => {
+        e.preventDefault()
+        if (!pw || problem) return
+        setSaving(true)
+        try {
+            await resetUserPassword(target.id, pw)
+            toast.success(`Password reset for ${target.display_name || target.username}`)
+            onClose()
+        } catch (err) {
+            toast.error(err.message)
+            setSaving(false)
+        }
+    }
+
+    return (
+        <Modal title="Reset password" onClose={onClose} footer={<>
+            <button className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className="btn primary" type="submit" form="reset-pw" disabled={!pw || !!problem || saving}>{saving ? 'Resetting…' : 'Reset password'}</button>
+        </>}>
+            <form id="reset-pw" className="form" onSubmit={submit}>
+                <p>Set a temporary password for <b>{target.display_name || target.username}</b>.</p>
+                <Field label="Temporary password" hint={problem || `At least ${MIN_PASSWORD} characters.`}>
+                    <input className="input" type="password" value={pw} onChange={e => setPw(e.target.value)} autoFocus autoComplete="new-password" />
+                </Field>
+                <div className="callout">
+                    <Icon name="alert" size={16} />
+                    <span>They'll have to choose a new password the next time they sign in.</span>
+                </div>
+            </form>
+        </Modal>
+    )
+}
+
+function SiteAccessModal({ target, onClose }) {
+    const toast = useToast()
+    const [sites, setSites] = useState(null)
+    const [selected, setSelected] = useState(new Set())
+    const [q, setQ] = useState('')
+    const [saving, setSaving] = useState(false)
+    const [loadError, setLoadError] = useState(null)
+
+    // Load once per customer (not on every parent re-render, which would wipe unsaved ticks)
+    useEffect(() => {
+        let alive = true
+        Promise.all([fetchJobSites(), fetchCustomerSiteAccess(target.id)])
+            .then(([js, access]) => {
+                if (!alive) return
+                const list = (js.job_sites || []).slice().sort((a, b) =>
+                    ((a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1)) || a.name.localeCompare(b.name, undefined, { numeric: true }))
+                setSites(list)
+                setSelected(new Set(access.sites || []))
+            })
+            .catch(err => { if (alive) setLoadError(err.message) })
+        return () => { alive = false }
+    }, [target.id])
+
+    const shown = useMemo(() => {
+        const term = q.trim().toLowerCase()
+        return (sites || []).filter(s => !term || [s.name, s.address, s.company_name, String(s.uid || s.id)].some(v => v && String(v).toLowerCase().includes(term)))
+    }, [sites, q])
+
+    const toggle = (id) => setSelected(prev => {
+        const next = new Set(prev)
+        next.has(id) ? next.delete(id) : next.add(id)
+        return next
+    })
+
+    const save = async () => {
+        setSaving(true)
+        try {
+            await updateCustomerSiteAccess(target.id, [...selected])
+            toast.success(`${target.display_name || target.username} can now see ${plural(selected.size, 'site')}`)
+            onClose()
+        } catch (err) {
+            toast.error(err.message)
+            setSaving(false)
+        }
+    }
+
+    return (
+        <Modal wide title={`Site access: ${target.display_name || target.username}`} onClose={onClose} footer={<>
+            <span className="faint" style={{ marginRight: 'auto', alignSelf: 'center' }}>{selected.size} of {sites?.length ?? 0} selected</span>
+            <button className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className="btn primary" onClick={save} disabled={!sites || saving}>{saving ? 'Saving…' : 'Save access'}</button>
+        </>}>
+            {loadError ? <div className="callout crit">{loadError}</div> : !sites ? <Loading /> : (
+                <div style={{ display: 'grid', gap: 12 }}>
+                    <p className="muted">This customer sees read-only trailer health for the sites you tick, in their portal.</p>
+                    <Search value={q} onChange={setQ} placeholder="Search site, customer, address…" />
+                    <div className="card" style={{ maxHeight: 380, overflowY: 'auto' }}>
+                        {shown.length === 0 ? <Empty compact>No sites match "{q}".</Empty> : (
+                            <div className="list">
+                                {shown.map(s => (
+                                    <label key={s.id} className="list-row clickable" style={{ padding: '10px 14px' }}>
+                                        <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }} />
+                                        <div className="main">
+                                            <div className="title">
+                                                {s.name}
+                                                {s.is_headquarters && <Badge tone="info">HQ</Badge>}
+                                                {s.status && s.status !== 'active' && <Badge tone="off">{humanize(s.status)}</Badge>}
+                                            </div>
+                                            <div className="desc">{[s.company_name, s.address].filter(Boolean).join(' · ') || 'No customer or address'}</div>
+                                        </div>
+                                        <div className="side">{plural(s.trailer_count || 0, 'trailer')}</div>
+                                    </label>
+                                ))}
+                            </div>
+                        )}
                     </div>
-                    {emailStatus.configured && (
-                        <div style={{ color: 'var(--text-muted)', marginTop: 4, fontSize: '11px' }}>
-                            From: {emailStatus.config.fromEmail} · {emailStatus.config.recipientCount} recipient(s)
+                </div>
+            )}
+        </Modal>
+    )
+}
+
+// ------------------------------------------------------------
+// Notifications
+// ------------------------------------------------------------
+const TEST_EMAILS = [
+    { type: 'alert', label: 'Energy alert', desc: 'A sample 3-day energy deficit alert' },
+    { type: 'digest', label: 'Morning digest', desc: "Today's real digest, sent to the alert recipients" },
+    { type: 'geofence', label: 'Geofence breach', desc: 'A sample "trailer left its site" alert' },
+]
+
+function NotificationsTab() {
+    const toast = useToast()
+    const [status, setStatus] = useState(null)
+    const [statusError, setStatusError] = useState(null)
+    const [sending, setSending] = useState(null)
+
+    useEffect(() => {
+        fetchEmailConfigStatus().then(setStatus).catch(err => setStatusError(err.message))
+    }, [])
+
+    const sendTest = async (type, label) => {
+        setSending(type)
+        try {
+            const res = await sendTestEmail(type)
+            if (res.success) toast.success(`Test ${label.toLowerCase()} email sent to ${(res.recipients || []).join(', ') || 'the alert recipients'}`)
+            else toast.error(res.error || 'Test email failed')
+        } catch (err) {
+            toast.error(err.message)
+        }
+        setSending(null)
+    }
+
+    const cfg = status?.config || {}
+    const configured = !!status?.configured
+
+    return (
+        <div className="stack">
+            <div className="grid-2">
+                <Card title="Email delivery">
+                    {statusError ? <div className="callout crit">{statusError}</div> : !status ? <Loading /> : (
+                        <div style={{ display: 'grid', gap: 14 }}>
+                            <div>{configured ? <Badge tone="ok" dot>Email is set up</Badge> : <Badge tone="warn" dot>Email is not set up</Badge>}</div>
+                            <KV items={[
+                                ['Sends from', cfg.fromEmail],
+                                ['Alert recipients', cfg.recipientCount ? (cfg.recipients || []).join(', ') : <span className="faint">None</span>],
+                                ['SendGrid key', cfg.hasApiKey ? 'Present' : <span className="faint">Missing</span>],
+                            ]} />
+                            {!configured && (
+                                <p className="faint" style={{ fontSize: 12.5 }}>
+                                    Email is configured on the server (SENDGRID_API_KEY, ALERT_FROM_EMAIL, ALERT_EMAIL_RECIPIENTS). Until then, alerts and digests aren't sent.
+                                </p>
+                            )}
                         </div>
                     )}
-                </div>
-            )}
-
-            <p className="settings-desc">
-                Alert emails are sent for energy deficits, geofence breaches, and low SOC warnings.
-                Daily digests can be enabled with <code>DIGEST_ENABLED=true</code>. Users can subscribe to digests in the User Management section.
-            </p>
-            <div className="settings-actions">
-                <button className="btn btn-secondary" onClick={handlePreview} disabled={loadingPreview}>
-                    {loadingPreview ? 'Loading...' : 'Preview Digest'}
-                </button>
-                <button className="btn btn-secondary" onClick={() => handleTestEmail('alert')} disabled={sendingEmail}>
-                    {sendingEmail ? 'Sending...' : 'Test Alert'}
-                </button>
-                <button className="btn btn-secondary" onClick={() => handleTestEmail('digest')} disabled={sendingEmail}>
-                    {sendingEmail ? 'Sending...' : 'Test Digest'}
-                </button>
-                <button className="btn btn-secondary" onClick={() => handleTestEmail('geofence')} disabled={sendingEmail}>
-                    {sendingEmail ? 'Sending...' : 'Test Geofence'}
-                </button>
-            </div>
-
-            {/* Digest Preview Modal */}
-            {showPreview && preview && (
-                <div className="maint-form-overlay" onClick={() => setShowPreview(false)}>
-                    <div className="maint-form-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 600 }}>
-                        <div className="maint-form-header">
-                            <h2>Daily Digest Preview</h2>
-                            <button className="detail-close" onClick={() => setShowPreview(false)}>✕</button>
-                        </div>
-                        <div style={{ padding: '16px 24px', maxHeight: 500, overflowY: 'auto' }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16, padding: 12, background: 'var(--bg-primary)', borderRadius: 'var(--radius)' }}>
-                                <div><span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Fleet Size</span><br /><strong>{preview.fleet_size}</strong></div>
-                                <div><span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Avg SOC</span><br /><strong>{preview.avg_soc?.toFixed(1)}%</strong></div>
-                                <div><span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Total Yield</span><br /><strong>{preview.total_yield_kwh?.toFixed(1)} kWh</strong></div>
+                </Card>
+                <Card title="Send a test email">
+                    <div className="list" style={{ margin: '-16px -18px' }}>
+                        {TEST_EMAILS.map(t => (
+                            <div key={t.type} className="list-row">
+                                <div className="main">
+                                    <div className="title">{t.label}</div>
+                                    <div className="desc">{t.desc}</div>
+                                </div>
+                                <button className="btn sm" disabled={!configured || sending != null} onClick={() => sendTest(t.type, t.label)}>
+                                    {sending === t.type ? 'Sending…' : 'Send test'}
+                                </button>
                             </div>
-                            {preview.trailers_below_50_soc?.length > 0 && (
-                                <div style={{ marginBottom: 16 }}>
-                                    <strong style={{ color: 'var(--warning)', fontSize: '13px' }}>⚠ Low SOC Trailers ({preview.trailers_below_50_soc.length})</strong>
-                                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                        {preview.trailers_below_50_soc.map((t, i) => (
-                                            <span key={i} style={{ display: 'inline-block', padding: '4px 10px', background: 'var(--bg-card)', borderRadius: 'var(--radius)', fontSize: '12px', border: '1px solid var(--border)' }}>
-                                                {t.site_name}: <strong>{t.battery_soc?.toFixed(0)}%</strong>
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                            {preview.active_alerts?.length > 0 && (
-                                <div style={{ marginBottom: 16 }}>
-                                    <strong style={{ color: 'var(--danger)', fontSize: '13px' }}>🚨 Active Alerts ({preview.active_alerts.length})</strong>
-                                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                        {preview.active_alerts.map((a, i) => (
-                                            <span key={i} style={{ display: 'inline-block', padding: '4px 10px', background: 'var(--bg-card)', borderRadius: 'var(--radius)', fontSize: '12px', border: '1px solid var(--border)' }}>
-                                                {a.site_name}: <strong>{a.severity}</strong> ({a.streak_days}d)
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                            {preview.predictive_warnings?.length > 0 && (
-                                <div>
-                                    <strong style={{ color: 'var(--warning)', fontSize: '13px' }}>📊 Predictive Warnings ({preview.predictive_warnings.length})</strong>
-                                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                        {preview.predictive_warnings.map((p, i) => (
-                                            <span key={i} style={{ display: 'inline-block', padding: '4px 10px', background: 'var(--bg-card)', borderRadius: 'var(--radius)', fontSize: '12px', border: '1px solid var(--border)' }}>
-                                                {p.site_name}: <strong>{p.days_to_critical}d</strong> to critical
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
+                        ))}
                     </div>
-                </div>
-            )}
+                </Card>
+            </div>
+            <DigestPreview />
         </div>
     )
 }
 
-function SolarScoreTuningSection({ settings, toast, refetchSettings }) {
-    const defaults = {
-        throttle_soc_threshold: 95,
-        throttle_floor_soc: 98,
-        throttle_floor_score: 90,
-        throttle_panel_min_pct: 10,
-        score_excellent: 90,
-        score_good: 70,
-        score_fair: 50,
-    }
-    const initial = settings?.solar_score_config || defaults
-    const [config, setConfig] = useState(initial)
-    const [saving, setSaving] = useState(false)
+const signalWord = (dbm) => (dbm == null || dbm === 0) ? null : dbm >= -90 ? 'good' : dbm >= -105 ? 'fair' : 'poor'
 
-    useEffect(() => {
-        if (settings?.solar_score_config) setConfig(settings.solar_score_config)
-    }, [settings])
-
-    const handleChange = (key, val) => {
-        setConfig(c => ({ ...c, [key]: parseFloat(val) || 0 }))
-    }
-
-    const handleSave = async () => {
-        setSaving(true)
-        try {
-            await updateSolarScoreSettings(config)
-            toast.success('Solar score settings saved')
-            if (refetchSettings) refetchSettings()
-        } catch (err) {
-            toast.error('Error saving: ' + err.message)
-        }
-        setSaving(false)
-    }
-
-    const hasChanges = JSON.stringify(config) !== JSON.stringify(initial)
-
-    const fields = [
-        { key: 'throttle_soc_threshold', label: 'Throttle Detection SOC', desc: 'SOC % above which idle/float throttling is detected', unit: '%' },
-        { key: 'throttle_floor_soc', label: 'Score Floor SOC', desc: 'SOC % above which minimum score floor applies', unit: '%' },
-        { key: 'throttle_floor_score', label: 'Floor Score', desc: 'Minimum score when battery is full + throttled', unit: '%' },
-        { key: 'throttle_panel_min_pct', label: 'Panel Health Min', desc: 'Panel output % to confirm system is healthy while throttled', unit: '%' },
-        { key: 'score_excellent', label: 'Excellent Threshold', desc: 'Score >= this = "Excellent"', unit: '%' },
-        { key: 'score_good', label: 'Good Threshold', desc: 'Score >= this = "Good"', unit: '%' },
-        { key: 'score_fair', label: 'Fair Threshold', desc: 'Score >= this = "Fair" (below = "Poor")', unit: '%' },
-    ]
-
-    return (
-        <div className="settings-card">
-            <h2>Solar Score Tuning</h2>
-            <p className="settings-desc">
-                When batteries are full, the Victron MPPT throttles solar production (idle/float). These settings adjust how the solar score compensates for that throttling.
-            </p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, marginTop: 16 }}>
-                {fields.map(f => (
-                    <div key={f.key} style={{ padding: 12, background: 'var(--bg-primary)', borderRadius: 'var(--radius)' }}>
-                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>{f.label}</label>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <input
-                                type="number"
-                                min={0}
-                                max={100}
-                                step={1}
-                                value={config[f.key] ?? ''}
-                                onChange={e => handleChange(f.key, e.target.value)}
-                                style={{ width: 70, padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.9rem' }}
-                            />
-                            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{f.unit}</span>
-                        </div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 4 }}>{f.desc}</div>
-                    </div>
-                ))}
-            </div>
-            <div className="settings-actions" style={{ marginTop: 16 }}>
-                <button className="btn btn-primary" onClick={handleSave} disabled={saving || !hasChanges}>
-                    {saving ? 'Saving...' : 'Save Settings'}
-                </button>
-                {hasChanges && <span style={{ fontSize: '0.8rem', color: 'var(--warning)' }}>Unsaved changes</span>}
-            </div>
-        </div>
-    )
+function describeItem(item) {
+    if (item.type === 'low_soc') return `${item.severity === 'critical' ? 'Battery critical' : 'Battery low'}: ${fmtPct(item.soc)}`
+    if (item.type === 'alarm') return `Alarm: ${item.message}`
+    if (item.type === 'energy_deficit') return `Using more energy than it makes, ${plural(item.streak_days, 'day')} running${item.has_throttled ? ' (some days throttled)' : ''}`
+    return humanize(item.type)
 }
 
-function SettingsTabIcon({ type }) {
-    const icons = {
-        user: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
-        map: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>,
-        people: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
-        bell: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
-        database: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>,
-    }
-    return icons[type] || null
-}
+function DigestPreview() {
+    const [digest, setDigest] = useState(null)
+    const [error, setError] = useState(null)
+    const [loading, setLoading] = useState(false)
 
-function Settings() {
-    const { user, updateDisplayName } = useAuth()
-    const canEdit = user?.role === 'admin' || user?.role === 'technician'
-    const isAdmin = user?.role === 'admin'
-    const fetchSettingsFn = useCallback(() => fetchSettings(), [])
-    const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
-    const { data, loading, refetch } = useApiPolling(fetchSettingsFn, 60000)
-    const { data: jobSitesData, refetch: refetchJobSites } = useApiPolling(fetchJobSitesFn, 60000)
-
-    const toast = useToast()
-    const [retentionDays, setRetentionDays] = useState(null)
-    const [saving, setSaving] = useState(false)
-    const [purging, setPurging] = useState(false)
-    const [editingSiteId, setEditingSiteId] = useState(null)
-    const [editName, setEditName] = useState('')
-    const [reclustering, setReclustering] = useState(false)
-    const [expandedSite, setExpandedSite] = useState(null)
-    const [activeDrag, setActiveDrag] = useState(null)
-    const [overJobSiteId, setOverJobSiteId] = useState(null)
-
-    // Tab navigation
-    const [activeTab, setActiveTab] = useState(() => {
-        return localStorage.getItem('vrm_settings_tab') || 'general'
-    })
-    const handleTabChange = (tab) => {
-        setActiveTab(tab)
-        localStorage.setItem('vrm_settings_tab', tab)
-    }
-    const settingsTabs = [
-        { id: 'general', label: 'General', icon: 'user' },
-        { id: 'sites', label: 'Sites & GPS', icon: 'map' },
-        ...(isAdmin ? [{ id: 'users', label: 'Users', icon: 'people' }] : []),
-        ...(isAdmin ? [{ id: 'notifications', label: 'Notifications', icon: 'bell' }] : []),
-        { id: 'system', label: 'System', icon: 'database' },
-    ]
-
-    // GPS Verification state
-    const [gpsTrailers, setGpsTrailers] = useState(null)
-    const [gpsLoading, setGpsLoading] = useState(false)
-    const [gpsRefreshing, setGpsRefreshing] = useState(false)
-    const [unlinkedDevices, setUnlinkedDevices] = useState([])
-    const [linkingTrailerId, setLinkingTrailerId] = useState(null)
-
-    // Company linking state
-    const [companies, setCompanies] = useState([])
-    const [removingSiteId, setRemovingSiteId] = useState(null)
-    const [removeConfirmText, setRemoveConfirmText] = useState('')
-
-    const loadGpsData = async () => {
-        setGpsLoading(true)
+    const load = useCallback(async () => {
+        setLoading(true)
+        setError(null)
         try {
-            const [gpsData, devData] = await Promise.all([
-                fetchGpsTrailers(),
-                fetchUnlinkedIc2Devices(),
-            ])
-            setGpsTrailers(gpsData.trailers || [])
-            setUnlinkedDevices(devData.devices || [])
+            const res = await fetchDigestPreview()
+            setDigest(res.digest)
         } catch (err) {
-            toast.error('Error loading GPS data: ' + err.message)
+            setError(err.message)
         }
-        setGpsLoading(false)
-    }
-
-    const handleGpsRefresh = async () => {
-        setGpsRefreshing(true)
-        try {
-            const result = await refreshGps()
-            toast.success(`GPS refreshed: ${result.updated} devices updated from IC2`)
-            await loadGpsData()
-            refetchJobSites()
-        } catch (err) {
-            toast.error('GPS refresh failed: ' + err.message)
-        }
-        setGpsRefreshing(false)
-    }
-
-    const handleLinkDevice = async (siteId, ic2DeviceId) => {
-        try {
-            await linkIc2Device(siteId, ic2DeviceId)
-            toast.success('IC2 device linked successfully')
-            setLinkingTrailerId(null)
-            await loadGpsData()
-        } catch (err) {
-            toast.error('Error linking device: ' + err.message)
-        }
-    }
-
-    // My Profile state
-    const [editingProfile, setEditingProfile] = useState(false)
-    const [profileName, setProfileName] = useState(user?.display_name || '')
-    const [savingProfile, setSavingProfile] = useState(false)
-
-    const handleSaveProfile = async () => {
-        if (!profileName.trim()) return
-        setSavingProfile(true)
-        try {
-            await updateDisplayName(profileName.trim())
-            toast.success('Display name updated')
-            setEditingProfile(false)
-        } catch (err) {
-            toast.error('Error updating profile: ' + err.message)
-        }
-        setSavingProfile(false)
-    }
-
-    // User Management state (admin only)
-    const [users, setUsers] = useState([])
-    const [usersLoading, setUsersLoading] = useState(false)
-    const [showCreateUser, setShowCreateUser] = useState(false)
-    const [newUser, setNewUser] = useState({ username: '', password: '', display_name: '', role: 'viewer' })
-    const [creatingUser, setCreatingUser] = useState(false)
-    const [resetPwUserId, setResetPwUserId] = useState(null)
-    const [resetPwValue, setResetPwValue] = useState('')
-
-    const loadUsers = useCallback(async () => {
-        setUsersLoading(true)
-        try {
-            const data = await fetchUsers()
-            setUsers(data.users || [])
-        } catch (err) {
-            toast.error('Error loading users: ' + err.message)
-        }
-        setUsersLoading(false)
-    }, [toast])
-
-    useEffect(() => {
-        if (user?.role === 'admin') loadUsers()
-    }, [user, loadUsers])
-
-
-    // Load companies for company column
-    useEffect(() => {
-        fetchCompanies().then(data => setCompanies(data?.companies || [])).catch(() => {})
+        setLoading(false)
     }, [])
 
-    const handleCompanyChange = async (siteId, companyId) => {
-        try {
-            await updateJobSite(siteId, { company_id: companyId || null })
-            refetchJobSites()
-        } catch (err) {
-            toast.error('Error updating company: ' + err.message)
-        }
-    }
+    useEffect(() => { load() }, [load])
 
-    const handleRemoveSite = async (siteId) => {
-        try {
-            await deleteJobSiteApi(siteId)
-            setRemovingSiteId(null)
-            setRemoveConfirmText('')
-            refetchJobSites()
-            toast.success('Site removed successfully')
-        } catch (err) {
-            toast.error('Error removing site: ' + err.message)
-        }
-    }
+    const d = digest
+    const y = d?.yesterday || {}
+    const cur = d?.current || {}
+    const net = d?.network || {}
+    const reported = (y.trailers_reporting || 0) > 0
 
-    const handleCreateUser = async (e) => {
-        e.preventDefault()
-        if (!newUser.username.trim() || !newUser.password.trim()) return
-        setCreatingUser(true)
-        try {
-            await createUserAccount({
-                username: newUser.username.trim(),
-                password: newUser.password,
-                display_name: newUser.display_name.trim() || null,
-                role: newUser.role,
-            })
-            toast.success(`User "${newUser.username}" created successfully`)
-            setNewUser({ username: '', password: '', display_name: '', role: 'viewer' })
-            setShowCreateUser(false)
-            loadUsers()
-        } catch (err) {
-            toast.error('Error creating user: ' + err.message)
-        }
-        setCreatingUser(false)
-    }
+    return (
+        <Card title="Morning digest preview" meta={d ? 'what the email would say right now' : null}
+            actions={<button className="btn sm ghost" onClick={load} disabled={loading}><Icon name="refresh" />{loading ? 'Loading…' : 'Refresh'}</button>}>
+            {error ? <div className="callout crit">{error}</div> : !d ? <Loading /> : (
+                <div className="stack">
+                    <Stats>
+                        <Stat label="Deployed trailers" value={d.fleet_size ?? '—'}
+                            hint={d.fleet_breakdown ? `${d.fleet_breakdown.vrm} with Victron · ${d.fleet_breakdown.ic2_only} router-only` : null} />
+                        <Stat label="Reporting now" value={cur.online ?? '—'} unit={cur.total != null ? `/ ${cur.total}` : null} />
+                        <Stat label="Average battery now" value={cur.online ? fmtPct(cur.avg_soc) : '—'} />
+                        <Stat label="Solar yesterday" value={reported ? fmtNum(y.total_yield_kwh, 1) : '—'} unit={reported ? 'kWh' : null}
+                            hint={reported ? `${plural(y.trailers_reporting, 'trailer')} reporting` : 'No data for yesterday'} />
+                    </Stats>
 
-    const handleRoleChange = async (userId, newRole) => {
-        try {
-            await updateUserAccount(userId, { role: newRole })
-            toast.success('Role updated')
-            loadUsers()
-        } catch (err) {
-            toast.error('Error updating role: ' + err.message)
-        }
-    }
+                    <div className="grid-2">
+                        <DigestList title="Dispatch now" tone="crit" items={d.critical_items || []} empty="Nothing critical." />
+                        <DigestList title="Watch" tone="warn" items={d.watch_items || []} empty="Nothing on the watch list." />
+                    </div>
 
-    const formatLastLogin = (ts) => {
-        if (!ts) return 'Never'
-        const d = new Date(Number(ts))
-        if (isNaN(d.getTime())) return 'Never'
-        const now = Date.now()
-        const diff = now - d.getTime()
-        if (diff < 60000) return 'Just now'
-        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-        if (diff < 7 * 86400000) return `${Math.floor(diff / 86400000)}d ago`
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-    }
-
-    const handleResetPassword = async (userId) => {
-        if (!resetPwValue.trim()) return
-        try {
-            await resetUserPassword(userId, resetPwValue)
-            toast.success('Password reset successfully')
-            setResetPwUserId(null)
-            setResetPwValue('')
-        } catch (err) {
-            toast.error('Error resetting password: ' + err.message)
-        }
-    }
-
-    const handleDeleteUser = async (u) => {
-        if (!confirm(`Delete user "${u.username}"? This cannot be undone.`)) return
-        try {
-            await deleteUserAccount(u.id)
-            toast.success(`User "${u.username}" deleted`)
-            loadUsers()
-        } catch (err) {
-            toast.error('Error deleting user: ' + err.message)
-        }
-    }
-
-    const sensors = useSensors(
-        useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+                    <div className="grid-3">
+                        <Card title="Yesterday">
+                            <KV items={[
+                                ['Avg battery at end of day', reported ? fmtPct(y.avg_eod_soc) : '—'],
+                                ['Solar produced', reported ? fmtKwh(y.total_yield_kwh) : '—'],
+                                ['Cellular data used', y.total_data_gb ? `${fmtNum(y.total_data_gb, 1)} GB` : '—'],
+                                ['Trailers reporting', fmtNum(y.trailers_reporting)],
+                            ]} />
+                        </Card>
+                        <Card title="Solar vs forecast (yesterday)">
+                            {!(d.top_performers?.length || d.underperformers?.length) ? <span className="faint">No forecast comparison for yesterday.</span> : (
+                                <div style={{ display: 'grid', gap: 12 }}>
+                                    {d.underperformers?.length > 0 && <PerfList label="Under 70% of forecast" tone="warn" rows={d.underperformers} />}
+                                    {d.top_performers?.length > 0 && <PerfList label="Beat forecast" tone="ok" rows={d.top_performers} />}
+                                </div>
+                            )}
+                        </Card>
+                        <Card title="Network (yesterday)">
+                            <KV items={[
+                                ['Average signal', net.avg_signal_dbm ? `${fmtNum(net.avg_signal_dbm)} dBm (${signalWord(net.avg_signal_dbm)})` : '—'],
+                                ['Data used', net.total_data_gb ? `${fmtNum(net.total_data_gb, 1)} GB` : '—'],
+                            ]} />
+                            {net.high_usage?.length > 0 && (
+                                <div style={{ marginTop: 12 }}>
+                                    <div className="faint" style={{ fontSize: 12.5, marginBottom: 6 }}>Heavy data users (over 0.5 GB)</div>
+                                    <KV items={net.high_usage.map(h => [h.device, `${fmtNum(h.usage_gb, 1)} GB`])} />
+                                </div>
+                            )}
+                        </Card>
+                    </div>
+                </div>
+            )}
+        </Card>
     )
+}
 
-    const settings = data || {}
-    const jobSites = jobSitesData?.job_sites || []
-    const displayRetention = retentionDays ?? settings.retention_days ?? 90
+function DigestList({ title, tone, items, empty }) {
+    return (
+        <Card title={title} meta={items.length || null} flush>
+            {items.length === 0 ? <AllClear>{empty}</AllClear> : (
+                <div className="list">
+                    {items.map((it, i) => (
+                        <div key={i} className="list-row">
+                            <Dot tone={tone} />
+                            <div className="main">
+                                <div className="title">{it.trailer}</div>
+                                <div className="desc">{describeItem(it)}</div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </Card>
+    )
+}
 
-    // Sort job sites: active first, then by name
-    const sortedJobSites = useMemo(() => {
-        return [...jobSites].sort((a, b) => {
-            if (a.status === 'active' && b.status !== 'active') return -1
-            if (a.status !== 'active' && b.status === 'active') return 1
-            return a.name.localeCompare(b.name, undefined, { numeric: true })
-        })
-    }, [jobSites])
+function PerfList({ label, tone, rows }) {
+    return (
+        <div>
+            <div className="faint" style={{ fontSize: 12.5, marginBottom: 6 }}>{label}</div>
+            <KV items={rows.map(p => [p.site_name, <span key="v"><Badge tone={tone}>{fmtPct(p.percent)}</Badge> <span className="faint">{fmtKwh(p.yield_kwh)}</span></span>])} />
+        </div>
+    )
+}
 
-    const handleSave = async () => {
-        setSaving(true)
+// ------------------------------------------------------------
+// Fleet rules
+// ------------------------------------------------------------
+const SCORE_FIELDS = [
+    { group: 'When the battery is full', key: 'throttle_soc_threshold', label: 'Treat solar as throttled above', unit: '% battery', desc: 'A full battery makes the charger hold back solar. Above this charge, low output is not counted as a panel problem.' },
+    { group: 'When the battery is full', key: 'throttle_floor_soc', label: 'Guarantee a minimum score above', unit: '% battery', desc: 'Trailers this full get at least the minimum score below.' },
+    { group: 'When the battery is full', key: 'throttle_floor_score', label: 'Minimum score for a full battery', unit: 'score', desc: 'The lowest solar score a full, throttled trailer can get.' },
+    { group: 'When the battery is full', key: 'throttle_panel_min_pct', label: 'Panels count as healthy above', unit: '% of rated', desc: 'While throttled, panels producing at least this much are treated as working.' },
+    { group: 'Score ratings', key: 'score_excellent', label: 'Excellent at or above', unit: 'score' },
+    { group: 'Score ratings', key: 'score_good', label: 'Good at or above', unit: 'score' },
+    { group: 'Score ratings', key: 'score_fair', label: 'Fair at or above', unit: 'score', desc: 'Anything lower is rated Poor.' },
+]
+const RETENTION_OPTIONS = [7, 30, 90, 180, 365]
+
+function FleetRulesTab() {
+    const toast = useToast()
+    const fetchFn = useCallback(() => fetchSettings(), [])
+    const { data, loading, refetch } = useApiPolling(fetchFn, 120000)
+    const saved = data?.solar_score_config
+
+    const [config, setConfig] = useState(null)
+    useEffect(() => { if (saved && !config) setConfig(saved) }, [saved, config])
+    const [savingScore, setSavingScore] = useState(false)
+
+    const dirtyScore = config && saved && SCORE_FIELDS.some(f => Number(config[f.key]) !== Number(saved[f.key]))
+    const invalid = config && SCORE_FIELDS.find(f => {
+        const v = Number(config[f.key])
+        return config[f.key] === '' || isNaN(v) || v < 0 || v > 100
+    })
+    const orderProblem = config && !(Number(config.score_excellent) > Number(config.score_good) && Number(config.score_good) > Number(config.score_fair))
+        ? 'Ratings should go Excellent > Good > Fair.' : null
+
+    const saveScore = async () => {
+        setSavingScore(true)
         try {
-            await updateSettings({ retention_days: displayRetention })
-            toast.success('Settings saved successfully!')
+            const body = Object.fromEntries(SCORE_FIELDS.map(f => [f.key, Number(config[f.key])]))
+            const res = await updateSolarScoreSettings(body)
+            if (res.success === false) throw new Error(res.error || 'Not saved')
+            if (res.solar_score_config) setConfig(res.solar_score_config)
+            toast.success('Solar scoring updated')
             refetch()
         } catch (err) {
-            toast.error('Error saving settings: ' + err.message)
+            toast.error(err.message)
         }
-        setSaving(false)
+        setSavingScore(false)
     }
 
-    const handlePurge = async () => {
-        if (!confirm('Are you sure you want to purge old data? This cannot be undone.')) return
+    const [retention, setRetention] = useState(null)
+    const shownRetention = retention ?? data?.retention_days ?? 90
+    const [savingRet, setSavingRet] = useState(false)
+    const [confirmPurge, setConfirmPurge] = useState(false)
+    const [purging, setPurging] = useState(false)
+
+    const saveRetention = async () => {
+        setSavingRet(true)
+        try {
+            const res = await updateSettings({ retention_days: shownRetention })
+            if (res.success === false) throw new Error(res.error || 'Not saved')
+            toast.success(`History is now kept for ${shownRetention} days`)
+            setRetention(null)
+            refetch()
+        } catch (err) {
+            toast.error(err.message)
+        }
+        setSavingRet(false)
+    }
+
+    const purge = async () => {
         setPurging(true)
         try {
-            const result = await purgeData()
-            toast.success(`Purge complete. ${result.snapshot_count} snapshots remain.`)
+            const res = await purgeData()
+            if (res.success === false) throw new Error(res.error || 'Purge failed')
+            toast.success(`Old data removed. ${fmtNum(res.snapshot_count)} snapshots remain (${fmtBytes(res.db_size_bytes)}).`)
+            setConfirmPurge(false)
             refetch()
         } catch (err) {
-            toast.error('Error purging data: ' + err.message)
+            toast.error(err.message)
         }
         setPurging(false)
     }
 
-    const handleRecluster = async () => {
-        if (!confirm('Re-run GPS clustering? This will reassign trailers that are not manually overridden.')) return
-        setReclustering(true)
-        try {
-            const result = await reclusterJobSites()
-            toast.success(`Clustering complete. ${result.job_site_count} job sites, ${result.assignments} trailer assignments.`)
-            refetchJobSites()
-        } catch (err) {
-            toast.error('Error reclustering: ' + err.message)
-        }
-        setReclustering(false)
-    }
-
-    const handleSaveSiteName = async (siteId) => {
-        if (!editName.trim()) return
-        try {
-            await updateJobSite(siteId, { name: editName.trim() })
-            setEditingSiteId(null)
-            setEditName('')
-            refetchJobSites()
-        } catch (err) {
-            toast.error('Error renaming site: ' + err.message)
-        }
-    }
-
-    const handleToggleHq = async (siteId, currentValue) => {
-        try {
-            await updateJobSite(siteId, { is_headquarters: !currentValue })
-            refetchJobSites()
-        } catch (err) {
-            toast.error('Error updating HQ status: ' + err.message)
-        }
-    }
-
-    const handleReassignTrailer = async (trailerId, newJobSiteId) => {
-        try {
-            await assignTrailer(newJobSiteId, trailerId)
-            toast.success('Trailer reassigned successfully')
-            refetchJobSites()
-        } catch (err) {
-            toast.error('Error reassigning trailer: ' + err.message)
-        }
-    }
-
-    const handleDragStart = (event) => {
-        setActiveDrag(event.active.data.current)
-    }
-
-    const handleDragOver = (event) => {
-        const overId = event.over?.id
-        if (overId && String(overId).startsWith('jobsite-')) {
-            setOverJobSiteId(parseInt(String(overId).replace('jobsite-', '')))
-        } else {
-            setOverJobSiteId(null)
-        }
-    }
-
-    const handleDragEnd = (event) => {
-        const { active, over } = event
-        setActiveDrag(null)
-        setOverJobSiteId(null)
-        if (!over) return
-        const overId = String(over.id)
-        if (!overId.startsWith('jobsite-')) return
-        const newJobSiteId = parseInt(overId.replace('jobsite-', ''))
-        const trailerId = active.data.current.trailerId
-        const fromJobSiteId = active.data.current.fromJobSiteId
-        if (newJobSiteId === fromJobSiteId) return
-        handleReassignTrailer(trailerId, newJobSiteId)
-    }
-
-    const formatBytes = (bytes) => {
-        if (!bytes) return '0 B'
-        const sizes = ['B', 'KB', 'MB', 'GB']
-        const i = Math.floor(Math.log(bytes) / Math.log(1024))
-        return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`
-    }
-
-    if (loading && !data) {
-        return (
-            <div className="settings-page">
-                <div className="page-header">
-                    <div className="skeleton skeleton-text" style={{ width: 160, height: 28 }}></div>
-                    <div className="skeleton skeleton-text" style={{ width: 320, height: 16, marginTop: 8 }}></div>
-                </div>
-                <div className="settings-grid">
-                    {[1, 2, 3].map(i => (
-                        <div key={i} className="settings-card skeleton-card">
-                            <div className="skeleton skeleton-text" style={{ width: '50%', height: 18 }}></div>
-                            <div className="skeleton skeleton-text" style={{ width: '80%', height: 14, marginTop: 12 }}></div>
-                            <div className="skeleton skeleton-text" style={{ width: '100%', height: 40, marginTop: 16 }}></div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        )
-    }
+    if (loading && !data) return <Loading />
+    const groups = [...new Set(SCORE_FIELDS.map(f => f.group))]
 
     return (
-        <div className="settings-page">
-            <div className="page-header">
-                <h1>Settings</h1>
-                <p className="page-subtitle">Manage sites, users, notifications, and system configuration</p>
-            </div>
-
-            <div className="settings-tabs">
-                {settingsTabs.map(tab => (
-                    <button
-                        key={tab.id}
-                        className={`settings-tab ${activeTab === tab.id ? 'active' : ''}`}
-                        onClick={() => handleTabChange(tab.id)}
-                    >
-                        <SettingsTabIcon type={tab.icon} />
-                        <span>{tab.label}</span>
-                    </button>
-                ))}
-            </div>
-
-            <div className="settings-grid">
-                {/* ====== TAB: General ====== */}
-                {activeTab === 'general' && <>
-                {/* My Profile */}
-                <div className="settings-card">
-                    <h2>My Profile</h2>
-                    <p className="settings-desc">Update your display name. Role and account type are managed by admins.</p>
-                    <div className="profile-section">
-                        <div className="profile-field">
-                            <label>Username</label>
-                            <span>{user?.username}</span>
-                        </div>
-                        <div className="profile-field">
-                            <label>Role</label>
-                            <span className={`role-badge role-badge-${user?.role}`}>{user?.role}</span>
-                        </div>
-                        <div className="profile-field">
-                            <label>Display Name</label>
-                            {editingProfile ? (
-                                <div className="inline-edit-compact">
-                                    <input
-                                        type="text"
-                                        value={profileName}
-                                        onChange={e => setProfileName(e.target.value)}
-                                        onKeyDown={e => {
-                                            if (e.key === 'Enter') handleSaveProfile()
-                                            if (e.key === 'Escape') setEditingProfile(false)
-                                        }}
-                                        autoFocus
-                                    />
-                                    <button className="btn btn-sm btn-primary" onClick={handleSaveProfile} disabled={savingProfile}>
-                                        {savingProfile ? 'Saving...' : 'Save'}
-                                    </button>
-                                    <button className="btn btn-sm btn-ghost" onClick={() => setEditingProfile(false)}>Cancel</button>
-                                </div>
-                            ) : (
-                                <span
-                                    className="clickable-name"
-                                    onClick={() => { setProfileName(user?.display_name || ''); setEditingProfile(true) }}
-                                >
-                                    {user?.display_name || '—'}
-                                </span>
-                            )}
-                        </div>
-                    </div>
-                </div>
-
-                {/* Documentation */}
-                <div className="settings-card">
-                    <h2>📚 Documentation & Help</h2>
-                    <p className="settings-desc">
-                        Complete guide to the Intelligence Analysis & Alerting System, including energy deficit detection,
-                        solar performance scoring, action queue, morning digest, and troubleshooting scenarios.
-                    </p>
-                    <div className="settings-actions">
-                        <Link to="/help" className="btn btn-primary" style={{ textDecoration: 'none' }}>
-                            📖 View Documentation
-                        </Link>
-                    </div>
-                </div>
-                </>}
-
-                {/* ====== TAB: Users ====== */}
-                {activeTab === 'users' && isAdmin && <>
-                {/* User Management */}
-                <div className="settings-card settings-card-wide">
-                    <div className="settings-card-header">
-                        <h2>User Management</h2>
-                            <button
-                                className="btn btn-primary"
-                                onClick={() => setShowCreateUser(true)}
-                            >
-                                + Create User
-                            </button>
-                        </div>
-                        <p className="settings-desc">
-                            Manage user accounts, roles, and access. Roles: Admin (full access), Technician (maintenance + fleet), Viewer (read-only).
-                            Users with emails can subscribe to daily digest emails.
-                        </p>
-
-                        {/* Create User Modal */}
-                        {showCreateUser && (
-                            <div className="maint-form-overlay" onClick={() => setShowCreateUser(false)}>
-                                <div className="maint-form-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
-                                    <div className="maint-form-header">
-                                        <h2>Create User</h2>
-                                        <button className="detail-close" onClick={() => setShowCreateUser(false)}>✕</button>
-                                    </div>
-                                    <form onSubmit={handleCreateUser} className="maint-form">
-                                        <div className="maint-form-grid">
-                                            <div className="form-group">
-                                                <label>Username *</label>
-                                                <input
-                                                    type="text"
-                                                    value={newUser.username}
-                                                    onChange={e => setNewUser(p => ({ ...p, username: e.target.value }))}
-                                                    placeholder="username"
-                                                    required
-                                                    autoFocus
-                                                />
-                                            </div>
-                                            <div className="form-group">
-                                                <label>Password *</label>
-                                                <input
-                                                    type="password"
-                                                    value={newUser.password}
-                                                    onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))}
-                                                    placeholder="password"
-                                                    required
-                                                />
-                                            </div>
-                                            <div className="form-group">
-                                                <label>Display Name</label>
-                                                <input
-                                                    type="text"
-                                                    value={newUser.display_name}
-                                                    onChange={e => setNewUser(p => ({ ...p, display_name: e.target.value }))}
-                                                    placeholder="Full Name"
-                                                />
-                                            </div>
-                                            <div className="form-group">
-                                                <label>Role</label>
-                                                <select
-                                                    value={newUser.role}
-                                                    onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}
-                                                >
-                                                    <option value="admin">Admin</option>
-                                                    <option value="technician">Technician</option>
-                                                    <option value="viewer">Viewer</option>
-                                                    <option value="customer">Customer</option>
-                                                </select>
-                                            </div>
+        <div className="grid-main">
+            <Card title="Solar score"
+                foot="The solar score compares each trailer's solar output with its forecast. These rules keep full batteries from looking like dirty or broken panels.">
+                {!config ? <Loading /> : (
+                    <div className="form">
+                        {groups.map(g => (
+                            <div key={g} style={{ display: 'grid', gap: 12 }}>
+                                <div className="faint" style={{ fontSize: 11.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em' }}>{g}</div>
+                                {SCORE_FIELDS.filter(f => f.group === g).map(f => (
+                                    <div key={f.key} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 150px', gap: 16, alignItems: 'center' }}>
+                                        <div>
+                                            <div style={{ fontWeight: 550 }}>{f.label}</div>
+                                            {f.desc && <div className="faint" style={{ fontSize: 12.5, marginTop: 2 }}>{f.desc}</div>}
                                         </div>
-                                        <div className="maint-form-actions">
-                                            <button type="button" className="btn btn-ghost" onClick={() => setShowCreateUser(false)}>Cancel</button>
-                                            <button type="submit" className="btn btn-primary" disabled={creatingUser}>
-                                                {creatingUser ? 'Creating...' : 'Create User'}
-                                            </button>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <input className="input num" type="number" min={0} max={100} step={1} style={{ width: 76 }}
+                                                value={config[f.key] ?? ''} onChange={e => setConfig(c => ({ ...c, [f.key]: e.target.value }))} />
+                                            <span className="faint" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>{f.unit}</span>
                                         </div>
-                                    </form>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Users Table */}
-                        {usersLoading && users.length === 0 ? (
-                            <div className="empty-section"><p>Loading users...</p></div>
-                        ) : users.length === 0 ? (
-                            <div className="empty-section"><p>No users found.</p></div>
-                        ) : (
-                            <div className="jobsite-mgmt-table-wrapper">
-                                <table className="maint-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Username</th>
-                                            <th>Display Name</th>
-                                            <th>Email</th>
-                                            <th>Role</th>
-                                            <th>Digest</th>
-                                            <th>Last Login</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {users.map(u => (
-                                            <Fragment key={u.id}>
-                                                <tr className="maint-row">
-                                                    <td className="maint-title">
-                                                        {u.username}
-                                                        {u.google_id && <span className="sso-badge" title="Google SSO account">G</span>}
-                                                    </td>
-                                                    <td>{u.display_name || '—'}</td>
-                                                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.85em' }}>{u.email || '—'}</td>
-                                                    <td>
-                                                        <select
-                                                            className={`status-select status-select-${u.role === 'admin' ? 'active' : u.role === 'technician' ? 'standby' : 'completed'}`}
-                                                            value={u.role}
-                                                            onChange={e => handleRoleChange(u.id, e.target.value)}
-                                                            disabled={u.id === user.id}
-                                                        >
-                                                            <option value="admin">Admin</option>
-                                                            <option value="technician">Technician</option>
-                                                            <option value="viewer">Viewer</option>
-                                                            <option value="customer">Customer</option>
-                                                        </select>
-                                                    </td>
-                                                    <td style={{ textAlign: 'center' }}>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={u.digest_enabled || false}
-                                                            onChange={async (e) => {
-                                                                try {
-                                                                    await updateUserAccount(u.id, { digest_enabled: e.target.checked })
-                                                                    toast.success(`Digest ${e.target.checked ? 'enabled' : 'disabled'} for ${u.username}`)
-                                                                    loadUsers()
-                                                                } catch (err) {
-                                                                    toast.error('Error updating digest subscription: ' + err.message)
-                                                                }
-                                                            }}
-                                                            disabled={!u.email}
-                                                            title={u.email ? (u.digest_enabled ? 'Subscribed to daily digest' : 'Not subscribed to daily digest') : 'Email required for digest subscription'}
-                                                            style={{ cursor: u.email ? 'pointer' : 'not-allowed' }}
-                                                        />
-                                                    </td>
-                                                    <td style={{ fontSize: '0.85em', color: u.last_login ? 'var(--text-secondary)' : 'var(--text-muted)' }} title={u.last_login ? new Date(Number(u.last_login)).toLocaleString() : 'Never logged in'}>
-                                                        {formatLastLogin(u.last_login)}
-                                                    </td>
-                                                    <td className="maint-actions" style={{ display: 'flex', gap: 6 }}>
-                                                        {!u.google_id && (
-                                                            <button
-                                                                className="btn btn-sm btn-secondary"
-                                                                onClick={() => { setResetPwUserId(resetPwUserId === u.id ? null : u.id); setResetPwValue('') }}
-                                                            >
-                                                                Reset PW
-                                                            </button>
-                                                        )}
-                                                        <button
-                                                            className="btn btn-sm btn-danger"
-                                                            onClick={() => handleDeleteUser(u)}
-                                                            disabled={u.id === user.id}
-                                                            title="Delete user"
-                                                        >
-                                                            Delete
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                                {resetPwUserId === u.id && (
-                                                    <tr className="maint-row">
-                                                        <td colSpan={6}>
-                                                            <div className="inline-edit-compact">
-                                                                <input
-                                                                    type="password"
-                                                                    value={resetPwValue}
-                                                                    onChange={e => setResetPwValue(e.target.value)}
-                                                                    placeholder="New password"
-                                                                    autoFocus
-                                                                    onKeyDown={e => {
-                                                                        if (e.key === 'Enter') handleResetPassword(u.id)
-                                                                        if (e.key === 'Escape') { setResetPwUserId(null); setResetPwValue('') }
-                                                                    }}
-                                                                />
-                                                                <button className="btn btn-sm btn-primary" onClick={() => handleResetPassword(u.id)}>Save</button>
-                                                                <button className="btn btn-sm btn-ghost" onClick={() => { setResetPwUserId(null); setResetPwValue('') }}>Cancel</button>
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                )}
-                                            </Fragment>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </div>
-
-                {/* Customer Accounts */}
-                <CustomerAccountsSection jobSites={jobSites} toast={toast} loadUsers={loadUsers} />
-                </>}
-
-                {/* ====== TAB: Notifications ====== */}
-                {activeTab === 'notifications' && isAdmin && <>
-                {/* Communication Log */}
-                <CommunicationLogSection jobSites={jobSites} toast={toast} />
-
-                {/* Email Digest Settings */}
-                <DigestSettingsSection toast={toast} />
-
-                {/* Solar Score Tuning */}
-                <SolarScoreTuningSection settings={settings} toast={toast} refetchSettings={refetch} />
-                </>}
-
-                {/* ====== TAB: Sites & GPS ====== */}
-                {activeTab === 'sites' && <>
-                {/* Job Sites Management */}
-                <div className="settings-card settings-card-wide">
-                    <div className="settings-card-header">
-                        <h2>Job Sites</h2>
-                        {isAdmin && (
-                            <button
-                                className="btn btn-secondary"
-                                onClick={handleRecluster}
-                                disabled={reclustering}
-                            >
-                                {reclustering ? 'Clustering...' : 'Re-cluster GPS'}
-                            </button>
-                        )}
-                    </div>
-                    <p className="settings-desc">
-                        Site configuration: names, companies, geofences, and HQ. Trailers are automatically grouped by GPS
-                        proximity (300m threshold); use the Trailer Board below to drag trailers between sites.
-                        Deployment and billing lifecycle live on the Rentals page; trailer relocations are approved on the Fleet Home.
-                    </p>
-                    {sortedJobSites.length > 0 ? (
-                        <>
-                            {/* Site Management Table */}
-                            <div className="jobsite-mgmt-table-wrapper">
-                                <table className="jobsite-mgmt-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Name</th>
-                                            <th>Company</th>
-                                            <th>Geofence</th>
-                                            <th>Address</th>
-                                            {isAdmin && <th>Actions</th>}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {sortedJobSites.map(js => (
-                                            <tr key={js.id} className="jobsite-mgmt-row">
-                                                <td className={`jobsite-mgmt-name jobsite-mgmt-${js.status}`}>
-                                                    {editingSiteId === js.id ? (
-                                                        <div className="inline-edit-compact">
-                                                            <input type="text" value={editName} onChange={e => setEditName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSaveSiteName(js.id); if (e.key === 'Escape') setEditingSiteId(null) }} autoFocus />
-                                                            <button onClick={() => handleSaveSiteName(js.id)} className="btn btn-sm">Save</button>
-                                                            <button onClick={() => setEditingSiteId(null)} className="btn btn-sm btn-ghost">Cancel</button>
-                                                        </div>
-                                                    ) : (
-                                                        <span className={canEdit ? 'clickable-name' : ''} onClick={canEdit ? () => { setEditingSiteId(js.id); setEditName(js.name) } : undefined} title={canEdit ? 'Click to rename' : undefined}>{js.name}</span>
-                                                    )}
-                                                    {js.is_headquarters && <span className="hq-badge">HQ</span>}
-                                                    {!js.is_headquarters && user?.role === 'admin' && <button className="btn-hq-toggle" onClick={() => handleToggleHq(js.id, js.is_headquarters)} title="Mark as headquarters">set HQ</button>}
-                                                    {js.is_headquarters && user?.role === 'admin' && <button className="btn-hq-toggle" onClick={() => handleToggleHq(js.id, js.is_headquarters)} title="Remove headquarters flag">unset</button>}
-                                                </td>
-                                                <td className="jobsite-mgmt-company">
-                                                    <select className="company-select" value={js.company_id || ''} onChange={e => handleCompanyChange(js.id, e.target.value ? parseInt(e.target.value) : null)} disabled={!canEdit}>
-                                                        <option value="">None</option>
-                                                        {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                                    </select>
-                                                </td>
-                                                <td><input type="number" className="geofence-input" value={js.geofence_radius_m || 300} min={100} step={50} disabled={!canEdit} onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 100) updateJobSite(js.id, { geofence_radius_m: v }).then(() => refetchJobSites()) }} /></td>
-                                                <td className="jobsite-mgmt-address">{js.address || '—'}</td>
-                                                {isAdmin && (
-                                                    <td className="jobsite-mgmt-actions">
-                                                        {removingSiteId === js.id ? (
-                                                            <div className="site-remove-confirm">
-                                                                <span className="site-remove-label">Type REMOVE to confirm:</span>
-                                                                <input
-                                                                    type="text"
-                                                                    className="site-remove-input"
-                                                                    value={removeConfirmText}
-                                                                    onChange={e => setRemoveConfirmText(e.target.value)}
-                                                                    placeholder="REMOVE"
-                                                                    autoFocus
-                                                                />
-                                                                <button
-                                                                    className="btn btn-sm btn-danger"
-                                                                    disabled={removeConfirmText !== 'REMOVE'}
-                                                                    onClick={() => handleRemoveSite(js.id)}
-                                                                >
-                                                                    Confirm
-                                                                </button>
-                                                                <button className="btn btn-sm btn-ghost" onClick={() => { setRemovingSiteId(null); setRemoveConfirmText('') }}>Cancel</button>
-                                                            </div>
-                                                        ) : (
-                                                            <button className="btn btn-sm site-remove-btn" onClick={() => { setRemovingSiteId(js.id); setRemoveConfirmText('') }}>Remove</button>
-                                                        )}
-                                                    </td>
-                                                )}
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-
-                            {/* Trailer Board — Card-based drag-and-drop */}
-                            <div className="trailer-board-section">
-                                <div className="trailer-board-header">
-                                    <h3>🚛 Trailer Board</h3>
-                                    <span className="trailer-board-hint">Drag trailers between site cards to reassign</span>
-                                </div>
-                                <DndContext sensors={sensors} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
-                                    <div className="trailer-board-grid">
-                                        {sortedJobSites.filter(js => js.status === 'active' || (js.trailers && js.trailers.length > 0)).map(js => {
-                                            const trailers = js.trailers || []
-                                            const isDropTarget = overJobSiteId === js.id && activeDrag?.fromJobSiteId !== js.id
-                                            return (
-                                                <DroppableJobSiteRow key={js.id} jobSiteId={js.id} isOver={isDropTarget}>
-                                                    <td colSpan={99} style={{ padding: 0, border: 'none', display: 'contents' }}>
-                                                        <div className={`trailer-board-card ${isDropTarget ? 'trailer-board-card-drop' : ''}`}>
-                                                            <div className="trailer-board-card-header">
-                                                                <span className="trailer-board-card-name">{js.name}</span>
-                                                                <span className="trailer-board-card-count">{trailers.length}</span>
-                                                            </div>
-                                                            <div className="trailer-board-card-body">
-                                                                {trailers.length === 0 ? (
-                                                                    <span className="trailer-board-empty">No trailers</span>
-                                                                ) : trailers.map(t => {
-                                                                    const soc = t.battery_soc
-                                                                    const socColor = soc != null ? (soc >= 70 ? '#2ecc71' : soc >= 40 ? '#f39c12' : '#e74c3c') : 'var(--text-muted)'
-                                                                    return (
-                                                                        <DraggableTrailerRow key={t.site_id} trailer={t} jobSite={js}>
-                                                                            <td style={{ padding: 0, border: 'none' }}>
-                                                                                <div className="trailer-chip">
-                                                                                    <span className="trailer-chip-grip">⠿</span>
-                                                                                    <span className="trailer-chip-name">{t.site_name}</span>
-                                                                                    {soc != null && <span className="trailer-chip-soc" style={{ color: socColor }}>{Math.round(soc)}%</span>}
-                                                                                </div>
-                                                                            </td>
-                                                                        </DraggableTrailerRow>
-                                                                    )
-                                                                })}
-                                                            </div>
-                                                        </div>
-                                                    </td>
-                                                </DroppableJobSiteRow>
-                                            )
-                                        })}
                                     </div>
-                                    <DragOverlay>
-                                        {activeDrag ? (
-                                            <div className="trailer-chip trailer-chip-dragging">
-                                                <span className="trailer-chip-grip">⠿</span>
-                                                <span className="trailer-chip-name">{activeDrag.trailerName}</span>
-                                            </div>
-                                        ) : null}
-                                    </DragOverlay>
-                                </DndContext>
+                                ))}
                             </div>
-                        </>
-
-                    ) : (
-                        <div className="empty-section">
-                            <p>No job sites yet. Sites are created automatically after the first VRM poll with GPS data.</p>
-                        </div>
-                    )}
-                </div>
-
-                {/* GPS Verification */}
-                <div className="settings-card settings-card-wide">
-                    <div className="settings-card-header">
-                        <h2>GPS Verification</h2>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                            <button className="btn btn-secondary" onClick={loadGpsData} disabled={gpsLoading}>
-                                {gpsLoading ? 'Loading...' : 'Check GPS'}
+                        ))}
+                        {invalid && <div className="callout warn">"{invalid.label}" must be a number from 0 to 100.</div>}
+                        {!invalid && orderProblem && <div className="callout warn">{orderProblem}</div>}
+                        <div className="btn-row">
+                            <button className="btn primary" onClick={saveScore} disabled={!dirtyScore || !!invalid || !!orderProblem || savingScore}>
+                                {savingScore ? 'Saving…' : 'Save scoring'}
                             </button>
-                            {canEdit && (
-                                <button className="btn btn-primary" onClick={handleGpsRefresh} disabled={gpsRefreshing}>
-                                    {gpsRefreshing ? 'Refreshing...' : 'Refresh from IC2'}
-                                </button>
-                            )}
+                            {dirtyScore && <button className="btn ghost" onClick={() => setConfig(saved)}>Discard changes</button>}
                         </div>
                     </div>
-                    <p className="settings-desc">
-                        GPS coordinates are sourced from IC2 Peplink routers. Click "Check GPS" to compare database vs live coordinates.
-                        "Refresh from IC2" will re-fetch all GPS from Peplink devices and re-run clustering.
-                    </p>
-                    {gpsTrailers && (
-                        <div className="jobsite-mgmt-table-wrapper">
-                            <table className="maint-table">
-                                <thead>
-                                    <tr>
-                                        <th>Trailer</th>
-                                        <th>IC2 Device</th>
-                                        <th>DB Latitude</th>
-                                        <th>DB Longitude</th>
-                                        <th>IC2 Latitude</th>
-                                        <th>IC2 Longitude</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {gpsTrailers.map(t => {
-                                        const hasDb = t.db_latitude != null && t.db_longitude != null
-                                        const hasIc2 = t.ic2_latitude != null && t.ic2_longitude != null
-                                        const mismatch = hasDb && hasIc2 && (
-                                            Math.abs(t.db_latitude - t.ic2_latitude) > 0.001 ||
-                                            Math.abs(t.db_longitude - t.ic2_longitude) > 0.001
-                                        )
-                                        const noGps = !hasDb && !hasIc2
-                                        return (
-                                            <tr key={t.site_id} style={mismatch ? { background: 'rgba(231, 76, 60, 0.1)' } : noGps ? { opacity: 0.5 } : {}}>
-                                                <td>
-                                                    <strong>{t.site_name}</strong>
-                                                    {!t.ic2_online && <span style={{ color: 'var(--text-muted)', fontSize: '11px', marginLeft: '6px' }}>offline</span>}
-                                                </td>
-                                                <td>
-                                                    {t.ic2_device_id ? (
-                                                        <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>{t.ic2_device_id}</span>
-                                                    ) : linkingTrailerId === t.site_id ? (
-                                                        <select
-                                                            style={{ fontSize: '12px', maxWidth: '160px' }}
-                                                            onChange={e => { if (e.target.value) handleLinkDevice(t.site_id, parseInt(e.target.value)) }}
-                                                            autoFocus
-                                                            onBlur={() => setLinkingTrailerId(null)}
-                                                        >
-                                                            <option value="">Select device...</option>
-                                                            {unlinkedDevices.map(d => (
-                                                                <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
-                                                            ))}
-                                                        </select>
-                                                    ) : (
-                                                        canEdit ? <button className="btn btn-sm btn-ghost" onClick={() => setLinkingTrailerId(t.site_id)}>
-                                                            Link
-                                                        </button> : <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>—</span>
-                                                    )}
-                                                </td>
-                                                <td>{hasDb ? t.db_latitude.toFixed(5) : '—'}</td>
-                                                <td>{hasDb ? t.db_longitude.toFixed(5) : '—'}</td>
-                                                <td style={mismatch ? { color: 'var(--warning)', fontWeight: 600 } : {}}>{hasIc2 ? t.ic2_latitude.toFixed(5) : '—'}</td>
-                                                <td style={mismatch ? { color: 'var(--warning)', fontWeight: 600 } : {}}>{hasIc2 ? t.ic2_longitude.toFixed(5) : '—'}</td>
-                                                <td>
-                                                    {mismatch && <span className="health-grade grade-D">Mismatch</span>}
-                                                    {!mismatch && hasDb && hasIc2 && <span className="health-grade grade-A">OK</span>}
-                                                    {noGps && <span className="health-grade grade-F">No GPS</span>}
-                                                    {!noGps && !hasIc2 && hasDb && <span className="health-grade grade-C">DB Only</span>}
-                                                    {!noGps && hasIc2 && !hasDb && <span className="health-grade grade-C">IC2 Only</span>}
-                                                    {t.gps_stale && hasDb && <span style={{ color: 'var(--text-muted)', fontSize: '11px', marginLeft: '6px' }}>stale</span>}
-                                                </td>
-                                            </tr>
-                                        )
-                                    })}
-                                </tbody>
-                            </table>
-                            <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '8px' }}>
-                                {gpsTrailers.length} trailers — {gpsTrailers.filter(t => t.ic2_latitude != null).length} with IC2 GPS,{' '}
-                                {gpsTrailers.filter(t => t.db_latitude != null && t.ic2_latitude != null && (Math.abs(t.db_latitude - t.ic2_latitude) > 0.001 || Math.abs(t.db_longitude - t.ic2_longitude) > 0.001)).length} mismatches
-                            </p>
-                        </div>
-                    )}
-                </div>
-                </>}
+                )}
+            </Card>
 
-                {/* ====== TAB: System ====== */}
-                {activeTab === 'system' && <>
-                {/* Database Info */}
-                <div className="settings-card">
-                    <h2>Database Status</h2>
-                    <div className="settings-stats">
-                        <div className="settings-stat">
-                            <span className="stat-label">Database Size</span>
-                            <span className="stat-value-large">{formatBytes(settings.db_size_bytes)}</span>
-                        </div>
-                        <div className="settings-stat">
-                            <span className="stat-label">Total Snapshots</span>
-                            <span className="stat-value-large">{(settings.snapshot_count || 0).toLocaleString()}</span>
-                        </div>
-                        <div className="settings-stat">
-                            <span className="stat-label">Retention Period</span>
-                            <span className="stat-value-large">{settings.retention_days} days</span>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Retention Settings — admin only */}
-                {isAdmin && (
-                    <div className="settings-card">
-                        <h2>Data Retention</h2>
-                        <p className="settings-desc">
-                            Set how long historical data is kept. Older records are automatically pruned.
-                        </p>
-                        <div className="retention-options">
-                            {[7, 30, 90, 180, 365].map(days => (
-                                <button
-                                    key={days}
-                                    className={`retention-btn ${displayRetention === days ? 'active' : ''}`}
-                                    onClick={() => setRetentionDays(days)}
-                                >
-                                    {days} days
-                                </button>
+            <Card title="Data retention">
+                <div style={{ display: 'grid', gap: 16 }}>
+                    <KV items={[
+                        ['Database size', fmtBytes(data?.db_size_bytes)],
+                        ['Telemetry snapshots', fmtNum(data?.snapshot_count)],
+                        ['Currently keeping', data?.retention_days ? `${data.retention_days} days` : '—'],
+                    ]} />
+                    <Field label="Keep telemetry history for">
+                        <select className="select" value={shownRetention} onChange={e => setRetention(Number(e.target.value))}>
+                            {[...new Set([...RETENTION_OPTIONS, shownRetention])].sort((a, b) => a - b).map(d => (
+                                <option key={d} value={d}>{d === 365 ? '1 year (365 days)' : `${d} days`}</option>
                             ))}
-                        </div>
-                        <div className="settings-actions">
-                            <button
-                                className="btn btn-primary"
-                                onClick={handleSave}
-                                disabled={saving}
-                            >
-                                {saving ? 'Saving...' : 'Save Settings'}
-                            </button>
-                        </div>
+                        </select>
+                    </Field>
+                    <p className="faint" style={{ fontSize: 12.5 }}>Older telemetry is removed automatically. Rentals, notes and billing records are not affected.</p>
+                    <div className="btn-row">
+                        <button className="btn" onClick={saveRetention} disabled={savingRet || shownRetention === data?.retention_days}>{savingRet ? 'Saving…' : 'Save'}</button>
+                        <button className="btn danger" onClick={() => setConfirmPurge(true)}>Purge old data now</button>
                     </div>
-                )}
+                </div>
+            </Card>
 
-                {/* Danger Zone — admin only */}
-                {isAdmin && (
-                    <div className="settings-card settings-card-danger">
-                        <h2>Storage Management</h2>
-                        <p className="settings-desc">
-                            Manually purge data older than the current retention period.
-                        </p>
-                        <div className="settings-actions">
-                            <button
-                                className="btn btn-danger"
-                                onClick={handlePurge}
-                                disabled={purging}
-                            >
-                                {purging ? 'Purging...' : 'Purge Old Data'}
-                            </button>
-                        </div>
-                    </div>
-                )}
-                </>}
-            </div>
-
+            {confirmPurge && (
+                <ConfirmModal title="Purge old data" confirmLabel="Purge now" danger busy={purging} onConfirm={purge} onClose={() => setConfirmPurge(false)}>
+                    <p>Permanently delete telemetry older than <b>{data?.retention_days} days</b>?</p>
+                    <p className="muted">This can't be undone. Charts and reports will no longer show anything older than that.</p>
+                </ConfirmModal>
+            )}
         </div>
     )
 }
 
-export default Settings
+// ------------------------------------------------------------
+// GPS & devices
+// ------------------------------------------------------------
+function GpsTab({ isAdmin }) {
+    const toast = useToast()
+    const boardFn = useCallback(() => fetchBoardTrailers(), [])
+    const sitesFn = useCallback(() => fetchJobSites(), [])
+    const board = useApiPolling(boardFn, 60000)
+    const sites = useApiPolling(sitesFn, 120000)
+    const [confirmPlace, setConfirmPlace] = useState(false)
+    const [placing, setPlacing] = useState(false)
+
+    const trailers = useMemo(() => (board.data?.trailers || []).filter(t => t.site_id != null), [board.data])
+    const unassigned = trailers.filter(t => !t.site)
+
+    const place = async () => {
+        setPlacing(true)
+        try {
+            const r = await reclusterJobSites()
+            if (r.success === false) throw new Error(r.error || 'Placement failed')
+            if (!r.trailers) toast.info('Every trailer with GPS already has a site. Nothing to place.')
+            else toast.success(`Placed ${plural(r.trailers, 'trailer')} at ${plural(r.jobSites, 'site')} (${r.created} new, ${r.updated} existing)`)
+            setConfirmPlace(false)
+            board.refetch()
+            sites.refetch()
+        } catch (err) {
+            toast.error(err.message)
+        }
+        setPlacing(false)
+    }
+
+    return (
+        <div className="stack">
+            <div className="callout">
+                <Icon name="pin" size={16} />
+                <span>
+                    Site settings (name, customer, HQ and geofence) are in each site's <b>Edit site</b> dialog: open it from <Link className="link" to="/sites">Sites</Link>.
+                    GPS change approvals are on <Link className="link" to="/">Fleet Home</Link>.
+                </span>
+            </div>
+
+            <Card title="Place unassigned trailers" meta={board.data ? plural(unassigned.length, 'trailer') + ' without a site' : null}
+                actions={isAdmin ? <button className="btn sm" onClick={() => setConfirmPlace(true)} disabled={!board.data}>Place unassigned trailers</button> : null}>
+                <p className="muted">
+                    Groups trailers that have no site by GPS (within 300 m of each other) and puts them at a matching site, creating one if needed.
+                    It only touches trailers without a site. Trailers already at a site, including ones you moved by hand, stay where they are.
+                    {!isAdmin && ' Ask an admin to run it.'}
+                </p>
+            </Card>
+
+            <TrailerBoard trailers={trailers} jobSites={sites.data?.job_sites} loading={board.loading && !board.data} onMoved={() => { board.refetch(); sites.refetch() }} />
+
+            <GpsCheck />
+
+            {confirmPlace && (
+                <ConfirmModal title="Place unassigned trailers" confirmLabel="Place trailers" busy={placing} onConfirm={place} onClose={() => setConfirmPlace(false)}>
+                    <p>{unassigned.length ? `${plural(unassigned.length, 'trailer')} currently ${unassigned.length === 1 ? 'has' : 'have'} no site.` : 'No trailers appear to be without a site right now.'}</p>
+                    <p className="muted">Trailers with GPS will be grouped and placed at the nearest matching site; new sites are created for clusters with no site nearby. Trailers that already have a site are not moved.</p>
+                </ConfirmModal>
+            )}
+        </div>
+    )
+}
+
+const chipStyle = {
+    display: 'inline-flex', alignItems: 'center', gap: 6, height: 26, padding: '0 10px', borderRadius: 999,
+    border: '1px solid var(--border-strong)', background: 'var(--surface)', fontSize: 12.5, fontWeight: 550,
+    whiteSpace: 'nowrap', userSelect: 'none', touchAction: 'none',
+}
+
+function ChipBody({ t }) {
+    return (
+        <>
+            <Dot tone={HEALTH[t.health]?.tone || 'off'} />
+            {t.unit}
+            {t.soc != null && <span className="faint num">{Math.round(t.soc)}%</span>}
+        </>
+    )
+}
+
+function TrailerChip({ t, from, disabled }) {
+    const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+        id: `t:${t.site_id}`, data: { siteId: t.site_id, from, t }, disabled,
+    })
+    return (
+        <span ref={setNodeRef} {...listeners} {...attributes}
+            title={`${t.unit}: ${HEALTH[t.health]?.label || 'Unknown'}${t.diagnosis ? ` · ${t.diagnosis}` : ''}`}
+            style={{ ...chipStyle, cursor: disabled ? 'default' : 'grab', opacity: isDragging ? 0.35 : 1 }}>
+            <ChipBody t={t} />
+        </span>
+    )
+}
+
+function SiteLane({ site, trailers, activeFrom, droppable = true }) {
+    const { setNodeRef, isOver } = useDroppable({ id: `s:${site.id}`, disabled: !droppable })
+    const highlight = droppable && isOver && activeFrom !== site.id
+    return (
+        <div ref={setNodeRef} style={{
+            border: `1px ${droppable ? 'solid' : 'dashed'} ${highlight ? 'var(--accent)' : 'var(--border-strong)'}`,
+            background: highlight ? 'var(--accent-soft)' : 'var(--surface-2)',
+            borderRadius: 'var(--radius-sm)', padding: 12, minHeight: 92, display: 'grid', alignContent: 'start', gap: 10,
+            transition: 'background .1s, border-color .1s',
+        }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={site.name}>{site.name}</span>
+                {site.is_headquarters && <Badge tone="info">HQ</Badge>}
+                <span className="faint num" style={{ marginLeft: 'auto', fontSize: 12.5 }}>{trailers.length}</span>
+            </div>
+            {site.company_name && <div className="faint" style={{ fontSize: 12, marginTop: -6 }}>{site.company_name}</div>}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {trailers.length === 0
+                    ? <span className="faint" style={{ fontSize: 12.5 }}>{droppable ? 'Drop a trailer here' : 'None'}</span>
+                    : trailers.map(t => <TrailerChip key={t.site_id} t={t} from={site.id} />)}
+            </div>
+        </div>
+    )
+}
+
+function TrailerBoard({ trailers, jobSites, loading, onMoved }) {
+    const toast = useToast()
+    const { user } = useAuth()
+    const canEdit = user?.role === 'admin' || user?.role === 'technician'
+    const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+    const [active, setActive] = useState(null)
+    const [moves, setMoves] = useState({}) // optimistic: trailer site_id -> job site id
+    const [q, setQ] = useState('')
+
+    const siteOf = useCallback((t) => (moves[t.site_id] !== undefined ? moves[t.site_id] : t.site?.id ?? null), [moves])
+
+    const lanes = useMemo(() => {
+        if (!jobSites) return []
+        const term = q.trim().toLowerCase()
+        const byId = new Map()
+        for (const t of trailers) {
+            const sid = siteOf(t)
+            if (!byId.has(sid)) byId.set(sid, [])
+            byId.get(sid).push(t)
+        }
+        for (const list of byId.values()) list.sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }))
+        return jobSites
+            .filter(js => js.status === 'active' || js.is_headquarters || byId.has(js.id))
+            .map(js => {
+                const all = byId.get(js.id) || []
+                const siteMatch = !term || js.name.toLowerCase().includes(term) || (js.company_name || '').toLowerCase().includes(term)
+                return { site: js, trailers: siteMatch ? all : all.filter(t => String(t.unit).toLowerCase().includes(term)), siteMatch }
+            })
+            .filter(l => !term || l.siteMatch || l.trailers.length)
+            .sort((a, b) => (b.site.is_headquarters ? 1 : 0) - (a.site.is_headquarters ? 1 : 0) || a.site.name.localeCompare(b.site.name, undefined, { numeric: true }))
+    }, [jobSites, trailers, siteOf, q])
+
+    const unassigned = useMemo(() => {
+        const term = q.trim().toLowerCase()
+        return trailers.filter(t => siteOf(t) == null && (!term || String(t.unit).toLowerCase().includes(term)))
+    }, [trailers, siteOf, q])
+
+    const onDragEnd = async ({ active: a, over }) => {
+        setActive(null)
+        if (!over) return
+        const to = Number(String(over.id).slice(2))
+        const { siteId, from, t } = a.data.current
+        if (to === from) return
+        const dest = jobSites.find(js => js.id === to)
+        setMoves(m => ({ ...m, [siteId]: to }))
+        try {
+            await assignTrailer(to, siteId)
+            toast.success(`${t.unit} moved to ${dest?.name || 'the new site'}`)
+            await onMoved()
+        } catch (err) {
+            toast.error(`Couldn't move ${t.unit}: ${err.message}`)
+        }
+        setMoves(m => { const n = { ...m }; delete n[siteId]; return n })
+    }
+
+    return (
+        <Card title="Trailer board" meta={canEdit ? 'drag a trailer onto another site to reassign it' : null}
+            actions={<Search value={q} onChange={setQ} placeholder="Find site or trailer…" />}>
+            {loading || !jobSites ? <Loading /> : lanes.length === 0 && unassigned.length === 0 ? (
+                <Empty compact title="Nothing matches">Try a different search.</Empty>
+            ) : (
+                <DndContext sensors={sensors} onDragStart={e => setActive(e.active.data.current)} onDragCancel={() => setActive(null)} onDragEnd={onDragEnd}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 12 }}>
+                        {unassigned.length > 0 && (
+                            <SiteLane site={{ id: 'none', name: 'No site yet' }} trailers={unassigned} activeFrom={active?.from} droppable={false} />
+                        )}
+                        {lanes.map(l => <SiteLane key={l.site.id} site={l.site} trailers={l.trailers} activeFrom={active?.from} />)}
+                    </div>
+                    <DragOverlay>
+                        {active ? <span style={{ ...chipStyle, cursor: 'grabbing', boxShadow: 'var(--shadow)', borderColor: 'var(--accent)' }}><ChipBody t={active.t} /></span> : null}
+                    </DragOverlay>
+                </DndContext>
+            )}
+        </Card>
+    )
+}
+
+const GPS_STATUS = {
+    mismatch: { tone: 'crit', label: 'Position mismatch', rank: 0 },
+    none: { tone: 'warn', label: 'No GPS', rank: 1 },
+    db_only: { tone: 'warn', label: 'No router GPS', rank: 2 },
+    ic2_only: { tone: 'info', label: 'Not saved yet', rank: 3 },
+    ok: { tone: 'ok', label: 'Matches', rank: 4 },
+}
+
+function metersBetween(lat1, lon1, lat2, lon2) {
+    const R = 6371000, rad = Math.PI / 180
+    const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2
+    return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+const fmtDistance = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`)
+const fmtCoord = (lat, lon) => (lat != null && lon != null ? `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}` : null)
+
+function GpsCheck() {
+    const toast = useToast()
+    const { user } = useAuth()
+    const canEdit = user?.role === 'admin' || user?.role === 'technician'
+    const [rows, setRows] = useState(null)
+    const [devices, setDevices] = useState([])
+    const [filter, setFilter] = useState(null)
+    const [refreshing, setRefreshing] = useState(false)
+    const [linking, setLinking] = useState(null)
+
+    const load = useCallback(async () => {
+        try {
+            const [g, d] = await Promise.all([fetchGpsTrailers(), fetchUnlinkedIc2Devices()])
+            const list = (g.trailers || []).map(t => {
+                const hasDb = t.db_latitude != null && t.db_longitude != null
+                const hasIc2 = t.ic2_latitude != null && t.ic2_longitude != null
+                const dist = hasDb && hasIc2 ? metersBetween(t.db_latitude, t.db_longitude, t.ic2_latitude, t.ic2_longitude) : null
+                const status = !hasDb && !hasIc2 ? 'none' : !hasIc2 ? 'db_only' : !hasDb ? 'ic2_only' : dist > 150 ? 'mismatch' : 'ok'
+                return { ...t, status, dist }
+            })
+            setRows(list)
+            setDevices(d.devices || [])
+        } catch (err) {
+            toast.error(err.message)
+            setRows(r => r || [])
+        }
+    }, [toast])
+
+    useEffect(() => { load() }, [load])
+
+    const refresh = async () => {
+        setRefreshing(true)
+        try {
+            const r = await refreshGps()
+            if (r.success === false) throw new Error(r.error || 'Refresh failed')
+            toast.success(`GPS refreshed: ${r.updated} of ${r.total_gps_devices} routers updated${r.failed ? `, ${r.failed} failed` : ''}`)
+            await load()
+        } catch (err) {
+            toast.error(`GPS refresh failed: ${err.message}`)
+        }
+        setRefreshing(false)
+    }
+
+    const issues = (rows || []).filter(r => r.status !== 'ok')
+    const noRouter = (rows || []).filter(r => !r.ic2_device_id)
+    const shownFilter = filter ?? 'issues'
+    const shown = shownFilter === 'issues' ? issues : shownFilter === 'norouter' ? noRouter : (rows || [])
+
+    const columns = [
+        {
+            key: 'name', label: 'Trailer', sort: r => r.site_name,
+            render: r => (
+                <div>
+                    {r.site_id > 0 ? <Link className="primary" to={`/trailer/${r.site_id}`}>{r.site_name}</Link> : <span className="primary">{r.site_name}</span>}
+                    <div className="sub">{r.ic2_online ? 'Router online' : 'Router offline'}{r.manual_override ? ' · placed by hand' : ''}</div>
+                </div>
+            ),
+        },
+        {
+            key: 'router', label: 'Router', sort: r => (r.ic2_device_id ? 1 : 0),
+            render: r => r.ic2_device_id ? <span className="mono">#{r.ic2_device_id}</span>
+                : canEdit ? <button className="btn sm" onClick={() => setLinking(r)}>Link router</button>
+                    : <span className="faint">Not linked</span>,
+        },
+        { key: 'db', label: 'Saved position', render: r => fmtCoord(r.db_latitude, r.db_longitude) ? <span className="mono">{fmtCoord(r.db_latitude, r.db_longitude)}</span> : <span className="faint">—</span> },
+        { key: 'ic2', label: 'Router GPS', render: r => fmtCoord(r.ic2_latitude, r.ic2_longitude) ? <span className="mono">{fmtCoord(r.ic2_latitude, r.ic2_longitude)}</span> : <span className="faint">—</span> },
+        {
+            key: 'status', label: 'Status', sort: r => GPS_STATUS[r.status].rank,
+            render: r => (
+                <div>
+                    <Badge tone={GPS_STATUS[r.status].tone}>{GPS_STATUS[r.status].label}</Badge>
+                    {r.status === 'mismatch' && <div className="sub" style={{ marginTop: 3 }}>{fmtDistance(r.dist)} apart</div>}
+                </div>
+            ),
+        },
+    ]
+
+    return (
+        <Card title="GPS check" meta={rows ? `${plural(rows.length, 'trailer')} · ${issues.length} to review` : null} flush
+            actions={canEdit ? <button className="btn sm" onClick={refresh} disabled={refreshing}><Icon name="refresh" />{refreshing ? 'Refreshing…' : 'Refresh GPS'}</button> : null}
+            foot="Compares each trailer's saved position with live GPS from its Peplink router. Refresh GPS pulls fresh positions from every router and places any trailer that has no site.">
+            {!rows ? <Loading /> : (
+                <>
+                    <div className="toolbar" style={{ padding: '14px 18px 0' }}>
+                        <Chips value={shownFilter} onChange={setFilter} options={[
+                            { key: 'issues', label: 'Needs review', dot: issues.length ? 'warn' : null, count: issues.length },
+                            { key: 'norouter', label: 'No router linked', count: noRouter.length },
+                            { key: 'all', label: 'All', count: rows.length },
+                        ]} />
+                        <div className="spacer" />
+                        <span className="faint" style={{ fontSize: 12.5 }}>{plural(devices.length, 'router')} not linked to a trailer</span>
+                    </div>
+                    <DataTable columns={columns} rows={shown} rowKey="site_id" initialSort={{ key: 'status', dir: 'asc' }}
+                        empty={shownFilter === 'issues' ? <AllClear>All {rows.length} trailers' saved positions match their routers.</AllClear>
+                            : shownFilter === 'norouter' ? <AllClear>Every trailer has a router linked.</AllClear> : <Empty compact>No trailers yet.</Empty>} />
+                </>
+            )}
+            {linking && <LinkRouterModal trailer={linking} devices={devices} onClose={() => setLinking(null)} onDone={() => { setLinking(null); load() }} />}
+        </Card>
+    )
+}
+
+function LinkRouterModal({ trailer, devices, onClose, onDone }) {
+    const toast = useToast()
+    const [deviceId, setDeviceId] = useState('')
+    const [saving, setSaving] = useState(false)
+    const sorted = useMemo(() => [...devices].sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true })), [devices])
+
+    const save = async () => {
+        setSaving(true)
+        try {
+            await linkIc2Device(trailer.site_id, Number(deviceId))
+            const dev = devices.find(d => String(d.id) === String(deviceId))
+            toast.success(`${trailer.site_name} linked to router ${dev?.name || '#' + deviceId}`)
+            onDone()
+        } catch (err) {
+            toast.error(err.message)
+            setSaving(false)
+        }
+    }
+
+    return (
+        <Modal title={`Link a router to ${trailer.site_name}`} onClose={onClose} footer={<>
+            <button className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className="btn primary" onClick={save} disabled={!deviceId || saving}>{saving ? 'Linking…' : 'Link router'}</button>
+        </>}>
+            {sorted.length === 0 ? (
+                <Empty compact title="No unlinked routers">Every router reporting to InControl is already linked to a trailer.</Empty>
+            ) : (
+                <div className="form">
+                    <Field label="Peplink router" hint="Only routers not yet linked to a trailer are listed. The trailer's GPS and signal will come from this router.">
+                        <select className="select" value={deviceId} onChange={e => setDeviceId(e.target.value)} autoFocus>
+                            <option value="">Choose a router…</option>
+                            {sorted.map(d => <option key={d.id} value={d.id}>{d.name}{d.sn ? ` · ${d.sn}` : ''}{d.online ? '' : ' (offline)'}</option>)}
+                        </select>
+                    </Field>
+                </div>
+            )}
+        </Modal>
+    )
+}
+
+// ------------------------------------------------------------
+// Activity (audit log)
+// ------------------------------------------------------------
+const ENTITY_TYPES = [
+    { key: '', label: 'All' },
+    { key: 'rental', label: 'Rentals' },
+    { key: 'site', label: 'Sites' },
+    { key: 'trailer', label: 'Trailers' },
+    { key: 'company', label: 'Customers' },
+    { key: 'contact', label: 'Contacts' },
+    { key: 'gps_suggestion', label: 'GPS changes' },
+]
+const ENTITY_LABEL = { rental: 'Rental', site: 'Site', trailer: 'Trailer', company: 'Customer', contact: 'Contact', gps_suggestion: 'GPS change' }
+const PAGE_SIZE = 50
+
+function entityLink(e) {
+    if (e.entity_type === 'site' && e.entity_id) return `/site/${e.entity_id}`
+    if (e.entity_type === 'rental') return '/rentals'
+    if (e.entity_type === 'company') return '/customers'
+    if (e.entity_type === 'trailer') return '/trailers'
+    return null
+}
+
+function actionLabel(action, type) {
+    let a = String(action || '')
+    const prefix = type === 'company' ? 'company_' : `${type}_`
+    if (a.startsWith(prefix)) a = a.slice(prefix.length)
+    return humanize(a)
+}
+
+function describeDetails(raw) {
+    let d = raw
+    if (typeof d === 'string') { try { d = JSON.parse(d) } catch { return d } }
+    if (!d || typeof d !== 'object') return ''
+    const parts = []
+    for (const [k, v] of Object.entries(d)) {
+        if (v == null || v === '' || (Array.isArray(v) && !v.length)) continue
+        if (k === 'fields' && Array.isArray(v)) parts.push(`Changed ${v.map(f => humanize(f).toLowerCase()).join(', ')}`)
+        else if (k === 'name' || k === 'trailer' || k === 'site_name') parts.push(String(v))
+        else if (k === 'note_id' || k === 'sid') continue
+        else if (k === 'job_site_id' || k === 'target_job_site_id') parts.push(`Site #${v}`)
+        else if (k === 'date') parts.push(fmtDate(v))
+        else if (Array.isArray(v)) parts.push(`${humanize(k)}: ${v.map(x => (x && typeof x === 'object') ? (x.label || x.name || x.value || '') : x).filter(Boolean).join(', ')}`)
+        else if (typeof v === 'object') parts.push(`${humanize(k)}: ${Object.entries(v).map(([a, b]) => `${humanize(a).toLowerCase()} ${b}`).join(', ')}`)
+        else parts.push(`${humanize(k)}: ${v}`)
+    }
+    return parts.join(' · ')
+}
+
+function ActivityTab() {
+    const toast = useToast()
+    const [type, setType] = useState('')
+    const [q, setQ] = useState('')
+    const [page, setPage] = useState(0)
+    const [data, setData] = useState(null)
+    const [loading, setLoading] = useState(false)
+
+    useEffect(() => {
+        let alive = true
+        setLoading(true)
+        const p = new URLSearchParams({ limit: PAGE_SIZE, offset: page * PAGE_SIZE })
+        if (type) p.set('entity_type', type)
+        apiGet(`/audit-log?${p}`)
+            .then(d => { if (alive) setData(d) })
+            .catch(err => { if (alive) { toast.error(err.message); setData({ entries: [], total: 0 }) } })
+            .finally(() => { if (alive) setLoading(false) })
+        return () => { alive = false }
+    }, [type, page, toast])
+
+    const entries = useMemo(() => {
+        const list = (data?.entries || []).map(e => ({ ...e, summary: describeDetails(e.details) }))
+        const term = q.trim().toLowerCase()
+        return term ? list.filter(e => [e.actor, e.action, e.summary, ENTITY_LABEL[e.entity_type]].some(v => v && String(v).toLowerCase().includes(term))) : list
+    }, [data, q])
+
+    const total = data?.total || 0
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+    const columns = [
+        { key: 'time', label: 'When', width: 150, render: e => <div><span>{fmtDateTime(e.created_at)}</span><div className="sub">{fmtAgo(e.created_at)}</div></div> },
+        { key: 'actor', label: 'Who', render: e => e.actor && e.actor !== 'system' ? <span className="primary">{e.actor}</span> : <span className="faint">System</span> },
+        {
+            key: 'entity', label: 'What', render: e => {
+                const to = entityLink(e)
+                const label = `${ENTITY_LABEL[e.entity_type] || humanize(e.entity_type)}${e.entity_id ? ` #${e.entity_id}` : ''}`
+                return to ? <Link className="link" to={to}>{label}</Link> : <span>{label}</span>
+            },
+        },
+        { key: 'action', label: 'Action', render: e => actionLabel(e.action, e.entity_type) },
+        { key: 'details', label: 'Details', render: e => e.summary ? <span className="muted">{e.summary}</span> : <span className="faint">—</span> },
+    ]
+
+    return (
+        <div>
+            <div className="toolbar">
+                <Search value={q} onChange={setQ} placeholder="Search person, action, details…" />
+                <Chips value={type} onChange={t => { setType(t); setPage(0) }} options={ENTITY_TYPES} />
+            </div>
+            <Card flush
+                foot={total > PAGE_SIZE ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span>Page {page + 1} of {pages} · {fmtNum(total)} entries{q ? ' (search applies to this page)' : ''}</span>
+                        <div className="spacer" />
+                        <button className="btn sm" disabled={page === 0 || loading} onClick={() => setPage(p => p - 1)}><Icon name="back" />Newer</button>
+                        <button className="btn sm" disabled={page >= pages - 1 || loading} onClick={() => setPage(p => p + 1)}>Older<Icon name="chevron" /></button>
+                    </div>
+                ) : (data ? `${plural(total, 'entry', 'entries')}. Changes to rentals, sites, trailers and customers are recorded here.` : null)}>
+                {!data ? <Loading /> : (
+                    <DataTable columns={columns} rows={entries}
+                        empty={<Empty compact title={q ? 'No matching activity' : 'No activity recorded yet'}>
+                            {q ? 'Try a different search.' : 'Edits to rentals, sites, trailers and customers will show up here.'}
+                        </Empty>} />
+                )}
+            </Card>
+        </div>
+    )
+}

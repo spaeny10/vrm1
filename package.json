@@ -7,7 +7,9 @@
         "dev": "concurrently \"node server/server.js\" \"vite\"",
         "build": "vite build",
         "start": "node server/server.js",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "demo:sim": "node scripts/demo/simulator.js",
+        "demo:seed": "node scripts/demo/seed.js"
     },
     "dependencies": {
         "@anthropic-ai/sdk": "^0.78.0",
@@ -16,7 +18,6 @@
         "bcryptjs": "^3.0.3",
         "chart.js": "^4.4.6",
         "chartjs-adapter-date-fns": "^3.0.0",
-        "chartjs-plugin-zoom": "^2.2.0",
         "concurrently": "^9.1.0",
         "cors": "^2.8.5",
         "dotenv": "^16.4.5",

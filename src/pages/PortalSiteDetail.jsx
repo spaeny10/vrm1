@@ -1,156 +1,81 @@
-import { useCallback, useState, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useCallback, useState } from 'react'
+import { useParams } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchPortalSiteDetail, fetchSiteNotes, addSiteNote, fetchMentionableUsers } from '../api/vrm'
-import MentionInput, { renderNoteWithMentions } from '../components/MentionInput'
+import { useToast } from '../components/ToastProvider'
+import { fetchPortalSiteDetail, apiGet, apiPost } from '../api/vrm'
+import { Page, Card, Stats, Stat, DataTable, Badge, Soc, Empty, Loading } from '../ui'
+import { fmtAgo, fmtKwh, fmtWatts } from '../ui/format'
 
+// Customer view of one site: unit status and a message thread with
+// BIGView (only notes shared with the customer appear here).
 export default function PortalSiteDetail() {
     const { id } = useParams()
-    const navigate = useNavigate()
-    const [newNote, setNewNote] = useState('')
-    const [isSubmitting, setIsSubmitting] = useState(false)
-    const [mentionableUsers, setMentionableUsers] = useState([])
-    const mentionInputRef = useRef(null)
+    const toast = useToast()
+    const siteFn = useCallback(() => fetchPortalSiteDetail(id), [id])
+    const notesFn = useCallback(() => apiGet(`/portal/site/${id}/notes`), [id])
+    const { data, loading } = useApiPolling(siteFn, 60000)
+    const { data: notesData, refetch: refetchNotes } = useApiPolling(notesFn, 30000)
+    const [message, setMessage] = useState('')
+    const [sending, setSending] = useState(false)
 
-    const fetchDetailFn = useCallback(() => fetchPortalSiteDetail(id), [id])
-    const { data: detailData, loading: detailLoading } = useApiPolling(fetchDetailFn, 30000)
+    const site = data?.site
+    const notes = notesData?.notes || []
 
-    const fetchNotesFn = useCallback(async () => {
-        const res = await fetchSiteNotes(id)
-        return res.notes || []
-    }, [id])
-    const { data: notesData, refetch: refreshNotes } = useApiPolling(fetchNotesFn, 15000)
-
-    const site = detailData?.site
-    const notes = notesData || []
-
-    const handleAddNote = async (e) => {
-        if (e) e.preventDefault()
-        if (!newNote.trim()) return
-        setIsSubmitting(true)
+    const send = async (e) => {
+        e.preventDefault()
+        if (!message.trim()) return
+        setSending(true)
         try {
-            // Extract @mentions from note text
-            const mentionRegex = /@([\w\s]+?)(?=\s@|\s*$|[.,!?])/g
-            const mentions = []
-            let match
-            while ((match = mentionRegex.exec(newNote)) !== null) {
-                const name = match[1].trim()
-                // We'll just store the display names; the backend can resolve IDs if needed
-                mentions.push(name)
-            }
-            await addSiteNote(id, newNote, mentions)
-            setNewNote('')
-            await refreshNotes()
-        } catch (err) {
-            console.error('Failed to add note', err)
-        } finally {
-            setIsSubmitting(false)
-        }
+            await apiPost(`/portal/site/${id}/notes`, { note: message.trim() })
+            setMessage('')
+            refetchNotes()
+            toast.success('Message sent to BIGView')
+        } catch (err) { toast.error(err.message) } finally { setSending(false) }
     }
 
-    if (detailLoading && !site) {
-        return <div className="page-loading"><div className="spinner" /></div>
-    }
-    if (!site) return <div className="page-empty">Site not found</div>
+    if (loading && !data) return <Loading />
+    if (!site) return <Empty title="Site not available">You may not have access to this site.</Empty>
+
+    const columns = [
+        { key: 'unit', label: 'Unit', render: t => <span className="primary">{t.site_name}</span> },
+        { key: 'status', label: 'Status', render: t => t.online ? <Badge tone="ok" dot>Online</Badge> : <Badge tone="off" dot>Offline</Badge> },
+        { key: 'soc', label: 'Battery', render: t => <Soc value={t.battery_soc} /> },
+        { key: 'solar', label: 'Solar now', align: 'r', render: t => <span className="num">{fmtWatts(t.solar_watts)}</span> },
+        { key: 'yield', label: 'Solar today', align: 'r', render: t => <span className="num">{fmtKwh(t.solar_yield_today)}</span> },
+    ]
 
     return (
-        <div className="fleet-overview">
-            <div className="page-header">
-                <button className="btn btn-secondary btn-sm" onClick={() => navigate('/')}>← Back</button>
-                <h1>{site.name}</h1>
-                {site.uid && <span style={{ marginLeft: '12px', fontSize: '14px', color: 'var(--text-secondary)' }}>UID: {site.uid}</span>}
-            </div>
-
-            <div style={{ display: 'flex', gap: '32px', marginBottom: '24px' }}>
-                <div style={{ flex: 1 }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '16px' }}>Site Location</h3>
-                    {site.address ? <p style={{ color: 'var(--text-secondary)', margin: 0 }}>{site.address}</p> : <p style={{ color: 'var(--text-secondary)', margin: 0 }}>No address specified</p>}
-                </div>
-                <div style={{ flex: 1 }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '16px' }}>Site Contact</h3>
-                    <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
-                        {site.primary_contact_name ? `${site.primary_contact_name} ` : ''}
-                        {site.primary_contact_phone ? `(${site.primary_contact_phone})` : 'No contact specified'}
-                    </p>
-                </div>
-            </div>
-
-            <div className="kpi-row">
-                <div className="kpi-card kpi-green"><div><div className="kpi-label">Trailers Online</div><div className="kpi-value">{site.trailers_online}/{site.trailer_count}</div></div></div>
-                <div className="kpi-card kpi-teal"><div><div className="kpi-label">Avg SOC</div><div className="kpi-value">{site.avg_soc != null ? `${site.avg_soc}% ` : '—'}</div></div></div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', marginTop: 24, alignItems: 'start' }}>
-                <div>
-                    <h2>Trailers</h2>
-                    <div className="maint-table-wrapper">
-                        <table className="maint-table">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>SOC</th>
-                                    <th>Solar (W)</th>
-                                    <th>Yield Today</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(site.trailers || []).map(t => (
-                                    <tr key={t.site_id}>
-                                        <td className="maint-title">{t.site_name}</td>
-                                        <td>{t.battery_soc != null ? `${t.battery_soc}% ` : '—'}</td>
-                                        <td>{t.solar_watts != null ? Math.round(t.solar_watts) : '—'}</td>
-                                        <td>{t.solar_yield_today != null ? `${t.solar_yield_today.toFixed(2)} kWh` : '—'}</td>
-                                        <td>
-                                            <span className={`alarm-badge alarm-${t.battery_soc == null ? 'offline' : t.battery_soc < 20 ? 'critical' : t.battery_soc < 50 ? 'warning' : 'ok'}`}>
-                                                {t.battery_soc == null ? 'OFFLINE' : t.battery_soc < 20 ? 'CRITICAL' : t.battery_soc < 50 ? 'WARNING' : 'OK'}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                ))}
-                                {(site.trailers || []).length === 0 && (
-                                    <tr><td colSpan="5" style={{ textAlign: 'center', padding: '16px', color: 'var(--text-secondary)' }}>No trailers assigned</td></tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <div className="card">
-                    <h2 style={{ margin: '0 0 16px 0', fontSize: '18px' }}>Communication & Notes</h2>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '400px', overflowY: 'auto', marginBottom: '16px', paddingRight: '4px' }}>
-                        {notes.length === 0 ? (
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', fontStyle: 'italic', textAlign: 'center', margin: '24px 0' }}>No notes yet.</p>
-                        ) : (
-                            notes.map(note => (
-                                <div key={note.id} style={{ background: 'var(--bg-secondary)', padding: '12px', borderRadius: '6px', fontSize: '14px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                        <span style={{ fontWeight: 600 }}>{note.author}</span>
-                                        <span>{new Date(Number(note.created_at)).toLocaleString()}</span>
-                                    </div>
-                                    <div style={{ whiteSpace: 'pre-wrap' }}>{renderNoteWithMentions(note.note)}</div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-
-                    <form onSubmit={handleAddNote} style={{ display: 'flex', gap: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-                        <MentionInput
-                            value={newNote}
-                            onChange={setNewNote}
-                            onSubmit={handleAddNote}
-                            disabled={isSubmitting}
-                            placeholder="Type a note... Use @name to mention"
-                        />
-                        <button type="submit" className="btn btn-primary" disabled={!newNote.trim() || isSubmitting}>
-                            {isSubmitting ? '...' : 'Send'}
-                        </button>
-                    </form>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px', textAlign: 'center' }}>
-                        Messages are shared with the fleet management team. You can also reply to SMS alerts directly.
-                    </p>
+        <Page title={site.name} sub={site.address} crumbs={[{ label: 'My sites', to: '/' }, { label: site.name }]}>
+            <Stats>
+                <Stat label="Units" value={site.trailer_count} />
+                <Stat label="Online" value={`${site.trailers_online} / ${site.trailer_count}`} dot={site.trailers_online < site.trailer_count ? 'warn' : 'ok'} />
+                <Stat label="Average battery" value={site.avg_soc != null ? `${site.avg_soc}%` : '—'} />
+            </Stats>
+            <div className="grid-main">
+                <Card title="Units on this site" flush>
+                    <DataTable columns={columns} rows={site.trailers || []} rowKey="site_id" empty={<Empty compact>No units on this site right now.</Empty>} />
+                </Card>
+                <div className="stack">
+                    {site.primary_contact_name && (
+                        <Card title="Site contact">
+                            <div style={{ fontWeight: 600 }}>{site.primary_contact_name}</div>
+                            {site.primary_contact_phone && <a className="link" href={`tel:${site.primary_contact_phone}`}>{site.primary_contact_phone}</a>}
+                        </Card>
+                    )}
+                    <Card title="Messages">
+                        <form onSubmit={send} className="form" style={{ marginBottom: 8 }}>
+                            <textarea className="textarea" rows={3} value={message} onChange={e => setMessage(e.target.value)} placeholder="Send a message to the BIGView team about this site…" maxLength={4000} />
+                            <button className="btn primary" disabled={sending || !message.trim()}>{sending ? 'Sending…' : 'Send'}</button>
+                        </form>
+                        {notes.length === 0 ? <p className="faint" style={{ fontSize: 13 }}>No messages yet.</p> : notes.map(n => (
+                            <div key={n.id} className="note">
+                                <div className="note-head"><b>{n.author}</b><span>{fmtAgo(n.created_at)}</span></div>
+                                <div className="note-body">{n.note}</div>
+                            </div>
+                        ))}
+                    </Card>
                 </div>
             </div>
-        </div>
+        </Page>
     )
 }

@@ -1,16 +1,32 @@
-import { Routes, Route, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
+import { lazy, Suspense, useState, useEffect } from 'react'
 import { useAuth } from './components/AuthProvider'
 import { WorkspaceProvider, useWorkspace } from './components/WorkspaceProvider'
-import Sidebar from './components/Sidebar'
-import PortalSidebar from './components/PortalSidebar'
-import MobileHeader from './components/MobileHeader'
+import Nav from './components/Nav'
+import ThemeToggle from './components/ThemeToggle'
 import ErrorBoundary from './components/ErrorBoundary'
 import LoginPage from './pages/LoginPage'
 import ForcePasswordChangePage from './pages/ForcePasswordChangePage'
-import FleetOverview from './pages/FleetOverview'
-import JobSiteDetail from './pages/JobSiteDetail'
-import NotFound from './pages/NotFound'
-import { lazy, Suspense, useState, useEffect } from 'react'
+import { Icon, Loading } from './ui'
+
+const FleetHome = lazy(() => import('./pages/FleetHome'))
+const BillingHome = lazy(() => import('./pages/BillingHome'))
+const TechHome = lazy(() => import('./pages/TechHome'))
+const TrailersPage = lazy(() => import('./pages/TrailersPage'))
+const TrailerDetail = lazy(() => import('./pages/TrailerDetail'))
+const SitesPage = lazy(() => import('./pages/SitesPage'))
+const SiteDetail = lazy(() => import('./pages/SiteDetail'))
+const MaintenancePage = lazy(() => import('./pages/MaintenancePage'))
+const MapView = lazy(() => import('./pages/MapView'))
+const RentalsPage = lazy(() => import('./pages/RentalsPage'))
+const StatementsPage = lazy(() => import('./pages/StatementsPage'))
+const CustomersPage = lazy(() => import('./pages/CustomersPage'))
+const InsightsPage = lazy(() => import('./pages/InsightsPage'))
+const Settings = lazy(() => import('./pages/Settings'))
+const HelpPage = lazy(() => import('./pages/HelpPage'))
+const PortalDashboard = lazy(() => import('./pages/PortalDashboard'))
+const PortalSiteDetail = lazy(() => import('./pages/PortalSiteDetail'))
+const NotFound = lazy(() => import('./pages/NotFound'))
 
 function ScrollToTop() {
     const { pathname } = useLocation()
@@ -18,119 +34,100 @@ function ScrollToTop() {
     return null
 }
 
-// Lazy-load heavy pages (Chart.js, Leaflet, jsPDF, etc.)
-const TrailerDetail = lazy(() => import('./pages/TrailerDetail'))
-const MapView = lazy(() => import('./pages/MapView'))
-const FleetDetailsPage = lazy(() => import('./pages/FleetDetailsPage'))
-const MaintenancePage = lazy(() => import('./pages/MaintenancePage'))
-const RentalsPage = lazy(() => import('./pages/RentalsPage'))
-const TrailersPage = lazy(() => import('./pages/TrailersPage'))
-const FleetHome = lazy(() => import('./pages/FleetHome'))
-const BillingHome = lazy(() => import('./pages/BillingHome'))
-const Settings = lazy(() => import('./pages/Settings'))
-const HelpPage = lazy(() => import('./pages/HelpPage'))
-const PortalDashboard = lazy(() => import('./pages/PortalDashboard'))
-const PortalSiteDetail = lazy(() => import('./pages/PortalSiteDetail'))
-const Companies = lazy(() => import('./pages/Companies'))
+// Home means a different page per workspace
+function WorkspaceHome() {
+    const { workspace } = useWorkspace()
+    if (workspace === 'billing') return <BillingHome />
+    if (workspace === 'tech') return <TechHome />
+    return <FleetHome />
+}
 
-function PageLoader() {
+function Shell({ children, nav }) {
+    const [navOpen, setNavOpen] = useState(false)
     return (
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
-            <p style={{ color: 'var(--text-secondary)' }}>Loading...</p>
+        <div className="shell">
+            {nav(navOpen, () => setNavOpen(false))}
+            <main className="shell-main">
+                <div className="topbar">
+                    <button className="icon-btn" onClick={() => setNavOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
+                    <img src="/logo.webp" alt="BIGView" />
+                </div>
+                <div className="shell-content">
+                    <ScrollToTop />
+                    <ErrorBoundary>
+                        <Suspense fallback={<Loading />}>{children}</Suspense>
+                    </ErrorBoundary>
+                </div>
+            </main>
         </div>
     )
 }
 
-// The home route means something different per workspace:
-// Fleet -> operations home, Billing -> money home, Tech -> health triage
-function WorkspaceHome() {
-    const { workspace } = useWorkspace()
-    if (workspace === 'billing') return <BillingHome />
-    if (workspace === 'tech') return <FleetOverview techMode />
-    return <FleetHome />
-}
-
-function App() {
+export default function App() {
     const { user, loading } = useAuth()
-    const [mobileOpen, setMobileOpen] = useState(false)
 
-    if (loading) {
-        return (
-            <div className="login-page">
-                <div className="login-card" style={{ textAlign: 'center', padding: '40px' }}>
-                    <div className="login-logo-row">
-                        <img src="/logo.webp" alt="BIGView" className="login-logo-img" />
-                        <span className="login-omni">OMNI</span>
-                    </div>
-                    <p style={{ color: 'var(--text-secondary)', marginTop: '16px' }}>Loading...</p>
-                </div>
-            </div>
-        )
-    }
+    if (loading) return <div className="auth"><Loading /></div>
+    if (!user) return <LoginPage />
+    if (user.must_change_password) return <ForcePasswordChangePage />
 
-    if (!user) {
-        return <LoginPage />
-    }
-
-    // Temporary-password accounts must rotate before touching anything
-    if (user.must_change_password) {
-        return <ForcePasswordChangePage />
-    }
-
-    // Customer portal: simplified layout
     if (user.role === 'customer') {
         return (
-            <div className="app-layout">
-                <MobileHeader onToggleSidebar={() => setMobileOpen(o => !o)} />
-                <PortalSidebar className={mobileOpen ? 'sidebar-open' : ''} />
-                {mobileOpen && <div className="sidebar-overlay visible" onClick={() => setMobileOpen(false)} />}
-                <main className="main-content">
-                    <ScrollToTop />
-                    <ErrorBoundary>
-                        <Suspense fallback={<PageLoader />}>
-                            <Routes>
-                                <Route path="/" element={<PortalDashboard />} />
-                                <Route path="/site/:id" element={<PortalSiteDetail />} />
-                                <Route path="*" element={<PortalDashboard />} />
-                            </Routes>
-                        </Suspense>
-                    </ErrorBoundary>
-                </main>
-            </div>
+            <Shell nav={(open, close) => <PortalNav open={open} onClose={close} />}>
+                <Routes>
+                    <Route path="/" element={<PortalDashboard />} />
+                    <Route path="/site/:id" element={<PortalSiteDetail />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+            </Shell>
         )
     }
 
     return (
         <WorkspaceProvider>
-        <div className="app-layout">
-            <MobileHeader onToggleSidebar={() => setMobileOpen(o => !o)} />
-            <Sidebar mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
-            {mobileOpen && <div className="sidebar-overlay visible" onClick={() => setMobileOpen(false)} />}
-            <main className="main-content">
-                <ScrollToTop />
-                <ErrorBoundary>
-                    <Suspense fallback={<PageLoader />}>
-                        <Routes>
-                            <Route path="/" element={<WorkspaceHome />} />
-                            <Route path="/health" element={<FleetOverview />} />
-                            <Route path="/site/:id" element={<JobSiteDetail />} />
-                            <Route path="/trailer/:id" element={<TrailerDetail />} />
-                            <Route path="/map" element={<MapView />} />
-                            <Route path="/fleet" element={<FleetDetailsPage />} />
-                            <Route path="/maintenance" element={<MaintenancePage />} />
-                            <Route path="/rentals" element={<RentalsPage />} />
-                            <Route path="/trailers" element={<TrailersPage />} />
-                            <Route path="/companies" element={<Companies />} />
-                            <Route path="/settings" element={<Settings />} />
-                            <Route path="/help" element={<HelpPage />} />
-                            <Route path="*" element={<NotFound />} />
-                        </Routes>
-                    </Suspense>
-                </ErrorBoundary>
-            </main>
-        </div>
+            <Shell nav={(open, close) => <Nav open={open} onClose={close} />}>
+                <Routes>
+                    <Route path="/" element={<WorkspaceHome />} />
+                    <Route path="/trailers" element={<TrailersPage />} />
+                    <Route path="/trailer/:id" element={<TrailerDetail />} />
+                    <Route path="/sites" element={<SitesPage />} />
+                    <Route path="/site/:id" element={<SiteDetail />} />
+                    <Route path="/maintenance" element={<MaintenancePage />} />
+                    <Route path="/map" element={<MapView />} />
+                    <Route path="/rentals" element={<RentalsPage />} />
+                    <Route path="/statements" element={<StatementsPage />} />
+                    <Route path="/customers" element={<CustomersPage />} />
+                    <Route path="/insights" element={<InsightsPage />} />
+                    <Route path="/settings" element={<Settings />} />
+                    <Route path="/help" element={<HelpPage />} />
+                    {/* Old addresses that may be bookmarked or in emails */}
+                    <Route path="/companies" element={<Navigate to="/customers" replace />} />
+                    <Route path="/fleet" element={<Navigate to="/insights" replace />} />
+                    <Route path="/health" element={<Navigate to="/trailers" replace />} />
+                    <Route path="*" element={<NotFound />} />
+                </Routes>
+            </Shell>
         </WorkspaceProvider>
     )
 }
 
-export default App
+function PortalNav({ open, onClose }) {
+    const { user, logout } = useAuth()
+    const location = useLocation()
+    useEffect(() => { onClose?.() }, [location.pathname])
+    return (
+        <>
+            {open && <div className="scrim" onClick={onClose} />}
+            <aside className={`nav ${open ? 'open' : ''}`}>
+                <div className="nav-brand"><img src="/logo.webp" alt="BIGView" /><span>OMNI</span></div>
+                <nav className="nav-list">
+                    <NavLink to="/" className={() => `nav-item ${location.pathname === '/' || location.pathname.startsWith('/site/') ? 'on' : ''}`}><Icon name="pin" />My sites</NavLink>
+                </nav>
+                <div className="nav-foot">
+                    <div className="who"><b>{user?.display_name}</b><small>Customer</small></div>
+                    <ThemeToggle />
+                    <button className="icon-btn" onClick={logout} aria-label="Sign out" title="Sign out"><Icon name="logout" /></button>
+                </div>
+            </aside>
+        </>
+    )
+}

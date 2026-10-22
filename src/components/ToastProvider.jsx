@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef } from 'react'
+import { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react'
 
 const ToastContext = createContext(null)
 
@@ -7,6 +7,7 @@ export function useToast() {
 }
 
 let toastId = 0
+const TONE = { success: 'ok', error: 'crit', info: 'info' }
 
 export function ToastProvider({ children }) {
     const [toasts, setToasts] = useState([])
@@ -20,28 +21,26 @@ export function ToastProvider({ children }) {
 
     const addToast = useCallback((message, type = 'success') => {
         const id = ++toastId
-        const duration = type === 'error' ? 5000 : 3000
-        setToasts(prev => [...prev, { id, message, type }])
-        timersRef.current[id] = setTimeout(() => removeToast(id), duration)
+        setToasts(prev => [...prev.slice(-3), { id, message, type }])
+        timersRef.current[id] = setTimeout(() => removeToast(id), type === 'error' ? 6000 : 3500)
         return id
     }, [removeToast])
 
-    const toast = {
+    // Stable identity so pages can safely use `toast` in effect dependencies
+    const toast = useMemo(() => ({
         success: (msg) => addToast(msg, 'success'),
         error: (msg) => addToast(msg, 'error'),
         info: (msg) => addToast(msg, 'info'),
-    }
+    }), [addToast])
 
     return (
         <ToastContext.Provider value={toast}>
             {children}
-            <div className="toast-container">
+            <div className="toasts" role="status" aria-live="polite">
                 {toasts.map(t => (
-                    <div key={t.id} className={`toast toast-${t.type}`} onClick={() => removeToast(t.id)}>
-                        <span className="toast-icon">
-                            {t.type === 'success' ? '✓' : t.type === 'error' ? '✗' : 'ℹ'}
-                        </span>
-                        <span className="toast-message">{t.message}</span>
+                    <div key={t.id} className="toast" onClick={() => removeToast(t.id)}>
+                        <span className={`dot ${TONE[t.type] || 'info'}`} />
+                        <span>{t.message}</span>
                     </div>
                 ))}
             </div>

@@ -1,308 +1,140 @@
-import { useState, useCallback, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useMemo, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { useAuth } from '../components/AuthProvider'
-import { useToast } from '../components/ToastProvider'
-import { fetchTrailers, createTrailer, updateTrailerAsset } from '../api/vrm'
-import {
-    TRAILER_STATUS_LABELS, TrailerStatusBadge, RentalStatusBadge, formatDate, todayStr,
-} from '../components/RentalLifecycle'
+import { useWorkspace } from '../components/WorkspaceProvider'
+import { fetchBoardTrailers } from '../api/vrm'
+import { Page, Card, DataTable, Chips, Search, HealthBadge, Soc, Signal, Grade, Loading, Icon, Empty } from '../ui'
+import { fmtAgo, fmtKwh, fmtDate } from '../ui/format'
+import { RentalStatusBadge, TrailerStatusBadge } from '../components/RentalLifecycle'
+import TrailerFormModal from '../components/TrailerFormModal'
 import { generateCSV, downloadCSV } from '../utils/csv'
 
-const STATUS_TABS = [
+const HEALTH_CHIPS = [
     { key: 'all', label: 'All' },
-    { key: 'available', label: 'Available' },
-    { key: 'on_rent', label: 'On Rent' },
-    { key: 'reserved', label: 'Reserved' },
-    { key: 'in_transit', label: 'In Transit' },
-    { key: 'maintenance', label: 'Maintenance' },
-    { key: 'retired', label: 'Retired' },
+    { key: 'attention', label: 'Needs attention', dot: 'crit' },
+    { key: 'offline', label: 'Offline', dot: 'off' },
+    { key: 'watch', label: 'Watch', dot: 'warn' },
+    { key: 'good', label: 'Healthy', dot: 'ok' },
 ]
 
-function TrailersPage() {
+const ASSET_CHIPS = [
+    { key: 'all', label: 'All' },
+    { key: 'on_rent', label: 'On rent' },
+    { key: 'available', label: 'Available' },
+    { key: 'reserved', label: 'Reserved' },
+    { key: 'in_transit', label: 'In transit' },
+    { key: 'issues', label: 'Has issues', dot: 'crit' },
+]
+
+// One list of every trailer. Tech sees health and telemetry; Fleet sees
+// location, customer and rental. Both share the same board data.
+export default function TrailersPage() {
+    const navigate = useNavigate()
     const { user } = useAuth()
+    const { workspace } = useWorkspace()
+    const [params, setParams] = useSearchParams()
+    const isTech = workspace === 'tech'
     const canEdit = user?.role === 'admin' || user?.role === 'technician'
-    const toast = useToast()
 
-    const [statusFilter, setStatusFilter] = useState('all')
-    const [search, setSearch] = useState('')
-    const [editing, setEditing] = useState(null)   // trailer object or 'new'
+    const [q, setQ] = useState('')
+    const filter = params.get(isTech ? 'health' : 'status') || (params.get('health') && !isTech ? 'issues' : 'all')
+    const setFilter = (v) => setParams(v === 'all' ? {} : { [isTech ? 'health' : 'status']: v }, { replace: true })
+    const [editing, setEditing] = useState(null) // trailer id or 'new'
 
-    const fetchFn = useCallback(() => fetchTrailers(), [])
+    const fetchFn = useCallback(() => fetchBoardTrailers(), [])
     const { data, loading, refetch } = useApiPolling(fetchFn, 60000)
-    const trailers = data?.trailers || []
+    const rows = data?.trailers || []
 
     const counts = useMemo(() => {
-        const c = {}
-        for (const t of trailers) c[t.status] = (c[t.status] || 0) + 1
+        const c = { all: rows.length, issues: 0 }
+        for (const r of rows) {
+            c[r.health] = (c[r.health] || 0) + 1
+            if (r.asset_status) c[r.asset_status] = (c[r.asset_status] || 0) + 1
+            if (r.health === 'attention' || r.health === 'offline') c.issues++
+        }
         return c
-    }, [trailers])
+    }, [rows])
 
     const filtered = useMemo(() => {
-        let list = trailers
-        if (statusFilter !== 'all') list = list.filter(t => t.status === statusFilter)
-        else list = list.filter(t => t.status !== 'retired')
-        const term = search.trim().toLowerCase()
-        if (term) {
-            list = list.filter(t =>
-                t.unit_number?.toLowerCase().includes(term)
-                || t.vin?.toLowerCase().includes(term)
-                || t.current_job_site_name?.toLowerCase().includes(term))
-        }
-        return list
-    }, [trailers, statusFilter, search])
-
-    const handleRetire = async (t) => {
-        try {
-            await updateTrailerAsset(t.id, { status: 'retired' })
-            toast.success(`${t.unit_number} retired`)
-            refetch()
-        } catch (err) {
-            toast.error(err.message)
-        }
-    }
-
-    const handleExportCSV = () => {
-        const headers = ['Unit', 'Product', 'VIN', 'Status', 'Location', 'Open Rental', 'Purchase Date', 'Notes']
-        const rows = filtered.map(t => [
-            t.unit_number, t.product_code || '', t.vin || '',
-            TRAILER_STATUS_LABELS[t.status] || t.status,
-            t.at_headquarters ? 'HQ' : (t.current_job_site_name || ''),
-            t.open_rental_status || '',
-            t.purchase_date ? String(t.purchase_date).slice(0, 10) : '',
-            t.condition_notes || '',
-        ])
-        downloadCSV(generateCSV(headers, rows), `trailers-${todayStr()}.csv`)
-    }
-
-    return (
-        <div className="page">
-            <div className="page-header">
-                <div className="page-header-row">
-                    <h1>Trailers</h1>
-                    <div className="page-header-actions">
-                        <button className="btn btn-secondary" onClick={handleExportCSV} disabled={filtered.length === 0}>
-                            Export CSV
-                        </button>
-                        {canEdit && (
-                            <button className="btn btn-primary" onClick={() => setEditing('new')}>
-                                + Add Trailer
-                            </button>
-                        )}
-                    </div>
-                </div>
-                <p className="page-subtitle">Fleet asset registry — every unit, where it is, and whether it's earning</p>
-            </div>
-
-            <div className="kpi-row">
-                <div className="kpi-card kpi-green">
-                    <div className="kpi-value">{counts.available || 0}</div>
-                    <div className="kpi-label">Available</div>
-                </div>
-                <div className="kpi-card kpi-yellow">
-                    <div className="kpi-value">{counts.on_rent || 0}</div>
-                    <div className="kpi-label">On Rent</div>
-                </div>
-                <div className="kpi-card kpi-blue">
-                    <div className="kpi-value">{(counts.reserved || 0) + (counts.in_transit || 0)}</div>
-                    <div className="kpi-label">Reserved / In Transit</div>
-                </div>
-                <div className="kpi-card">
-                    <div className="kpi-value">{trailers.filter(t => t.status !== 'retired').length}</div>
-                    <div className="kpi-label">Total Active Fleet</div>
-                </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-                <input
-                    className="input"
-                    style={{ maxWidth: 260 }}
-                    placeholder="Search unit, VIN, or site..."
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                />
-                <div className="maint-tabs">
-                    {STATUS_TABS.map(tab => (
-                        <button
-                            key={tab.key}
-                            className={`maint-tab ${statusFilter === tab.key ? 'active' : ''}`}
-                            onClick={() => setStatusFilter(tab.key)}
-                        >
-                            {tab.label}{tab.key !== 'all' && counts[tab.key] ? ` (${counts[tab.key]})` : ''}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            <div className="maint-table-section">
-                {loading && trailers.length === 0 ? (
-                    <div className="page-loading"><div className="spinner" /><p>Loading trailers...</p></div>
-                ) : filtered.length === 0 ? (
-                    <div className="empty-section">
-                        <p>{trailers.length === 0
-                            ? 'No trailers registered yet. Click "+ Add Trailer" to add your first unit.'
-                            : 'No trailers match this filter.'}</p>
-                    </div>
-                ) : (
-                    <table className="maint-table">
-                        <thead>
-                            <tr>
-                                <th>Unit</th>
-                                <th>Product</th>
-                                <th>VIN</th>
-                                <th>Status</th>
-                                <th>Location</th>
-                                <th>Rental</th>
-                                <th>Purchased</th>
-                                {canEdit && <th>Actions</th>}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filtered.map(t => (
-                                <tr key={t.id}>
-                                    <td className="maint-title">
-                                        {t.vrm_site_id
-                                            ? <Link to={`/trailer/${t.vrm_site_id}`} className="table-link">{t.unit_number}</Link>
-                                            : t.unit_number}
-                                    </td>
-                                    <td>{t.product_code || '—'}</td>
-                                    <td>{t.vin || '—'}</td>
-                                    <td><TrailerStatusBadge status={t.status} /></td>
-                                    <td>
-                                        {t.at_headquarters
-                                            ? 'HQ'
-                                            : t.current_job_site_id
-                                                ? <Link to={`/site/${t.current_job_site_id}`} className="table-link">{t.current_job_site_name}</Link>
-                                                : (t.current_job_site_name || '—')}
-                                    </td>
-                                    <td>
-                                        {t.open_rental_status
-                                            ? <Link to="/rentals" className="table-link"><RentalStatusBadge status={t.open_rental_status} /></Link>
-                                            : '—'}
-                                    </td>
-                                    <td className="maint-date">{formatDate(t.purchase_date)}</td>
-                                    {canEdit && (
-                                        <td className="maint-actions">
-                                            <button className="btn btn-sm btn-ghost" style={{ marginRight: 6 }} onClick={() => setEditing(t)}>Edit</button>
-                                            {t.status === 'available' && (
-                                                <button className="btn btn-sm btn-ghost" onClick={() => handleRetire(t)}>Retire</button>
-                                            )}
-                                        </td>
-                                    )}
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                )}
-            </div>
-
-            {editing && (
-                <TrailerModal
-                    trailer={editing === 'new' ? null : editing}
-                    onSaved={() => { setEditing(null); refetch(); toast.success(editing === 'new' ? 'Trailer added' : 'Trailer updated') }}
-                    onError={(msg) => toast.error(msg)}
-                    onClose={() => setEditing(null)}
-                />
-            )}
-        </div>
-    )
-}
-
-function TrailerModal({ trailer, onSaved, onError, onClose }) {
-    const isNew = !trailer
-    const [form, setForm] = useState({
-        unit_number: trailer?.unit_number || '',
-        product_code: trailer?.product_code || 'BV1305',
-        vin: trailer?.vin || '',
-        vrm_site_id: trailer?.vrm_site_id || '',
-        status: trailer?.status || 'available',
-        purchase_date: trailer?.purchase_date ? String(trailer.purchase_date).slice(0, 10) : '',
-        condition_notes: trailer?.condition_notes || '',
-    })
-    const [saving, setSaving] = useState(false)
-
-    const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
-
-    const handleSubmit = async () => {
-        setSaving(true)
-        try {
-            const payload = {
-                unit_number: form.unit_number.trim(),
-                product_code: form.product_code.trim() || 'BV1305',
-                vin: form.vin.trim() || null,
-                vrm_site_id: form.vrm_site_id ? parseInt(form.vrm_site_id) : null,
-                status: form.status,
-                purchase_date: form.purchase_date || null,
-                condition_notes: form.condition_notes || null,
+        const term = q.trim().toLowerCase()
+        return rows.filter(r => {
+            if (filter !== 'all') {
+                if (isTech && r.health !== filter) return false
+                if (!isTech && filter === 'issues' && !(r.health === 'attention' || r.health === 'offline')) return false
+                if (!isTech && filter !== 'issues' && r.asset_status !== filter) return false
             }
-            if (isNew) await createTrailer(payload)
-            else await updateTrailerAsset(trailer.id, payload)
-            onSaved()
-        } catch (err) {
-            onError(err.message)
-        } finally {
-            setSaving(false)
-        }
+            if (!term) return true
+            return [r.unit, r.vin, r.site?.name, r.customer?.name, r.diagnosis].some(v => v && String(v).toLowerCase().includes(term))
+        })
+    }, [rows, q, filter, isTech])
+
+    const open = (r) => {
+        if (r.site_id != null) navigate(`/trailer/${r.site_id}`)
+        else if (r.trailer_id && canEdit) setEditing(r.trailer_id)
     }
 
+    const techColumns = [
+        { key: 'unit', label: 'Trailer', sort: r => r.unit, render: r => <span className="primary">{r.unit}</span> },
+        {
+            key: 'health', label: 'Health', sort: r => ['offline', 'attention', 'watch', 'good', 'unknown'].indexOf(r.health),
+            render: r => <div><HealthBadge health={r.health} />{r.diagnosis && r.health !== 'good' && <div className="sub" style={{ marginTop: 4, maxWidth: 360 }}>{r.diagnosis}</div>}</div>
+        },
+        { key: 'soc', label: 'Battery', sort: r => r.soc, render: r => <Soc value={r.soc} /> },
+        {
+            key: 'solar', label: 'Solar today', align: 'r', sort: r => r.yield_today_kwh,
+            render: r => r.yield_today_kwh == null ? <span className="faint">—</span> : <span className="num">{fmtKwh(r.yield_today_kwh)}{r.expected_yield_kwh ? <span className="faint"> / {r.expected_yield_kwh.toFixed(1)}</span> : null}</span>
+        },
+        { key: 'signal', label: 'Signal', sort: r => (r.online ? r.signal_bars ?? 0 : -1), render: r => r.site_id == null ? <span className="faint">—</span> : <Signal bars={r.signal_bars} online={r.online} /> },
+        { key: 'grade', label: 'Grade', sort: r => r.grade, render: r => <Grade grade={r.grade} /> },
+        { key: 'site', label: 'Site', sort: r => r.site?.name, render: r => r.site ? <span className="muted">{r.site.name}</span> : <span className="faint">Unassigned</span> },
+        { key: 'seen', label: 'Last data', align: 'r', sort: r => -(r.last_seen || 0), render: r => <span className="faint">{fmtAgo(r.last_seen)}</span> },
+    ]
+
+    const fleetColumns = [
+        { key: 'unit', label: 'Trailer', sort: r => r.unit, render: r => <div><span className="primary">{r.unit}</span>{r.product_code && <div className="sub">{r.product_code}</div>}</div> },
+        { key: 'asset', label: 'Status', sort: r => r.asset_status, render: r => <TrailerStatusBadge status={r.asset_status} /> },
+        {
+            key: 'where', label: 'Location', sort: r => r.site?.name,
+            render: r => r.site ? <div><Link to={`/site/${r.site.id}`} className="link" onClick={e => e.stopPropagation()}>{r.site.name}</Link>{r.customer && <div className="sub">{r.customer.name}</div>}</div> : <span className="faint">Unassigned</span>
+        },
+        {
+            key: 'rental', label: 'Rental', sort: r => r.rental?.status,
+            render: r => r.rental ? <div><RentalStatusBadge status={r.rental.status} />{r.rental.billing_start && <div className="sub" style={{ marginTop: 4 }}>since {fmtDate(r.rental.billing_start)}</div>}</div> : <span className="faint">—</span>
+        },
+        { key: 'health', label: 'Health', sort: r => ['offline', 'attention', 'watch', 'good', 'unknown'].indexOf(r.health), render: r => <HealthBadge health={r.health} /> },
+        { key: 'seen', label: 'Last data', align: 'r', sort: r => -(r.last_seen || 0), render: r => <span className="faint">{fmtAgo(r.last_seen)}</span> },
+    ]
+
+    const exportCsv = () => {
+        const headers = ['Unit', 'Health', 'Diagnosis', 'Battery %', 'Solar today kWh', 'Signal bars', 'Site', 'Customer', 'Rental', 'Asset status']
+        downloadCSV(generateCSV(headers, filtered.map(r => [
+            r.unit, r.health, r.diagnosis || '', r.soc ?? '', r.yield_today_kwh ?? '', r.signal_bars ?? '',
+            r.site?.name || '', r.customer?.name || '', r.rental?.status || '', r.asset_status || '',
+        ])), `trailers-${new Date().toISOString().slice(0, 10)}.csv`)
+    }
+
+    const chips = (isTech ? HEALTH_CHIPS : ASSET_CHIPS).map(c => ({ ...c, count: counts[c.key] ?? 0 }))
+
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
-                <div className="modal-header">
-                    <h2>{isNew ? 'Add Trailer' : `Edit ${trailer.unit_number}`}</h2>
-                    <button className="modal-close" onClick={onClose}>&times;</button>
+        <Page title="Trailers" sub={isTech ? 'Health and telemetry for every unit' : 'Where every unit is and whether it’s earning'}
+            actions={<>
+                <button className="btn" onClick={exportCsv} disabled={!filtered.length}><Icon name="download" />Export</button>
+                {canEdit && !isTech && <button className="btn primary" onClick={() => setEditing('new')}><Icon name="plus" />Add trailer</button>}
+            </>}>
+            <div>
+                <div className="toolbar">
+                    <Search value={q} onChange={setQ} placeholder="Search unit, site, customer…" />
+                    <Chips options={chips} value={filter} onChange={setFilter} />
                 </div>
-                <div style={{ padding: 20 }}>
-                    <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">Unit Number *</label>
-                            <input className="input" value={form.unit_number} onChange={set('unit_number')} placeholder="e.g. BV-042" />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">Product</label>
-                            <input className="input" value={form.product_code} onChange={set('product_code')} placeholder="BV1305" />
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">VIN / Serial</label>
-                            <input className="input" value={form.vin} onChange={set('vin')} />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">Purchase Date</label>
-                            <input type="date" className="input" value={form.purchase_date} onChange={set('purchase_date')} />
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">VRM Site ID</label>
-                            <input type="number" className="input" value={form.vrm_site_id} onChange={set('vrm_site_id')} placeholder="Victron installation id" />
-                            <p className="settings-desc" style={{ marginTop: 4 }}>Links this unit to its telemetry. Auto-filled for trailers discovered from VRM.</p>
-                        </div>
-                        <div style={{ flex: 1 }}>
-                            <label className="form-label">Status</label>
-                            <select className="input" value={form.status} onChange={set('status')}>
-                                {Object.entries(TRAILER_STATUS_LABELS).map(([k, v]) => (
-                                    <option key={k} value={k}>{v}</option>
-                                ))}
-                            </select>
-                            <p className="settings-desc" style={{ marginTop: 4 }}>Rental lifecycle events manage this automatically — override only for maintenance holds or corrections.</p>
-                        </div>
-                    </div>
-                    <div style={{ marginBottom: 14 }}>
-                        <label className="form-label">Condition Notes</label>
-                        <textarea className="input" rows={2} value={form.condition_notes} onChange={set('condition_notes')} />
-                    </div>
-                    <div className="modal-footer">
-                        <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
-                        <button className="btn btn-primary" onClick={handleSubmit} disabled={saving || !form.unit_number.trim()}>
-                            {saving ? 'Saving...' : (isNew ? 'Add Trailer' : 'Save Changes')}
-                        </button>
-                    </div>
-                </div>
+                <Card flush>
+                    {loading && !data ? <Loading /> : (
+                        <DataTable columns={isTech ? techColumns : fleetColumns} rows={filtered} rowKey="key" onRowClick={open}
+                            empty={<Empty compact title={rows.length ? 'No trailers match' : 'No trailers yet'}>{rows.length ? 'Try a different search or filter.' : 'Trailers appear here as they report in, or add one to the registry.'}</Empty>} />
+                    )}
+                </Card>
             </div>
-        </div>
+            {editing && <TrailerFormModal trailerId={editing === 'new' ? null : editing} onSaved={refetch} onClose={() => setEditing(null)} />}
+        </Page>
     )
 }
-
-export default TrailersPage

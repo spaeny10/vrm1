@@ -1,17 +1,13 @@
 import { Link } from 'react-router-dom'
 
-function NotFound() {
+export default function NotFound() {
     return (
-        <div className="not-found-page">
-            <div className="not-found-content">
-                <h1>404</h1>
-                <p>Page not found</p>
-                <Link to="/" className="btn btn-primary">
-                    Back to Fleet Overview
-                </Link>
+        <div className="card" style={{ maxWidth: 460, margin: '60px auto' }}>
+            <div className="card-body" style={{ textAlign: 'center', padding: 32 }}>
+                <h2 style={{ fontSize: 20, marginBottom: 6 }}>Page not found</h2>
+                <p className="muted" style={{ marginBottom: 18 }}>That address doesn't exist — it may have moved in the redesign.</p>
+                <Link to="/" className="btn primary">Go home</Link>
             </div>
         </div>
     )
 }
-
-export default NotFound

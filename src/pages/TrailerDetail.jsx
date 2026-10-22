@@ -1,1178 +1,224 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
-import RentalsInline from '../components/RentalsInline'
-import { useParams, useNavigate } from 'react-router-dom'
-import {
-    Chart as ChartJS,
-    CategoryScale, LinearScale, TimeScale, PointElement, LineElement,
-    BarElement, Title, Tooltip, Legend, Filler
-} from 'chart.js'
-import 'chartjs-adapter-date-fns'
-import zoomPlugin from 'chartjs-plugin-zoom'
-import { Line, Bar } from 'react-chartjs-2'
+import { useCallback, useMemo, useState } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchHistory, fetchFleetNetwork, fetchPepwaveHistory, fetchComponents, createComponent, updateComponent, fetchBatteryHealth, fetchTrailerIntelligence, analyzeTrailer, fetchSites, fetchJobSites, fetchTrailerNotes, fetchReplies } from '../api/vrm'
-import KpiCard from '../components/KpiCard'
-import GaugeChart from '../components/GaugeChart'
-import AlarmBadge from '../components/AlarmBadge'
-import ComponentForm from '../components/ComponentForm'
-import DataFreshness from '../components/DataFreshness'
-import Breadcrumbs from '../components/Breadcrumbs'
-import SignalBars from '../components/SignalBars'
-import ReportPanel from '../components/ReportPanel'
-import { signalQuality, formatUptime, formatMB } from '../utils/format'
 import { useAuth } from '../components/AuthProvider'
+import { useWorkspace } from '../components/WorkspaceProvider'
+import {
+    fetchBoardTrailers, fetchDiagnostics, fetchAlarms, fetchSystemOverview, fetchFleetNetwork, fetchTrailerIntelligence,
+} from '../api/vrm'
+import { Page, Stats, Stat, Tabs, HealthBadge, Signal, Icon, Empty, Loading } from '../ui'
+import { fmtAgo, fmtDateTime, fmtKwh, fmtPct, fmtWatts, socTone } from '../ui/format'
+import ReportPanel from '../components/ReportPanel'
+import TrailerFormModal from '../components/TrailerFormModal'
+import { parseDiagnostics, plainDiagnosis, tempLabel, tempTone, STALE_MS, fmtMB } from '../components/trailer/telemetry'
+import AiDrawer from '../components/trailer/AiDrawer'
+import OverviewTab from '../components/trailer/OverviewTab'
+import HistoryTab from '../components/trailer/HistoryTab'
+import NetworkTab from '../components/trailer/NetworkTab'
+import RentalTab from '../components/trailer/RentalTab'
+import ServiceTab from '../components/trailer/ServiceTab'
+import NotesTab from '../components/trailer/NotesTab'
+import HardwareTab from '../components/trailer/HardwareTab'
 
-ChartJS.register(
-    CategoryScale, LinearScale, TimeScale, PointElement, LineElement,
-    BarElement, Title, Tooltip, Legend, Filler, zoomPlugin
-)
+const none = () => Promise.resolve(null)
 
-const RANGES = {
-    '24h': 24 * 60 * 60 * 1000,
-    '7d': 7 * 24 * 60 * 60 * 1000,
-    '30d': 30 * 24 * 60 * 60 * 1000,
-}
-
-// Helper: extract value from VRM diagnostics records
-function diagValue(records, code) {
-    const match = records.find(r => r.code === code && r.Device !== 'Gateway');
-    if (!match) return null;
-    const val = match.rawValue;
-    if (val === undefined || val === null || val === '') return null;
-    const num = Number(val);
-    return isNaN(num) ? val : num;
-}
-
-function diagFormatted(records, code) {
-    const match = records.find(r => r.code === code && r.Device !== 'Gateway');
-    return match?.formattedValue || null;
-}
-
-function TrailerDetail() {
-    const { user } = useAuth()
-    const canEdit = user?.role === 'admin' || user?.role === 'technician'
+// One trailer: what's wrong (header + diagnosis), the handful of numbers
+// that matter, and everything else organized into tabs.
+export default function TrailerDetail() {
     const { id } = useParams()
-    const navigate = useNavigate()
-    const [range, setRange] = useState('24h')
-    const [historyData, setHistoryData] = useState([])
-    const [pepwaveHistoryData, setPepwaveHistoryData] = useState([])
-    const [showComponentForm, setShowComponentForm] = useState(false)
-    const [editingComponent, setEditingComponent] = useState(null)
+    const siteId = Number(id)
+    const isVrm = siteId > 0
+    const { user } = useAuth()
+    const { workspace } = useWorkspace()
+    const canEdit = user?.role === 'admin' || user?.role === 'technician'
+    const [params, setParams] = useSearchParams()
     const [showReport, setShowReport] = useState(false)
+    const [showAi, setShowAi] = useState(false)
+    const [editAsset, setEditAsset] = useState(false)
 
-    const socChartRef = useRef(null)
-    const voltageChartRef = useRef(null)
-    const solarChartRef = useRef(null)
-    const dcLoadChartRef = useRef(null)
-    const rsrpChartRef = useRef(null)
-    const usageChartRef = useRef(null)
+    const boardFn = useCallback(() => fetchBoardTrailers(), [])
+    const diagFn = useCallback(() => (isVrm ? fetchDiagnostics(siteId) : none()), [siteId, isVrm])
+    const alarmsFn = useCallback(() => (isVrm ? fetchAlarms(siteId) : none()), [siteId, isVrm])
+    const systemFn = useCallback(() => (isVrm ? fetchSystemOverview(siteId) : none()), [siteId, isVrm])
+    const netFn = useCallback(() => fetchFleetNetwork(), [])
 
-    const fetchDiagFn = useCallback(() => fetchDiagnostics(id), [id])
-    const fetchAlarmsFn = useCallback(() => fetchAlarms(id), [id])
-    const fetchSystemFn = useCallback(() => fetchSystemOverview(id), [id])
-    const fetchNetworkFn = useCallback(() => fetchFleetNetwork(), [])
-    const fetchSitesFn = useCallback(() => fetchSites(), [])
-    const { data: sitesData } = useApiPolling(fetchSitesFn, 120000)
-    const fetchJobSitesFn = useCallback(() => fetchJobSites(), [])
-    const { data: jobSitesData } = useApiPolling(fetchJobSitesFn, 120000)
+    const { data: board, loading: boardLoading, refetch: refetchBoard } = useApiPolling(boardFn, 60000)
+    const { data: diagData } = useApiPolling(diagFn, 30000)
+    const { data: alarmsData } = useApiPolling(alarmsFn, 60000)
+    const { data: systemData } = useApiPolling(systemFn, 300000)
+    const { data: netData } = useApiPolling(netFn, 60000)
 
-    const fetchComponentsFn = useCallback(() => fetchComponents(id), [id])
-    const fetchBatteryHealthFn = useCallback(() => fetchBatteryHealth(id), [id])
+    const row = useMemo(() => (board?.trailers || []).find(t => String(t.site_id) === String(id)) || null, [board, id])
+    const systemName = systemData?.records?.name || null
+    const device = useMemo(() => {
+        const list = netData?.records || []
+        return list.find(d => (row?.unit && d.name === row.unit) || (systemName && d.name === systemName) || (!isVrm && d.id === -siteId)) || null
+    }, [netData, row, systemName, isVrm, siteId])
 
-    const { data: diagData, lastUpdated, refetch } = useApiPolling(fetchDiagFn, 30000)
-    const { data: alarmsData } = useApiPolling(fetchAlarmsFn, 60000)
-    const { data: systemData } = useApiPolling(fetchSystemFn, 120000)
-    const { data: networkData } = useApiPolling(fetchNetworkFn, 60000)
-    const { data: componentsData, refetch: refetchComponents } = useApiPolling(fetchComponentsFn, 120000)
-    const { data: batteryHealthData } = useApiPolling(fetchBatteryHealthFn, 300000)
-
-    const fetchIntelFn = useCallback(() => fetchTrailerIntelligence(id), [id])
-    const { data: intelligenceData } = useApiPolling(fetchIntelFn, 60000)
-
-    const [analysisResult, setAnalysisResult] = useState(null)
-    const [analysisLoading, setAnalysisLoading] = useState(false)
-    const [analysisError, setAnalysisError] = useState(null)
-    const [relatedNotes, setRelatedNotes] = useState([])
-    const [notesTotal, setNotesTotal] = useState(0)
-    const [expandedNote, setExpandedNote] = useState(null)
-    const [noteReplies, setNoteReplies] = useState({})
-
-    const handleAnalyze = async () => {
-        setAnalysisLoading(true)
-        setAnalysisError(null)
-        try {
-            const result = await analyzeTrailer(id)
-            setAnalysisResult(result)
-        } catch (err) {
-            setAnalysisError(err.message)
-        } finally {
-            setAnalysisLoading(false)
-        }
-    }
-
-    const components = componentsData?.components || []
-
-    // Fetch local history based on range
-    useEffect(() => {
-        const end = Date.now()
-        const start = end - RANGES[range]
-        fetchHistory(id, start, end)
-            .then(res => setHistoryData(res.records || []))
-            .catch(() => setHistoryData([]))
-    }, [id, range])
-
-    // Load related notes (tagged with this trailer)
-    useEffect(() => {
-        fetchTrailerNotes(id)
-            .then(data => {
-                setRelatedNotes(data?.notes || [])
-                setNotesTotal(data?.total || 0)
-            })
-            .catch(() => setRelatedNotes([]))
-    }, [id])
-
-    const toggleNoteThread = async (noteId) => {
-        if (expandedNote === noteId) { setExpandedNote(null); return }
-        setExpandedNote(noteId)
-        if (!noteReplies[noteId] && parentJobSite) {
-            try {
-                const data = await fetchReplies(parentJobSite.id, noteId)
-                setNoteReplies(prev => ({ ...prev, [noteId]: data?.replies || [] }))
-            } catch (err) { console.error(err) }
-        }
-    }
-
-    const formatNoteDate = (ts) => {
-        const d = new Date(Number(ts))
-        const diff = Date.now() - d.getTime()
-        if (diff < 60000) return 'just now'
-        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-        if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`
-        return d.toLocaleDateString()
-    }
-
-    // Parse diagnostics
-    const records = diagData?.records || [];
-
-    // Extract real VRM timestamp (when data was last collected by the Cerbo)
-    const vrmLastUpdated = useMemo(() => {
-        let latest = 0
-        for (const r of records) {
-            if (r.timestamp && r.timestamp > latest) latest = r.timestamp
-        }
-        return latest > 0 ? latest * 1000 : null  // VRM uses Unix seconds, convert to ms
-    }, [records])
-
-    // VRM data is stale if older than 30 minutes
-    const isVrmStale = vrmLastUpdated && (Date.now() - vrmLastUpdated) > 30 * 60 * 1000
-
-    // Find matching Pepwave device by site name (MUST be before useEffect that uses it)
-    // We need the site name — get it from the diagnostics data or system data
-    const siteName = useMemo(() => {
-        // Try sites list first (cached from dashboard, resolves immediately)
-        const siteMatch = sitesData?.records?.find(s => String(s.idSite) === String(id))
-        if (siteMatch?.name) return siteMatch.name
-        // Try system overview
-        const sysName = systemData?.records?.name
-        if (sysName) return sysName
-        // Fallback: check if any diagnostic record has a site name
-        const diagRecord = records.find(r => r.idSiteName)
-        return diagRecord?.idSiteName || null
-    }, [sitesData, systemData, records, id])
-
-    // Find the job site this trailer belongs to
-    const parentJobSite = useMemo(() => {
-        if (!jobSitesData?.job_sites) return null
-        return jobSitesData.job_sites.find(js =>
-            js.trailers?.some(t => String(t.site_id) === String(id))
-        )
-    }, [jobSitesData, id])
-
-    const battery = useMemo(() => {
-        if (isVrmStale) return {
-            soc: null, voltage: null, current: null, temp: null, power: null,
-            consumed: null, ttg: null, minCell: null, maxCell: null,
-            dcLoadWatts: null, loadCurrent: null, consumedAh: null,
-            alarmReason: null, errorCode: null, inverterMode: null,
-        }
-        return {
-        soc: diagValue(records, 'SOC') ?? diagValue(records, 'bs'),
-        voltage: diagValue(records, 'V') ?? diagValue(records, 'bv'),
-        current: diagValue(records, 'I') ?? diagValue(records, 'bc'),
-        temp: diagValue(records, 'BT') ?? diagValue(records, 'bT'),
-        power: diagValue(records, 'P'),
-        consumed: diagValue(records, 'CE'),
-        ttg: diagFormatted(records, 'TTG'),
-        minCell: diagValue(records, 'mcV'),
-        maxCell: diagValue(records, 'McV'),
-        dcLoadWatts: diagValue(records, 'Pc'),
-        loadCurrent: diagValue(records, 'IL'),
-        consumedAh: diagValue(records, 'CE'),
-        alarmReason: diagFormatted(records, 'AR'),
-        errorCode: diagFormatted(records, 'ERR'),
-        inverterMode: diagFormatted(records, 'MODE'),
-    }}, [records, isVrmStale]);
-
-    const solar = useMemo(() => {
-        if (isVrmStale) return {
-            watts: null, voltage: null, yieldToday: null, yieldYesterday: null,
-            chargeState: null, temp: null, mpptState: null, lifetimeYield: null,
-        }
-        return {
-        watts: diagValue(records, 'ScW') ?? diagValue(records, 'Pdc'),
-        voltage: diagValue(records, 'ScV') ?? diagValue(records, 'PVV'),
-        yieldToday: diagValue(records, 'YT'),
-        yieldYesterday: diagValue(records, 'YY'),
-        chargeState: diagFormatted(records, 'ScS'),
-        temp: diagValue(records, 'ScT'),
-        mpptState: diagFormatted(records, 'MPPT'),
-        lifetimeYield: diagValue(records, 'H19'),
-    }}, [records, isVrmStale]);
-
-    // Fetch Pepwave history when device name is known
-    useEffect(() => {
-        if (!siteName) return
-        const end = Date.now()
-        const start = end - RANGES[range]
-        fetchPepwaveHistory(siteName, start, end)
-            .then(res => setPepwaveHistoryData(res.records || []))
-            .catch(() => setPepwaveHistoryData([]))
-    }, [siteName, range])
-
-    const pepwaveDevice = useMemo(() => {
-        if (!siteName || !networkData?.records) return null
-        return networkData.records.find(d => d.name === siteName)
-    }, [siteName, networkData])
-
-    // Chart data — use {x: timestamp, y: value} for time scale
-    const toTimePoints = (arr, field) =>
-        arr.map(h => ({ x: Number(h.timestamp), y: h[field] })).filter(p => p.y != null)
-
-    const socChartData = useMemo(() => {
-        if (!historyData.length) return null
-        return {
-            datasets: [{
-                label: 'SOC %',
-                data: toTimePoints(historyData, 'battery_soc'),
-                borderColor: '#2ecc71',
-                backgroundColor: 'rgba(46, 204, 113, 0.1)',
-                fill: true, tension: 0.3,
-                pointRadius: range === '24h' ? 2 : 0,
-            }],
-        }
-    }, [historyData, range])
-
-    const voltageChartData = useMemo(() => {
-        if (!historyData.length) return null
-        return {
-            datasets: [{
-                label: 'Voltage (V)',
-                data: toTimePoints(historyData, 'battery_voltage'),
-                borderColor: '#3498db',
-                backgroundColor: 'rgba(52, 152, 219, 0.1)',
-                fill: true, tension: 0.3,
-                pointRadius: range === '24h' ? 2 : 0,
-            }],
-        }
-    }, [historyData, range])
-
-    const solarChartData = useMemo(() => {
-        if (!historyData.length) return null
-        return {
-            datasets: [{
-                label: 'Solar (W)',
-                data: toTimePoints(historyData, 'solar_watts'),
-                backgroundColor: 'rgba(241, 196, 15, 0.7)',
-                borderColor: '#f1c40f', borderWidth: 1,
-            }],
-        }
-    }, [historyData])
-
-    const dcLoadChartData = useMemo(() => {
-        if (!historyData.length) return null
-        const pts = toTimePoints(historyData, 'dc_load_watts')
-        if (!pts.length) return null
-        return {
-            datasets: [{
-                label: 'DC Load (W)',
-                data: pts,
-                backgroundColor: 'rgba(231, 76, 60, 0.7)',
-                borderColor: '#e74c3c', borderWidth: 1,
-            }],
-        }
-    }, [historyData])
-
-    // Pepwave signal history chart
-    const rsrpChartData = useMemo(() => {
-        if (!pepwaveHistoryData.length) return null
-        return {
-            datasets: [{
-                label: 'RSRP (dBm)',
-                data: toTimePoints(pepwaveHistoryData, 'rsrp'),
-                borderColor: '#9b59b6',
-                backgroundColor: 'rgba(155, 89, 182, 0.1)',
-                fill: true, tension: 0.3,
-                pointRadius: range === '24h' ? 2 : 0,
-            }, {
-                label: 'SINR (dB)',
-                data: toTimePoints(pepwaveHistoryData, 'sinr'),
-                borderColor: '#1abc9c',
-                backgroundColor: 'rgba(26, 188, 156, 0.05)',
-                fill: false, tension: 0.3,
-                pointRadius: range === '24h' ? 2 : 0,
-            }],
-        }
-    }, [pepwaveHistoryData, range])
-
-    // Pepwave data usage chart
-    const usageChartData = useMemo(() => {
-        if (!pepwaveHistoryData.length) return null
-        return {
-            datasets: [{
-                label: 'Cumulative Usage (MB)',
-                data: toTimePoints(pepwaveHistoryData, 'usage_mb'),
-                borderColor: '#e67e22',
-                backgroundColor: 'rgba(230, 126, 34, 0.1)',
-                fill: true, tension: 0.3,
-                pointRadius: range === '24h' ? 2 : 0,
-            }],
-        }
-    }, [pepwaveHistoryData, range])
-
-    const chartOptions = {
-        responsive: true, maintainAspectRatio: false,
-        interaction: {
-            mode: 'nearest',
-            axis: 'x',
-            intersect: false,
-        },
-        plugins: {
-            legend: { labels: { color: '#bdc3c7', font: { family: 'Inter' } } },
-            tooltip: {
-                mode: 'nearest',
-                intersect: false,
-                callbacks: {
-                    title: (items) => {
-                        if (!items.length) return ''
-                        const ts = items[0].parsed.x
-                        return new Date(ts).toLocaleString([], {
-                            month: 'short', day: 'numeric',
-                            hour: '2-digit', minute: '2-digit', second: '2-digit',
-                        })
-                    },
-                },
-            },
-            zoom: {
-                zoom: {
-                    wheel: { enabled: true },
-                    pinch: { enabled: true },
-                    mode: 'x',
-                },
-                pan: {
-                    enabled: true,
-                    mode: 'x',
-                },
-            },
-        },
-        scales: {
-            x: {
-                type: 'time',
-                time: {
-                    displayFormats: {
-                        minute: 'HH:mm',
-                        hour: 'MMM d, HH:mm',
-                        day: 'MMM d',
-                        week: 'MMM d',
-                    },
-                },
-                ticks: { color: '#7f8c8d', maxTicksLimit: 12, font: { family: 'Inter', size: 11 } },
-                grid: { color: 'rgba(255,255,255,0.05)' },
-            },
-            y: {
-                ticks: { color: '#7f8c8d', font: { family: 'Inter', size: 11 } },
-                grid: { color: 'rgba(255,255,255,0.05)' },
-            },
-        },
-    }
-
+    const d = useMemo(() => parseDiagnostics(diagData?.records || []), [diagData])
     const alarms = alarmsData?.records || []
-    const devices = systemData?.records?.devices || []
+    const unit = row?.unit || systemName || device?.name || (isVrm ? `Trailer ${id}` : 'Router-only unit')
+
+    // Freshness
+    const lastData = d.lastData || row?.last_seen || null
+    const stale = isVrm && (!lastData || Date.now() - lastData > STALE_MS)
+    const routerOnline = !!device?.online
+    const health = row?.health || (stale ? 'offline' : 'unknown')
+
+    // Intelligence needs live VRM data (the server 404s for stale units)
+    const liveVrm = isVrm && !!diagData && !stale
+    const intelFn = useCallback(() => (liveVrm ? fetchTrailerIntelligence(siteId) : none()), [siteId, liveVrm])
+    const { data: intelData } = useApiPolling(intelFn, 120000)
+    const intel = intelData?.intelligence || null
+
+    // Metrics: live diagnostics first, board row as fallback
+    const soc = d.soc ?? row?.soc
+    const solarW = d.solarW ?? row?.solar_w
+    const yieldToday = d.yieldToday ?? row?.yield_today_kwh
+    const expected = row?.expected_yield_kwh ?? (intel ? intel.location.expected_daily_yield_wh / 1000 : null)
+    const loadW = d.loadW ?? row?.load_w
+    const temp = d.temp ?? row?.battery_temp
+    const rsrp = device?.cellular?.signal?.rsrp ?? row?.rsrp
+    const bars = device?.cellular?.signal_bar ?? row?.signal_bars
+
+    const tab = TAB_KEYS.includes(params.get('tab')) ? params.get('tab') : 'overview'
+    const setTab = (k) => setParams(k === 'overview' ? {} : { tab: k }, { replace: true })
+
+    if (boardLoading && !board) return <Loading label="Loading trailer…" />
+    if (board && !row && !device && !(diagData?.records || []).length) {
+        return (
+            <Page title="Trailer not found" crumbs={[{ label: 'Trailers', to: '/trailers' }, { label: id }]}>
+                <Empty title="We couldn't find this trailer">
+                    No trailer reports under ID {id}. <Link to="/trailers" className="link">Back to all trailers</Link>
+                </Empty>
+            </Page>
+        )
+    }
+
+    const findings = plainDiagnosis(row?.diagnosis)
+    const diagnosisLine = findings.length ? findings.join(' · ') : health === 'good' ? 'All systems normal.' : health === 'offline' ? 'Not reporting.' : 'No telemetry linked.'
+    const lastHint = stale ? `Last known · ${fmtAgo(lastData)}` : null
+    const site = row?.site
+    const customer = row?.customer
+
+    const tabs = [
+        { key: 'overview', label: 'Overview', count: alarms.length || null },
+        { key: 'history', label: 'History' },
+        { key: 'network', label: 'Network' },
+        { key: 'rental', label: 'Rental' },
+        { key: 'service', label: 'Service' },
+        { key: 'notes', label: 'Notes' },
+        { key: 'hardware', label: 'Hardware' },
+    ].filter(t => isVrm || !VRM_ONLY_TABS.includes(t.key))
 
     return (
-        <div className="site-detail">
-            <div className="page-header">
-                <Breadcrumbs items={[
-                    { label: 'Fleet', to: '/' },
-                    ...(parentJobSite ? [{ label: parentJobSite.name, to: `/site/${parentJobSite.id}` }] : []),
-                    { label: siteName || `Trailer #${id}` }
-                ]} />
-                <div className="page-header-row">
-                    <h1>
-                        {siteName || `Trailer #${id}`}
-                        {parentJobSite && <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: '0.7em', marginLeft: 10 }}>({parentJobSite.name})</span>}
-                    </h1>
-                    <button className="btn btn-secondary btn-sm" onClick={() => setShowReport(true)}>Export Report</button>
-                    <DataFreshness lastUpdated={vrmLastUpdated || lastUpdated} refetch={refetch} />
+        <Page
+            crumbs={[{ label: 'Trailers', to: '/trailers' }, ...(site ? [{ label: site.name, to: `/site/${site.id}` }] : []), { label: unit }]}
+            title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>{unit}<HealthBadge health={health} /></span>}
+            sub={
+                <div style={{ display: 'grid', gap: 4 }}>
+                    <div style={{ color: 'var(--text)', fontWeight: 500 }}>{diagnosisLine}</div>
+                    <div className="faint" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        {site ? <Link to={`/site/${site.id}`} className="link">{site.name}</Link> : <span>Unassigned</span>}
+                        {customer && <><span>·</span><span className="muted">{customer.name}</span></>}
+                        <span>·</span>
+                        <span>{lastData ? `Last data ${fmtAgo(lastData)}` : 'No data yet'}</span>
+                    </div>
                 </div>
-            </div>
+            }
+            actions={<>
+                {isVrm && <button className="btn" onClick={() => setShowReport(true)}><Icon name="doc" />Report</button>}
+                {isVrm && <button className="btn" onClick={() => setShowAi(true)}><Icon name="sparkle" />AI analysis</button>}
+                {canEdit && row?.trailer_id && <button className="btn ghost" onClick={() => setEditAsset(true)}><Icon name="edit" />Edit asset</button>}
+            </>}
+        >
+            <FreshnessCallout isVrm={isVrm} stale={stale} lastData={lastData} routerOnline={routerOnline} hasDevice={!!device} />
 
-            {isVrmStale && (
-                <div className="stale-data-banner">
-                    VRM data is stale — Cerbo GX last reported {vrmLastUpdated ? new Date(vrmLastUpdated).toLocaleDateString() : 'unknown'}. Live values unavailable.
-                </div>
+            {isVrm ? (
+                <Stats>
+                    <Stat label="Battery" value={soc != null ? fmtPct(soc) : '—'} tone={stale ? null : soc != null ? toneOf(socTone(soc)) : null}
+                        hint={lastHint || [d.voltage != null && `${Number(d.voltage).toFixed(1)} V`, d.current != null && `${d.current > 0 ? 'charging' : d.current < 0 ? 'discharging' : 'idle'} ${Math.abs(d.current).toFixed(1)} A`].filter(Boolean).join(' · ') || null} />
+                    <Stat label="Solar now" value={solarW != null ? fmtWatts(solarW) : '—'} hint={lastHint || d.chargeState || null} />
+                    <Stat label="Solar today" value={yieldToday != null ? Number(yieldToday).toFixed(1) : '—'} unit={yieldToday != null ? 'kWh' : null}
+                        hint={lastHint || (expected ? `of ${fmtKwh(expected)} expected` : null)} />
+                    <Stat label="DC load" value={loadW != null ? fmtWatts(loadW) : '—'} hint={lastHint || (d.timeToGo ? `${d.timeToGo} to empty` : 'Cameras and router')} />
+                    <Stat label="Battery temp" value={temp != null ? `${Number(temp).toFixed(0)}°C` : '—'} tone={stale ? null : tempTone(temp)} hint={lastHint || tempLabel(temp)} />
+                    <SignalStat device={device} rsrp={rsrp} bars={bars} />
+                </Stats>
+            ) : (
+                <Stats>
+                    <SignalStat device={device} rsrp={rsrp} bars={bars} />
+                    <Stat label="Clients" value={device?.client_count ?? '—'} hint="Connected devices" />
+                    <Stat label="Data today" value={fmtMB(device?.usage_mb)} hint={device?.cellular?.carrier || null} />
+                </Stats>
             )}
 
-            {/* Rental & billing status for this unit */}
-            <RentalsInline vrmSiteId={parseInt(id)} title="Rental & Billing" />
-
-            {/* KPI Cards */}
-            <div className="kpi-row">
-                <KpiCard
-                    title="Battery SOC"
-                    value={battery.soc !== null ? Number(battery.soc).toFixed(1) : '—'}
-                    unit="%" color={battery.soc > 60 ? 'green' : battery.soc > 30 ? 'yellow' : 'red'}
-                    trend={battery.soc > 60 ? 'up' : battery.soc > 30 ? 'ok' : 'warning'}
-                />
-                <KpiCard
-                    title="Battery Voltage"
-                    value={battery.voltage !== null ? Number(battery.voltage).toFixed(1) : '—'}
-                    unit="V" color="blue" trend="ok"
-                />
-                <KpiCard
-                    title="Solar Power"
-                    value={solar.watts !== null ? Math.round(solar.watts) : '—'}
-                    unit="W" color="yellow" trend={solar.watts > 0 ? 'up' : 'ok'}
-                />
-                <KpiCard
-                    title="Yield Today"
-                    value={solar.yieldToday !== null ? Number(solar.yieldToday).toFixed(2) : '—'}
-                    unit="kWh" color="teal" trend="up"
-                />
+            <div>
+                <Tabs tabs={tabs} value={tab} onChange={setTab} />
+                {tab === 'overview' && <OverviewTab siteId={siteId} intel={intel} alarms={alarms} stale={stale} d={d} />}
+                {tab === 'history' && <HistoryTab siteId={siteId} />}
+                {tab === 'network' && <NetworkTab device={device} />}
+                {tab === 'rental' && <RentalTab siteId={siteId} row={row} workspace={workspace} role={user?.role} onChanged={refetchBoard} />}
+                {tab === 'service' && <ServiceTab siteId={siteId} jobSiteId={site?.id} canEdit={canEdit} />}
+                {tab === 'notes' && <NotesTab siteId={siteId} site={site} />}
+                {tab === 'hardware' && <HardwareTab system={systemData?.records} d={d} device={device} row={row} />}
             </div>
 
-            {/* Alarm/Error Banner */}
-            {(battery.alarmReason || battery.errorCode) && (
-                <div className="trailer-alert-banner">
-                    {battery.alarmReason && <span>⚠ Alarm: {battery.alarmReason}</span>}
-                    {battery.errorCode && <span>⛔ Error: {battery.errorCode}</span>}
-                </div>
-            )}
-
-            {/* Gauges Row */}
-            <div className="detail-gauges">
-                <div className="detail-gauge-card">
-                    <GaugeChart value={battery.soc ?? 0} max={100} label="SOC" size={140} thickness={12} />
-                    <div className="gauge-details">
-                        <div className="gauge-detail-row">
-                            <span>Current</span>
-                            <span>{battery.current !== null ? `${Number(battery.current).toFixed(1)}A` : '—'}</span>
-                        </div>
-                        <div className="gauge-detail-row">
-                            <span>Temperature</span>
-                            <span>{battery.temp !== null ? `${Number(battery.temp).toFixed(1)}°C` : '—'}</span>
-                        </div>
-                        <div className="gauge-detail-row">
-                            <span>Time to Go</span>
-                            <span>{battery.ttg || '—'}</span>
-                        </div>
-                        {battery.minCell !== null && (
-                            <div className="gauge-detail-row">
-                                <span>Cell Range</span>
-                                <span>{Number(battery.minCell).toFixed(2)} - {Number(battery.maxCell).toFixed(2)}V</span>
-                            </div>
-                        )}
-                        {battery.dcLoadWatts != null && (
-                            <div className="gauge-detail-row">
-                                <span>DC Load</span>
-                                <span>{Math.round(battery.dcLoadWatts)}W</span>
-                            </div>
-                        )}
-                        {battery.consumedAh != null && (
-                            <div className="gauge-detail-row">
-                                <span>Consumed</span>
-                                <span>{Number(battery.consumedAh).toFixed(1)}Ah</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                <div className="detail-gauge-card">
-                    <div className="solar-status">
-                        <div className="solar-icon-large">☀️</div>
-                        <div className="solar-power-value">{solar.watts !== null ? `${Math.round(solar.watts)}W` : '—'}</div>
-                        <div className="solar-state">{solar.chargeState || '—'}</div>
-                    </div>
-                    <div className="gauge-details">
-                        <div className="gauge-detail-row">
-                            <span>PV Voltage</span>
-                            <span>{solar.voltage !== null ? `${Number(solar.voltage).toFixed(1)}V` : '—'}</span>
-                        </div>
-                        <div className="gauge-detail-row">
-                            <span>Yield Today</span>
-                            <span>{solar.yieldToday !== null ? `${Number(solar.yieldToday).toFixed(2)} kWh` : '—'}</span>
-                        </div>
-                        <div className="gauge-detail-row">
-                            <span>Yield Yesterday</span>
-                            <span>{solar.yieldYesterday !== null ? `${Number(solar.yieldYesterday).toFixed(2)} kWh` : '—'}</span>
-                        </div>
-                        {solar.mpptState && (
-                            <div className="gauge-detail-row">
-                                <span>MPPT State</span>
-                                <span>{solar.mpptState}</span>
-                            </div>
-                        )}
-                        {solar.lifetimeYield != null && (
-                            <div className="gauge-detail-row">
-                                <span>Lifetime Yield</span>
-                                <span>{Number(solar.lifetimeYield).toFixed(1)} kWh</span>
-                            </div>
-                        )}
-                        {solar.yieldToday !== null && solar.yieldYesterday !== null && solar.yieldYesterday > 0 && (() => {
-                            const pct = ((solar.yieldToday - solar.yieldYesterday) / solar.yieldYesterday * 100).toFixed(0)
-                            const maxVal = Math.max(solar.yieldToday, solar.yieldYesterday, 0.01)
-                            return (
-                                <div className="yield-comparison">
-                                    <div className="yield-bar-row">
-                                        <span className="yield-bar-label">Today</span>
-                                        <div className="yield-bar-track">
-                                            <div className="yield-bar yield-bar-today" style={{ width: `${(solar.yieldToday / maxVal) * 100}%` }} />
-                                        </div>
-                                    </div>
-                                    <div className="yield-bar-row">
-                                        <span className="yield-bar-label">Yest.</span>
-                                        <div className="yield-bar-track">
-                                            <div className="yield-bar yield-bar-yesterday" style={{ width: `${(solar.yieldYesterday / maxVal) * 100}%` }} />
-                                        </div>
-                                    </div>
-                                    <span className={`yield-diff-badge ${Number(pct) >= 0 ? 'yield-up' : 'yield-down'}`}>
-                                        {Number(pct) >= 0 ? '+' : ''}{pct}%
-                                    </span>
-                                </div>
-                            )
-                        })()}
-                    </div>
-                </div>
-
-                {/* Network card — only shown when Pepwave data is available */}
-                {pepwaveDevice && (
-                    <div className="detail-gauge-card detail-network-card">
-                        <div className="detail-net-hero">
-                            <SignalBars bars={pepwaveDevice.cellular?.signal_bar} size={40} />
-                            <div className="detail-net-hero-info">
-                                <span className="detail-net-carrier">{pepwaveDevice.cellular?.carrier || '—'}</span>
-                                <span className="detail-net-tech">{pepwaveDevice.cellular?.technology || ''}</span>
-                            </div>
-                            <span className={`detail-net-status-badge ${pepwaveDevice.online ? 'detail-net-online' : 'detail-net-offline'}`}>
-                                {pepwaveDevice.online ? 'Online' : 'Offline'}
-                            </span>
-                        </div>
-                        <div className="gauge-details">
-                            {pepwaveDevice.cellular?.signal && (
-                                <>
-                                    <div className="gauge-detail-row">
-                                        <span>RSRP</span>
-                                        <span style={{ color: signalQuality(pepwaveDevice.cellular.signal.rsrp).color, fontWeight: 700 }}>
-                                            {pepwaveDevice.cellular.signal.rsrp} dBm
-                                        </span>
-                                    </div>
-                                    <div className="gauge-detail-row">
-                                        <span>SINR</span>
-                                        <span>{pepwaveDevice.cellular.signal.sinr} dB</span>
-                                    </div>
-                                </>
-                            )}
-                            <div className="gauge-detail-row">
-                                <span>Clients</span>
-                                <span>{pepwaveDevice.client_count}</span>
-                            </div>
-                            <div className="gauge-detail-row">
-                                <span>Data</span>
-                                <span>{formatMB(pepwaveDevice.usage_mb)}</span>
-                            </div>
-                            <div className="gauge-detail-row">
-                                <span>Uptime</span>
-                                <span>{formatUptime(pepwaveDevice.uptime)}</span>
-                            </div>
-                            <div className="gauge-detail-row">
-                                <span>WAN IP</span>
-                                <span className="mono">{pepwaveDevice.wan_ip || '—'}</span>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Range selector */}
-            <div className="range-selector">
-                <span className="range-label">History Range:</span>
-                {Object.keys(RANGES).map(r => (
-                    <button key={r} className={`range-btn ${range === r ? 'active' : ''}`}
-                        onClick={() => setRange(r)}>{r}</button>
-                ))}
-            </div>
-
-            {/* Charts */}
-            <div className="charts-grid">
-                <div className="chart-card">
-                    <div className="chart-card-header">
-                        <h3>Battery SOC</h3>
-                        {socChartData && <button className="reset-zoom-btn" onClick={() => socChartRef.current?.resetZoom()}>Reset Zoom</button>}
-                    </div>
-                    <div className="chart-container">
-                        {socChartData ? (
-                            <Line ref={socChartRef} data={socChartData} options={{
-                                ...chartOptions,
-                                scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, min: 0, max: 100 } },
-                            }} />
-                        ) : (
-                            <div className="chart-empty">No history data yet. Data builds up over time.</div>
-                        )}
-                    </div>
-                </div>
-                <div className="chart-card">
-                    <div className="chart-card-header">
-                        <h3>Battery Voltage</h3>
-                        {voltageChartData && <button className="reset-zoom-btn" onClick={() => voltageChartRef.current?.resetZoom()}>Reset Zoom</button>}
-                    </div>
-                    <div className="chart-container">
-                        {voltageChartData ? (
-                            <Line ref={voltageChartRef} data={voltageChartData} options={chartOptions} />
-                        ) : (
-                            <div className="chart-empty">No history data yet.</div>
-                        )}
-                    </div>
-                </div>
-                <div className="chart-card chart-card-full">
-                    <div className="chart-card-header">
-                        <h3>Solar Production</h3>
-                        {solarChartData && <button className="reset-zoom-btn" onClick={() => solarChartRef.current?.resetZoom()}>Reset Zoom</button>}
-                    </div>
-                    <div className="chart-container">
-                        {solarChartData ? (
-                            <Bar ref={solarChartRef} data={solarChartData} options={chartOptions} />
-                        ) : (
-                            <div className="chart-empty">No history data yet.</div>
-                        )}
-                    </div>
-                </div>
-                {dcLoadChartData && (
-                    <div className="chart-card">
-                        <div className="chart-card-header">
-                            <h3>DC Load Power</h3>
-                            <button className="reset-zoom-btn" onClick={() => dcLoadChartRef.current?.resetZoom()}>Reset Zoom</button>
-                        </div>
-                        <div className="chart-container">
-                            <Bar ref={dcLoadChartRef} data={dcLoadChartData} options={chartOptions} />
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Battery Health Prediction */}
-            {batteryHealthData && batteryHealthData.trend && batteryHealthData.trend !== 'insufficient_data' && (
-                <div className="detail-section">
-                    <h2>Battery Health Trend</h2>
-                    <div className="battery-health-card">
-                        <div className="battery-health-indicator">
-                            <span className={`battery-trend-badge trend-${batteryHealthData.trend}`}>
-                                {batteryHealthData.trend === 'improving' ? '↑' : batteryHealthData.trend === 'declining' ? '↓' : '→'}
-                                {' '}{batteryHealthData.trend.charAt(0).toUpperCase() + batteryHealthData.trend.slice(1)}
-                            </span>
-                            <span className="battery-health-detail">
-                                {batteryHealthData.avg_daily_change > 0 ? '+' : ''}{batteryHealthData.avg_daily_change}% / day
-                            </span>
-                            {batteryHealthData.days_until_critical && (
-                                <span className="battery-critical-warning">
-                                    ~{batteryHealthData.days_until_critical} days until critical (20%)
-                                </span>
-                            )}
-                        </div>
-                        {batteryHealthData.data_points?.length > 0 && (
-                            <div className="battery-health-sparkline">
-                                <svg viewBox={`0 0 ${batteryHealthData.data_points.length * 8} 40`} className="sparkline-svg">
-                                    <polyline
-                                        fill="none"
-                                        stroke={batteryHealthData.trend === 'declining' ? '#e74c3c' : batteryHealthData.trend === 'improving' ? '#2ecc71' : '#3498db'}
-                                        strokeWidth="2"
-                                        points={batteryHealthData.data_points.map((p, i) => `${i * 8},${40 - (p.max_soc ?? p.avg_soc ?? 0) * 0.4}`).join(' ')}
-                                    />
-                                </svg>
-                                <span className="sparkline-label">30-day max SOC trend</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* System Intelligence */}
-            {intelligenceData?.intelligence && (() => {
-                const intel = intelligenceData.intelligence
-                return (
-                    <div className="detail-section">
-                        <div className="detail-section-header">
-                            <h2>System Intelligence</h2>
-                            <span className="intel-specs-badge">
-                                {intel.specs.solar_capacity_w}W Solar / {(intel.specs.battery_capacity_wh / 1000).toFixed(1)} kWh Battery
-                            </span>
-                        </div>
-
-                        <div className="intel-metrics-grid">
-                            <div className="intel-metric-card">
-                                <div className="intel-metric-header">
-                                    <span className="intel-metric-title">Solar Score</span>
-                                </div>
-                                <div className={`intel-metric-value ${
-                                    intel.solar.score !== null
-                                        ? (intel.solar.score >= 90 ? 'intel-good' : intel.solar.score >= 50 ? 'intel-warning' : 'intel-critical')
-                                        : ''
-                                }`}>
-                                    {intel.solar.score !== null ? intel.solar.score : '--'}
-                                    {intel.solar.score !== null && <span className="intel-metric-unit">%</span>}
-                                </div>
-                                <div className="intel-metric-detail">
-                                    {intel.solar.score_label && <span className={`intel-score-badge score-${intel.solar.score_label.toLowerCase()}`}>{intel.solar.score_label}</span>}
-                                </div>
-                                {intel.solar.avg_7d_score !== null && (
-                                    <div className="intel-metric-secondary">7-day avg: {intel.solar.avg_7d_score}%</div>
-                                )}
-                            </div>
-
-                            <div className="intel-metric-card">
-                                <div className="intel-metric-header">
-                                    <span className="intel-metric-title">Panel Output</span>
-                                </div>
-                                <div className="intel-metric-value">
-                                    {intel.solar.panel_performance_pct !== null ? intel.solar.panel_performance_pct : '--'}
-                                    {intel.solar.panel_performance_pct !== null && <span className="intel-metric-unit">%</span>}
-                                </div>
-                                <div className="intel-metric-detail">
-                                    {intel.solar.current_watts !== null && <span>{Math.round(intel.solar.current_watts)}W of {intel.specs.solar_capacity_w}W rated</span>}
-                                </div>
-                            </div>
-
-                            <div className="intel-metric-card">
-                                <div className="intel-metric-header">
-                                    <span className="intel-metric-title">Days of Autonomy</span>
-                                </div>
-                                <div className={`intel-metric-value ${
-                                    intel.battery.days_of_autonomy !== null
-                                        ? (intel.battery.days_of_autonomy < 1 ? 'intel-critical' : intel.battery.days_of_autonomy < 2 ? 'intel-warning' : 'intel-good')
-                                        : ''
-                                }`}>
-                                    {intel.battery.days_of_autonomy !== null ? intel.battery.days_of_autonomy : '--'}
-                                    {intel.battery.days_of_autonomy !== null && <span className="intel-metric-unit">days</span>}
-                                </div>
-                                <div className="intel-metric-detail">
-                                    {intel.battery.stored_wh !== null && intel.energy.avg_daily_consumption_wh !== null && (
-                                        <span>{intel.battery.stored_wh}Wh / {intel.energy.avg_daily_consumption_wh}Wh per day</span>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="intel-metric-card">
-                                <div className="intel-metric-header">
-                                    <span className="intel-metric-title">Time to Full</span>
-                                </div>
-                                <div className="intel-metric-value">
-                                    {intel.battery.charge_time_hours !== null ? intel.battery.charge_time_hours : '--'}
-                                    {intel.battery.charge_time_hours !== null && <span className="intel-metric-unit">hrs</span>}
-                                </div>
-                                <div className="intel-metric-detail">
-                                    {intel.battery.remaining_to_full_wh !== null && (
-                                        <span>{intel.battery.remaining_to_full_wh}Wh remaining</span>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="intel-metric-card">
-                                <div className="intel-metric-header">
-                                    <span className="intel-metric-title">Yield Today</span>
-                                </div>
-                                <div className="intel-metric-value">
-                                    {intel.solar.yield_today_wh !== null ? Math.round(intel.solar.yield_today_wh) : '--'}
-                                    <span className="intel-metric-unit">Wh</span>
-                                </div>
-                                <div className="intel-metric-detail">
-                                    <span>of {intel.location.expected_daily_yield_wh}Wh expected</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Predictive SOC Alert */}
-                        {intel.predictive && intel.predictive.days_to_critical !== null && intel.predictive.days_to_critical <= 5 && (
-                            <div className={`intel-predictive-alert ${intel.predictive.status === 'critical' ? 'intel-predictive-critical' : 'intel-predictive-warning'}`}>
-                                <strong>Predicted SOC Depletion:</strong> {intel.predictive.days_to_critical} day{intel.predictive.days_to_critical !== 1 ? 's' : ''} to critical ({intel.predictive.critical_soc_pct}% SOC)
-                            </div>
-                        )}
-
-                        {/* Weather context */}
-                        {intel.location.data_source !== 'default' && (
-                            <div className="intel-weather-context">
-                                PSH: {intel.location.peak_sun_hours}h
-                                {intel.location.cloud_cover_pct !== null && <> | Cloud cover: {intel.location.cloud_cover_pct}%</>}
-                                {intel.location.sunshine_hours !== null && <> | Sunshine: {intel.location.sunshine_hours}h</>}
-                                {intel.location.temperature_current != null && <> | Temp: {intel.location.temperature_current}°C</>}
-                                <span className="intel-source-tag">{intel.location.data_source === 'open-meteo' ? 'Open-Meteo' : 'Astronomical'}</span>
-                            </div>
-                        )}
-
-                        {/* 3-Day Forecast */}
-                        {intel.location.forecast_3d && intel.location.forecast_3d.length > 0 && (
-                            <div className="intel-forecast-section">
-                                <h4 style={{ margin: '0 0 8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>3-Day Forecast</h4>
-                                <div style={{ display: 'flex', gap: 8 }}>
-                                    {intel.location.forecast_3d.map((day, i) => {
-                                        const WMO_ICONS = { 0: '\u2600\uFE0F', 1: '\uD83C\uDF24\uFE0F', 2: '\u26C5', 3: '\u2601\uFE0F', 45: '\uD83C\uDF2B\uFE0F', 48: '\uD83C\uDF2B\uFE0F', 51: '\uD83C\uDF27\uFE0F', 53: '\uD83C\uDF27\uFE0F', 55: '\uD83C\uDF27\uFE0F', 61: '\uD83C\uDF27\uFE0F', 63: '\uD83C\uDF27\uFE0F', 65: '\uD83C\uDF27\uFE0F', 71: '\uD83C\uDF28\uFE0F', 73: '\uD83C\uDF28\uFE0F', 75: '\uD83C\uDF28\uFE0F', 80: '\uD83C\uDF27\uFE0F', 81: '\uD83C\uDF27\uFE0F', 82: '\uD83C\uDF27\uFE0F', 95: '\u26C8\uFE0F', 96: '\u26C8\uFE0F', 99: '\u26C8\uFE0F' }
-                                        const icon = WMO_ICONS[day.weather_code] || '\u2600\uFE0F'
-                                        return (
-                                            <div key={i} className="intel-metric-card" style={{ flex: 1, textAlign: 'center', padding: '10px 6px' }}>
-                                                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{day.date}</div>
-                                                <div style={{ fontSize: 22, margin: '4px 0' }}>{icon}</div>
-                                                <div style={{ fontSize: 12, color: 'var(--text-primary)' }}>
-                                                    {day.temp_max != null ? `${Math.round(day.temp_max)}°` : '--'} / {day.temp_min != null ? `${Math.round(day.temp_min)}°` : '--'}
-                                                </div>
-                                                {day.precipitation_mm != null && day.precipitation_mm > 0 && (
-                                                    <div style={{ fontSize: 10, color: 'var(--accent)' }}>{day.precipitation_mm.toFixed(1)}mm</div>
-                                                )}
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Energy Balance Bar */}
-                        {intel.energy.today_yield_wh !== null && intel.energy.today_consumed_wh !== null && (
-                            <div className="intel-energy-balance">
-                                <div className="intel-balance-header">
-                                    <span>Today's Energy Balance</span>
-                                    <span className={intel.energy.today_balance_wh >= 0 ? 'positive' : 'negative'}>
-                                        {intel.energy.today_balance_wh >= 0 ? '+' : ''}{intel.energy.today_balance_wh}Wh
-                                    </span>
-                                </div>
-                                <div className="intel-balance-bars">
-                                    <div className="intel-bar-row">
-                                        <span className="intel-bar-label">Yield</span>
-                                        <div className="intel-bar-track">
-                                            <div className="intel-bar intel-bar-yield"
-                                                style={{ width: `${Math.min(100, (intel.energy.today_yield_wh / intel.location.expected_daily_yield_wh) * 100)}%` }} />
-                                        </div>
-                                        <span className="intel-bar-value">{intel.energy.today_yield_wh}</span>
-                                    </div>
-                                    <div className="intel-bar-row">
-                                        <span className="intel-bar-label">Used</span>
-                                        <div className="intel-bar-track">
-                                            <div className="intel-bar intel-bar-consumed"
-                                                style={{ width: `${Math.min(100, (intel.energy.today_consumed_wh / intel.location.expected_daily_yield_wh) * 100)}%` }} />
-                                        </div>
-                                        <span className="intel-bar-value">{intel.energy.today_consumed_wh}</span>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* AI Analysis */}
-                        <div className="intel-analysis-section">
-                            <button
-                                className="btn btn-primary intel-analyze-btn"
-                                onClick={handleAnalyze}
-                                disabled={analysisLoading}
-                            >
-                                {analysisLoading ? 'Analyzing...' : 'AI Analysis'}
-                            </button>
-                            {analysisError && <div className="intel-analysis-error">{analysisError}</div>}
-                            {analysisResult && (
-                                <div className="intel-analysis-result">
-                                    <div className="intel-analysis-header">
-                                        <span>AI Analysis</span>
-                                        <span className="intel-analysis-time">{new Date(analysisResult.generated_at).toLocaleTimeString()}</span>
-                                    </div>
-                                    <pre className="intel-analysis-text">{analysisResult.analysis}</pre>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                )
-            })()}
-
-            {/* Pepwave SIM + WAN section */}
-            {pepwaveDevice && (
-                <div className="detail-section">
-                    <h2>📡 Network Details — {pepwaveDevice.model}</h2>
-                    <div className="detail-net-grid">
-                        {pepwaveDevice.cellular?.sims?.length > 0 && (
-                            <div className="detail-net-block">
-                                <h4>SIM Cards</h4>
-                                {pepwaveDevice.cellular.sims.map(sim => (
-                                    <div key={sim.id} className={`sim-card ${sim.active ? 'sim-active' : 'sim-inactive'}`}>
-                                        <div className="sim-header">
-                                            <span className="sim-label">SIM {sim.id}</span>
-                                            <span className={`sim-status ${sim.active ? 'sim-status-active' : ''}`}>
-                                                {sim.active ? '● Active' : '○ Standby'}
-                                            </span>
-                                        </div>
-                                        <div className="sim-details">
-                                            {sim.carrier && <span>📱 {sim.carrier}</span>}
-                                            {sim.iccid && <span className="sim-iccid">ICCID: {sim.iccid}</span>}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        <div className="detail-net-block">
-                            <h4>WAN Interfaces</h4>
-                            {pepwaveDevice.wan_interfaces?.map(iface => (
-                                <div key={iface.id} className={`wan-iface wan-iface-${iface.status_led || 'gray'}`}>
-                                    <span className="wan-name">{iface.name}</span>
-                                    <span className="wan-type">{iface.type}</span>
-                                    <span className="wan-status">{iface.message || iface.status}</span>
-                                    {iface.ip && <span className="wan-ip">{iface.ip}</span>}
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Pepwave History Charts */}
-            {pepwaveDevice && (
-                <div className="charts-grid">
-                    <div className="chart-card">
-                        <div className="chart-card-header">
-                            <h3>Signal Strength</h3>
-                            {rsrpChartData && <button className="reset-zoom-btn" onClick={() => rsrpChartRef.current?.resetZoom()}>Reset Zoom</button>}
-                        </div>
-                        <div className="chart-container">
-                            {rsrpChartData ? (
-                                <Line ref={rsrpChartRef} data={rsrpChartData} options={{
-                                    ...chartOptions,
-                                    scales: {
-                                        ...chartOptions.scales,
-                                        y: { ...chartOptions.scales.y, suggestedMin: -120, suggestedMax: -60 },
-                                    },
-                                }} />
-                            ) : (
-                                <div className="chart-empty">Signal history will build up as data is polled.</div>
-                            )}
-                        </div>
-                    </div>
-                    <div className="chart-card">
-                        <div className="chart-card-header">
-                            <h3>Data Usage</h3>
-                            {usageChartData && <button className="reset-zoom-btn" onClick={() => usageChartRef.current?.resetZoom()}>Reset Zoom</button>}
-                        </div>
-                        <div className="chart-container">
-                            {usageChartData ? (
-                                <Line ref={usageChartRef} data={usageChartData} options={chartOptions} />
-                            ) : (
-                                <div className="chart-empty">Data usage history will build up as data is polled.</div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Alarms */}
-            <div className="detail-section">
-                <h2>Alarms & Notifications</h2>
-                {alarms.length === 0 ? (
-                    <div className="empty-state">No recent alarms</div>
-                ) : (
-                    <div className="alarm-list">
-                        {alarms.slice(0, 20).map((alarm, i) => (
-                            <div key={i} className="alarm-row">
-                                <AlarmBadge level={alarm.type === 'alarm' ? 'alarm' : 'warning'} />
-                                <span className="alarm-name">{alarm.name || alarm.description || 'Alarm'}</span>
-                                <span className="alarm-device">{alarm.device || ''}</span>
-                                <span className="alarm-time">
-                                    {alarm.started ? new Date(alarm.started * 1000).toLocaleString() : ''}
-                                </span>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            {/* System Devices */}
-            <div className="detail-section">
-                <h2>Connected Devices</h2>
-                {devices.length === 0 ? (
-                    <div className="empty-state">No device information available</div>
-                ) : (
-                    <div className="devices-table-wrapper">
-                        <table className="devices-table">
-                            <thead>
-                                <tr><th>Device</th><th>Product</th><th>Serial</th><th>Firmware</th></tr>
-                            </thead>
-                            <tbody>
-                                {devices.map((device, i) => (
-                                    <tr key={i}>
-                                        <td>{device.customName || device.name}</td>
-                                        <td>{device.productCode || '—'}</td>
-                                        <td className="mono">{device.machineSerialNumber || '—'}</td>
-                                        <td>{device.firmwareVersion || '—'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </div>
-
-            {/* Component Inventory */}
-            <div className="detail-section">
-                <div className="detail-section-header">
-                    <h2>Component Inventory</h2>
-                    {canEdit && (
-                        <button className="btn btn-primary btn-sm" onClick={() => { setEditingComponent(null); setShowComponentForm(true) }}>
-                            + Add Component
-                        </button>
-                    )}
-                </div>
-                {components.length === 0 ? (
-                    <div className="empty-section">
-                        <p>No components logged yet. Add components to track warranty and installation details.</p>
-                    </div>
-                ) : (
-                    <div className="table-wrapper">
-                        <table className="components-table">
-                            <thead>
-                                <tr>
-                                    <th>Type</th>
-                                    <th>Make</th>
-                                    <th>Model</th>
-                                    <th>Serial Number</th>
-                                    <th>Installed</th>
-                                    <th>Warranty Expiry</th>
-                                    <th>Status</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {components.map(comp => {
-                                    const typeLabel = { battery: 'Battery', solar_panel: 'Solar Panel', inverter: 'Inverter', charge_controller: 'Charge Controller', router: 'Router', camera: 'Camera' }[comp.component_type] || comp.component_type
-                                    const fmtDate = (ts) => ts ? new Date(Number(ts)).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
-                                    const warrantyExpired = comp.warranty_expiry && Number(comp.warranty_expiry) < Date.now()
-                                    return (
-                                        <tr key={comp.id} className="component-row">
-                                            <td><span className="component-type-badge">{typeLabel}</span></td>
-                                            <td>{comp.make || '—'}</td>
-                                            <td>{comp.model || '—'}</td>
-                                            <td className="mono">{comp.serial_number || '—'}</td>
-                                            <td>{fmtDate(comp.installed_date)}</td>
-                                            <td className={warrantyExpired ? 'warranty-expired' : ''}>{fmtDate(comp.warranty_expiry)}</td>
-                                            <td><span className={`comp-status comp-status-${comp.status}`}>{comp.status}</span></td>
-                                            <td>
-                                                {canEdit && <button className="btn btn-ghost btn-sm" onClick={() => { setEditingComponent(comp); setShowComponentForm(true) }}>Edit</button>}
-                                            </td>
-                                        </tr>
-                                    )
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </div>
-
-            {/* Related Notes (tagged with this trailer) */}
-            {relatedNotes.length > 0 && (
-                <div className="detail-section">
-                    <div className="detail-section-header">
-                        <h2>Related Notes</h2>
-                        <span className="detail-trailer-count">{notesTotal} tagged</span>
-                    </div>
-                    <div className="notes-timeline">
-                        {relatedNotes.map(n => (
-                            <div key={n.id} className="note-item">
-                                <div className="note-dot"></div>
-                                <div className="note-content">
-                                    <div className="note-header">
-                                        <span className="note-author">{n.author || 'System'}</span>
-                                        <span className="note-time">{formatNoteDate(n.created_at)}</span>
-                                        {n.job_site_name && (
-                                            <span className="note-site-badge" onClick={() => navigate(`/site/${n.job_site_id}`)}>
-                                                {n.job_site_name}
-                                            </span>
-                                        )}
-                                    </div>
-                                    <p className="note-text">{n.note}</p>
-                                    {n.mentions && (typeof n.mentions === 'string' ? JSON.parse(n.mentions) : n.mentions).length > 0 && (
-                                        <div className="note-mentions">
-                                            {(typeof n.mentions === 'string' ? JSON.parse(n.mentions) : n.mentions).map((m, i) => (
-                                                <span key={i} className="mention-tag">@{m}</span>
-                                            ))}
-                                        </div>
-                                    )}
-                                    {n.tags && (typeof n.tags === 'string' ? JSON.parse(n.tags) : n.tags).length > 0 && (
-                                        <div className="note-tags">
-                                            {(typeof n.tags === 'string' ? JSON.parse(n.tags) : n.tags).map((tag, i) => (
-                                                <span key={i} className={`tag-badge tag-badge-${tag.type}`}
-                                                    onClick={tag.type === 'trailer' ? () => navigate(`/trailer/${tag.id}`) : undefined}
-                                                    style={tag.type === 'trailer' ? { cursor: 'pointer' } : undefined}>
-                                                    {tag.label}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    )}
-                                    {parseInt(n.reply_count) > 0 && (
-                                        <div className="note-actions">
-                                            <button className="note-thread-toggle" onClick={() => toggleNoteThread(n.id)}>
-                                                {expandedNote === n.id ? 'Hide replies' : `${n.reply_count} ${parseInt(n.reply_count) === 1 ? 'reply' : 'replies'}`}
-                                            </button>
-                                        </div>
-                                    )}
-                                    {expandedNote === n.id && (
-                                        <div className="note-thread">
-                                            {(noteReplies[n.id] || []).map(r => (
-                                                <div key={r.id} className="note-reply">
-                                                    <div className="note-header">
-                                                        <span className="note-author">{r.author || 'System'}</span>
-                                                        <span className="note-time">{formatNoteDate(r.created_at)}</span>
-                                                    </div>
-                                                    <p className="note-text">{r.note}</p>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                    {parentJobSite && (
-                        <div style={{ marginTop: '12px', textAlign: 'center' }}>
-                            <button className="btn btn-sm btn-ghost" onClick={() => navigate(`/site/${parentJobSite.id}`)}>
-                                View all notes for {parentJobSite.name}
-                            </button>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {showComponentForm && (
-                <ComponentForm
-                    component={editingComponent}
-                    siteId={parseInt(id)}
-                    onSave={async (data) => {
-                        if (editingComponent) {
-                            await updateComponent(editingComponent.id, data)
-                        } else {
-                            await createComponent(data)
-                        }
-                        setShowComponentForm(false)
-                        setEditingComponent(null)
-                        refetchComponents()
-                    }}
-                    onClose={() => { setShowComponentForm(false); setEditingComponent(null) }}
-                />
-            )}
-
-            {showReport && (
-                <ReportPanel type="trailer" id={id} onClose={() => setShowReport(false)} />
-            )}
-        </div>
+            {showReport && <ReportPanel type="trailer" id={siteId} onClose={() => setShowReport(false)} />}
+            {showAi && <AiDrawer siteId={siteId} unit={unit} onClose={() => setShowAi(false)} />}
+            {editAsset && <TrailerFormModal trailerId={row.trailer_id} onSaved={refetchBoard} onClose={() => setEditAsset(false)} />}
+        </Page>
     )
 }
 
-export default TrailerDetail
+const TAB_KEYS = ['overview', 'history', 'network', 'rental', 'service', 'notes', 'hardware']
+const VRM_ONLY_TABS = ['overview', 'history', 'hardware']
+
+function toneOf(t) {
+    return t === 'crit' || t === 'warn' ? t : null
+}
+
+function SignalStat({ device, rsrp, bars }) {
+    if (!device) return <Stat label="Signal" value="—" hint="No router linked" />
+    if (!device.online) return <Stat label="Signal" value="Offline" hint={device.offline_since ? `Router offline since ${fmtDateTime(device.offline_since)}` : 'Router not responding'} />
+    const tech = [device.cellular?.carrier, device.cellular?.technology].filter(Boolean).join(' ')
+    return (
+        <Stat label={<span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>Signal <Signal bars={bars} online /></span>}
+            value={rsrp ?? '—'} unit={rsrp != null ? 'dBm' : null} tone={bars != null && bars <= 1 ? 'warn' : null}
+            hint={[bars != null && `${bars}/5 bars`, tech].filter(Boolean).join(' · ') || null} />
+    )
+}
+
+function FreshnessCallout({ isVrm, stale, lastData, routerOnline, hasDevice }) {
+    if (!isVrm) {
+        return (
+            <div className="callout">
+                <Icon name="signal" size={18} />
+                <div><b>Router-only unit.</b> No Victron battery or solar monitor is linked to this unit, so only network data is available.</div>
+            </div>
+        )
+    }
+    if (!stale) return null
+    const when = lastData ? `${fmtDateTime(lastData)} (${fmtAgo(lastData)})` : null
+    if (routerOnline) {
+        return (
+            <div className="callout warn">
+                <Icon name="alert" size={18} />
+                <div>
+                    <b>Battery data is stale.</b> The router is online, but the Victron Cerbo GX {when ? `last reported ${when}` : 'has never reported'}.
+                    {' '}Check the Cerbo's power and its network cable to the router. Readings below are the last values received.
+                </div>
+            </div>
+        )
+    }
+    return (
+        <div className="callout warn">
+            <Icon name="alert" size={18} />
+            <div>
+                <b>Trailer offline.</b> {when ? `No data since ${when}.` : 'This trailer has never reported.'}
+                {' '}{hasDevice ? 'Both the router and the Victron Cerbo are silent' : 'The Victron Cerbo is silent'}, which usually means the trailer lost power or cellular coverage.
+                {when && ' Readings below are the last values received.'}
+            </div>
+        </div>
+    )
+}

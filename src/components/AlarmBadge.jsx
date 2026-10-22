@@ -1,23 +1,14 @@
-function AlarmBadge({ level }) {
-    const classes = {
-        alarm: 'alarm-badge alarm-critical',
-        warning: 'alarm-badge alarm-warning',
-        ok: 'alarm-badge alarm-ok',
-        offline: 'alarm-badge alarm-offline',
-    }
+import { Badge } from '../ui'
 
-    const labels = {
-        alarm: 'ALARM',
-        warning: 'WARNING',
-        ok: 'OK',
-        offline: 'OFFLINE',
-    }
-
-    return (
-        <span className={classes[level] || classes.ok}>
-            {labels[level] || level}
-        </span>
-    )
+const LEVELS = {
+    alarm: { tone: 'crit', label: 'Alarm' },
+    warning: { tone: 'warn', label: 'Warning' },
+    ok: { tone: 'ok', label: 'OK' },
+    offline: { tone: 'off', label: 'Offline' },
 }
 
-export default AlarmBadge
+// Severity pill for a Victron alarm record (level: alarm | warning | ok | offline)
+export default function AlarmBadge({ level }) {
+    const l = LEVELS[level] || { tone: 'plain', label: level || 'Unknown' }
+    return <Badge tone={l.tone}>{l.label}</Badge>
+}

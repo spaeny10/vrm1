@@ -19,9 +19,26 @@ async function apiFetch(url, options = {}) {
         window.location.href = '/';
         throw new Error('Session expired');
     }
-    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    if (!res.ok) {
+        // Surface the server's reason ("A company is required…") instead of a bare status
+        let message = `Request failed (${res.status})`;
+        try {
+            const body = await res.json();
+            if (body?.error) message = body.error;
+        } catch { /* non-JSON error body */ }
+        throw new Error(message);
+    }
     return res.json();
 }
+
+// Generic helpers for pages that call endpoints directly
+export const apiGet = (path) => apiFetch(`${API_BASE}${path}`);
+export const apiPost = (path, body) => apiFetch(`${API_BASE}${path}`, { method: 'POST', body: JSON.stringify(body ?? {}) });
+export const apiPut = (path, body) => apiFetch(`${API_BASE}${path}`, { method: 'PUT', body: JSON.stringify(body ?? {}) });
+export const apiDelete = (path) => apiFetch(`${API_BASE}${path}`, { method: 'DELETE' });
+
+export const fetchBoardTrailers = () => apiGet('/board/trailers');
+export const fetchBoardSites = () => apiGet('/board/sites');
 
 // ============================================================
 // Auth

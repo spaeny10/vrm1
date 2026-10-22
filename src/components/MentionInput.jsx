@@ -1,165 +1,112 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { fetchMentionableUsers } from '../api/vrm'
 
-export default function MentionInput({ value, onChange, onSubmit, disabled, placeholder }) {
-    const [users, setUsers] = useState([])
-    const [showDropdown, setShowDropdown] = useState(false)
-    const [mentionQuery, setMentionQuery] = useState('')
-    const [mentionStart, setMentionStart] = useState(-1)
-    const [selectedIdx, setSelectedIdx] = useState(0)
-    const inputRef = useRef(null)
-    const dropdownRef = useRef(null)
+// ============================================================
+// Text input with @mention autocomplete.
+// Props: value, onChange(text), onSubmit(e), disabled, placeholder,
+//   users     — optional [{id, display_name, role}]; fetched when omitted
+//   multiline — textarea (Ctrl/Cmd+Enter submits) instead of one line (Enter submits)
+//   autoFocus, rows
+// ============================================================
+export default function MentionInput({ value, onChange, onSubmit, disabled, placeholder, users: usersProp, multiline, autoFocus, rows = 3 }) {
+    const [fetched, setFetched] = useState([])
+    const [open, setOpen] = useState(false)
+    const [query, setQuery] = useState('')
+    const [start, setStart] = useState(-1)
+    const [idx, setIdx] = useState(0)
+    const ref = useRef(null)
 
-    // Load mentionable users once
     useEffect(() => {
+        if (usersProp) return
+        let alive = true
         fetchMentionableUsers()
-            .then(res => setUsers(res.users || []))
+            .then(res => { if (alive) setFetched(res?.users || []) })
             .catch(() => { })
-    }, [])
+        return () => { alive = false }
+    }, [usersProp])
 
-    const filteredUsers = users.filter(u =>
-        u.display_name.toLowerCase().includes(mentionQuery.toLowerCase())
-    )
+    const users = usersProp || fetched
+    const matches = useMemo(() => {
+        const q = query.toLowerCase()
+        return users.filter(u => u.display_name?.toLowerCase().includes(q)).slice(0, 6)
+    }, [users, query])
 
-    const handleChange = useCallback((e) => {
+    const handleChange = (e) => {
         const val = e.target.value
         const cursor = e.target.selectionStart
         onChange(val)
-
-        // Detect if we're in a @mention context
-        const textBefore = val.slice(0, cursor)
-        const atIdx = textBefore.lastIndexOf('@')
-
-        if (atIdx >= 0 && (atIdx === 0 || textBefore[atIdx - 1] === ' ')) {
-            const query = textBefore.slice(atIdx + 1)
-            // Only show dropdown if no space after @
-            if (!query.includes(' ')) {
-                setMentionStart(atIdx)
-                setMentionQuery(query)
-                setShowDropdown(true)
-                setSelectedIdx(0)
+        const before = val.slice(0, cursor)
+        const at = before.lastIndexOf('@')
+        if (at >= 0 && (at === 0 || /\s/.test(before[at - 1]))) {
+            const q = before.slice(at + 1)
+            // Allow one space so "Casey B" still narrows; stop at a newline or second space
+            if (!/\n/.test(q) && (q.match(/ /g) || []).length <= 1) {
+                setStart(at); setQuery(q); setIdx(0); setOpen(true)
                 return
             }
         }
+        setOpen(false)
+    }
 
-        setShowDropdown(false)
-        setMentionQuery('')
-        setMentionStart(-1)
-    }, [onChange])
-
-    const insertMention = useCallback((user) => {
-        const before = value.slice(0, mentionStart)
-        const afterCursor = inputRef.current?.selectionStart || (mentionStart + mentionQuery.length + 1)
-        const after = value.slice(afterCursor)
-        const newVal = `${before}@${user.display_name} ${after}`
-        onChange(newVal)
-        setShowDropdown(false)
-        setMentionQuery('')
-        setMentionStart(-1)
-
-        // Refocus and place cursor after mention
+    const insert = (user) => {
+        const cursor = ref.current?.selectionStart ?? (start + query.length + 1)
+        const before = value.slice(0, start)
+        const after = value.slice(cursor)
+        onChange(`${before}@${user.display_name} ${after}`)
+        setOpen(false)
         setTimeout(() => {
             const pos = before.length + user.display_name.length + 2
-            inputRef.current?.focus()
-            inputRef.current?.setSelectionRange(pos, pos)
+            ref.current?.focus()
+            ref.current?.setSelectionRange(pos, pos)
         }, 0)
-    }, [value, mentionStart, mentionQuery, onChange])
+    }
 
-    const handleKeyDown = useCallback((e) => {
-        if (!showDropdown || filteredUsers.length === 0) {
-            if (e.key === 'Enter') {
-                e.preventDefault()
-                onSubmit?.(e)
-            }
-            return
+    const handleKeyDown = (e) => {
+        if (open && matches.length > 0) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(i + 1, matches.length - 1)); return }
+            if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => Math.max(i - 1, 0)); return }
+            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insert(matches[idx]); return }
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); return }
         }
+        if (e.key === 'Enter') {
+            if (!multiline && !e.shiftKey) { e.preventDefault(); onSubmit?.(e) }
+            else if (multiline && (e.ctrlKey || e.metaKey)) { e.preventDefault(); onSubmit?.(e) }
+        }
+    }
 
-        if (e.key === 'ArrowDown') {
-            e.preventDefault()
-            setSelectedIdx(i => Math.min(i + 1, filteredUsers.length - 1))
-        } else if (e.key === 'ArrowUp') {
-            e.preventDefault()
-            setSelectedIdx(i => Math.max(i - 1, 0))
-        } else if (e.key === 'Enter' || e.key === 'Tab') {
-            e.preventDefault()
-            insertMention(filteredUsers[selectedIdx])
-        } else if (e.key === 'Escape') {
-            setShowDropdown(false)
-        }
-    }, [showDropdown, filteredUsers, selectedIdx, insertMention, onSubmit])
-
-    // Extract mentioned user IDs from text
-    const extractMentions = useCallback((text) => {
-        const mentions = []
-        const mentionRegex = /@([\w\s]+?)(?=\s@|\s*$|[.,!?])/g
-        let match
-        while ((match = mentionRegex.exec(text)) !== null) {
-            const name = match[1].trim()
-            const user = users.find(u => u.display_name.toLowerCase() === name.toLowerCase())
-            if (user) mentions.push({ id: user.id, display_name: user.display_name })
-        }
-        return mentions
-    }, [users])
+    const common = {
+        ref, value, disabled, autoFocus,
+        onChange: handleChange,
+        onKeyDown: handleKeyDown,
+        onBlur: () => setTimeout(() => setOpen(false), 150),
+        placeholder: placeholder || 'Write a note… type @ to mention someone',
+    }
 
     return (
-        <div style={{ position: 'relative', flex: 1 }}>
-            <input
-                ref={inputRef}
-                type="text"
-                className="input"
-                style={{ width: '100%' }}
-                placeholder={placeholder || 'Type a note... Use @name to mention'}
-                value={value}
-                onChange={handleChange}
-                onKeyDown={handleKeyDown}
-                disabled={disabled}
-            />
-            {showDropdown && filteredUsers.length > 0 && (
-                <div
-                    ref={dropdownRef}
-                    style={{
-                        position: 'absolute',
-                        bottom: '100%',
-                        left: 0,
-                        right: 0,
-                        background: 'var(--bg-card, #1e1e2e)',
-                        border: '1px solid var(--border-color, #333)',
-                        borderRadius: '8px',
-                        boxShadow: '0 -4px 16px rgba(0,0,0,0.3)',
-                        maxHeight: '180px',
-                        overflowY: 'auto',
-                        zIndex: 100,
-                        marginBottom: '4px',
-                    }}
-                >
-                    {filteredUsers.map((user, i) => (
-                        <div
-                            key={user.id}
-                            onMouseDown={(e) => { e.preventDefault(); insertMention(user) }}
+        <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+            {multiline
+                ? <textarea className="textarea" rows={rows} {...common} />
+                : <input type="text" className="input" {...common} />}
+            {open && matches.length > 0 && (
+                <div role="listbox" style={{
+                    position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 4, zIndex: 120,
+                    background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-sm)',
+                    boxShadow: 'var(--shadow)', overflow: 'hidden',
+                }}>
+                    {matches.map((u, i) => (
+                        <div key={u.id} role="option" aria-selected={i === idx}
+                            onMouseDown={e => { e.preventDefault(); insert(u) }}
+                            onMouseEnter={() => setIdx(i)}
                             style={{
-                                padding: '8px 12px',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                background: i === selectedIdx ? 'var(--bg-hover, rgba(255,255,255,0.08))' : 'transparent',
-                                fontSize: '14px',
-                                borderBottom: i < filteredUsers.length - 1 ? '1px solid var(--border-color, #333)' : 'none',
-                            }}
-                            onMouseEnter={() => setSelectedIdx(i)}
-                        >
-                            <span style={{
-                                width: '24px', height: '24px',
-                                borderRadius: '50%',
-                                background: 'var(--accent, #6366f1)',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontSize: '11px', fontWeight: 700, color: '#fff',
-                                flexShrink: 0,
+                                display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer', fontSize: 13.5,
+                                background: i === idx ? 'var(--surface-3)' : 'transparent',
                             }}>
-                                {user.display_name.charAt(0).toUpperCase()}
-                            </span>
-                            <span style={{ fontWeight: 500 }}>{user.display_name}</span>
-                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginLeft: 'auto' }}>{user.role}</span>
+                            <span style={{
+                                width: 22, height: 22, borderRadius: '50%', display: 'grid', placeItems: 'center', flexShrink: 0,
+                                background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 11, fontWeight: 700,
+                            }}>{u.display_name.charAt(0).toUpperCase()}</span>
+                            <span style={{ fontWeight: 550 }}>{u.display_name}</span>
+                            <span className="faint" style={{ marginLeft: 'auto', fontSize: 12, textTransform: 'capitalize' }}>{u.role}</span>
                         </div>
                     ))}
                 </div>
@@ -168,24 +115,32 @@ export default function MentionInput({ value, onChange, onSubmit, disabled, plac
     )
 }
 
-// Helper to render note text with highlighted @mentions
-export function renderNoteWithMentions(text) {
+// Names of known users that appear as "@Name" in the text (case-insensitive).
+// Matching against the user list handles multi-word names reliably.
+export function extractMentions(text, users = []) {
+    if (!text) return []
+    const lower = text.toLowerCase()
+    const found = []
+    for (const u of users) {
+        const name = u.display_name
+        if (name && lower.includes('@' + name.toLowerCase()) && !found.includes(name)) found.push(name)
+    }
+    return found
+}
+
+const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+// Render note text with @mentions highlighted. Pass the note's mention
+// names when known; otherwise single-word @handles are highlighted.
+export function renderNoteWithMentions(text, names) {
     if (!text) return text
-    const parts = text.split(/(@[\w\s]+?)(?=\s@|\s*$|[.,!?])/g)
-    return parts.map((part, i) => {
-        if (part.startsWith('@')) {
-            return (
-                <span key={i} style={{
-                    color: 'var(--accent, #6366f1)',
-                    fontWeight: 600,
-                    background: 'rgba(99, 102, 241, 0.12)',
-                    borderRadius: '3px',
-                    padding: '0 3px',
-                }}>
-                    {part}
-                </span>
-            )
-        }
-        return part
-    })
+    const list = (names || []).filter(Boolean).sort((a, b) => b.length - a.length)
+    const re = list.length
+        ? new RegExp(`(@(?:${list.map(escapeRe).join('|')}))`, 'gi')
+        : /(@[\w.-]+)/g
+    return text.split(re).map((part, i) => (
+        i % 2 === 1
+            ? <span key={i} style={{ color: 'var(--accent)', fontWeight: 600 }}>{part}</span>
+            : part
+    ))
 }

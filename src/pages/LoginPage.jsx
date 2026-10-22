@@ -63,56 +63,32 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="login-page">
-            <form className="login-card" onSubmit={handleSubmit}>
-                <div className="login-brand">
-                    <div className="login-logo-row">
-                        <img src="/logo.webp" alt="BIGView" className="login-logo-img" />
-                        <span className="login-omni">OMNI</span>
-                    </div>
-                    <p className="login-subtitle">Fleet Management — Sign in to continue</p>
-                </div>
+        <div className="auth">
+            <form className="auth-card" onSubmit={handleSubmit}>
+                <div className="auth-brand"><img src="/logo.webp" alt="BIGView" /><span>OMNI</span></div>
+                <p className="auth-sub">Fleet operations for BIGView solar surveillance trailers</p>
 
-                {sessionExpired && !error && (
-                    <div className="login-expired">Your session has expired. Please sign in again.</div>
-                )}
-                {error && <div className="login-error">{error}</div>}
+                {sessionExpired && !error && <div className="callout warn" style={{ marginBottom: 14 }}>Your session expired. Please sign in again.</div>}
+                {error && <div className="callout crit" style={{ marginBottom: 14 }}>{error}</div>}
+
+                <div className="form">
+                    <label className="field">
+                        <span>Username</span>
+                        <input className="input" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoFocus required />
+                    </label>
+                    <label className="field">
+                        <span>Password</span>
+                        <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required />
+                    </label>
+                    <button className="btn primary" type="submit" disabled={loading} style={{ height: 38 }}>{loading ? 'Signing in…' : 'Sign in'}</button>
+                </div>
 
                 {GOOGLE_CLIENT_ID && (
                     <>
-                        <div className="google-signin-wrapper" ref={googleBtnRef}></div>
-                        <div className="login-divider">
-                            <span>or sign in with username</span>
-                        </div>
+                        <div className="divider">or</div>
+                        <div ref={googleBtnRef} style={{ display: 'flex', justifyContent: 'center' }} />
                     </>
                 )}
-
-                <div className="form-group">
-                    <label>Username</label>
-                    <input
-                        type="text"
-                        value={username}
-                        onChange={e => setUsername(e.target.value)}
-                        autoFocus={!GOOGLE_CLIENT_ID}
-                        autoComplete="username"
-                        required
-                    />
-                </div>
-
-                <div className="form-group">
-                    <label>Password</label>
-                    <input
-                        type="password"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        autoComplete="current-password"
-                        required
-                    />
-                </div>
-
-                <button className="btn btn-primary login-btn" type="submit" disabled={loading}>
-                    {loading ? 'Signing in...' : 'Sign In'}
-                </button>
             </form>
         </div>
     );

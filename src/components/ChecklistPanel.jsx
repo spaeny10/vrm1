@@ -1,89 +1,40 @@
-import { useState } from 'react';
+// Inline checklist used when completing a field service visit.
+// The parent owns the state so it can submit the checklist together
+// with the completion (see MaintenancePage CompleteModal).
 
-export default function ChecklistPanel({ template, onSubmit, onClose }) {
-    const [items, setItems] = useState(
-        (template?.items || []).map(item => ({
-            text: item.text,
-            required: item.required || false,
-            checked: false,
-            note: '',
-        }))
-    );
-    const [submitting, setSubmitting] = useState(false);
+// Build editable checklist state from a checklist template.
+export function checklistFromTemplate(template) {
+    return (template?.items || []).map(item => ({
+        text: item.text,
+        required: !!item.required,
+        checked: false,
+        note: '',
+    }))
+}
 
-    const toggleItem = (idx) => {
-        setItems(prev => prev.map((item, i) => i === idx ? { ...item, checked: !item.checked } : item));
-    };
+export function missingRequired(items) {
+    return items.filter(i => i.required && !i.checked).length
+}
 
-    const updateNote = (idx, note) => {
-        setItems(prev => prev.map((item, i) => i === idx ? { ...item, note } : item));
-    };
-
-    const allRequiredChecked = items.filter(i => i.required).every(i => i.checked);
-
-    const handleSubmit = async () => {
-        if (!allRequiredChecked) return;
-        setSubmitting(true);
-        try {
-            await onSubmit({
-                template_id: template.id,
-                template_name: template.name,
-                items,
-            });
-        } finally {
-            setSubmitting(false);
-        }
-    };
+export default function ChecklistPanel({ title, items, onChange }) {
+    const done = items.filter(i => i.checked).length
+    const toggle = (idx) => onChange(items.map((it, i) => i === idx ? { ...it, checked: !it.checked } : it))
 
     return (
-        <div className="maint-form-overlay" onClick={onClose}>
-            <div className="checklist-panel" onClick={e => e.stopPropagation()}>
-                <div className="checklist-header">
-                    <h3>{template?.name || 'Checklist'}</h3>
-                    <button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
-                </div>
-
-                <div className="checklist-items">
-                    {items.map((item, idx) => (
-                        <div key={idx} className={`checklist-item ${item.checked ? 'checklist-item-done' : ''}`}>
-                            <label className="checklist-label">
-                                <input
-                                    type="checkbox"
-                                    checked={item.checked}
-                                    onChange={() => toggleItem(idx)}
-                                />
-                                <span className="checklist-text">
-                                    {item.text}
-                                    {item.required && <span className="checklist-required">*</span>}
-                                </span>
-                            </label>
-                            <input
-                                type="text"
-                                className="checklist-note"
-                                placeholder="Notes..."
-                                value={item.note}
-                                onChange={e => updateNote(idx, e.target.value)}
-                            />
-                        </div>
-                    ))}
-                </div>
-
-                <div className="checklist-footer">
-                    <span className="checklist-progress">
-                        {items.filter(i => i.checked).length} / {items.length} completed
-                    </span>
-                    <div className="checklist-actions">
-                        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-                        <button
-                            className="btn btn-primary"
-                            onClick={handleSubmit}
-                            disabled={!allRequiredChecked || submitting}
-                        >
-                            {submitting ? 'Saving...' : 'Submit Checklist'}
-                        </button>
-                    </div>
-                </div>
+        <div className="field">
+            <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                <span>{title || 'Checklist'}</span>
+                <span className="faint num">{done} of {items.length} done</span>
+            </span>
+            <div className="card" style={{ padding: '6px 12px' }}>
+                {items.map((it, idx) => (
+                    <label key={idx} className="check" style={{ padding: '6px 0', borderBottom: idx < items.length - 1 ? '1px solid var(--border)' : 0 }}>
+                        <input type="checkbox" checked={it.checked} onChange={() => toggle(idx)} />
+                        <span style={{ flex: 1, color: it.checked ? 'var(--text-2)' : 'var(--text)' }}>{it.text}</span>
+                        {it.required && !it.checked && <span className="faint" style={{ fontSize: 12 }}>Required</span>}
+                    </label>
+                ))}
             </div>
         </div>
-    );
+    )
 }

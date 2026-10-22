@@ -1,64 +1,61 @@
-import { useCallback, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
+import { useAuth } from '../components/AuthProvider'
 import { fetchPortalSites } from '../api/vrm'
+import { Page, Card, Stats, Stat, Dot, Badge, Empty, Loading, Icon } from '../ui'
+import { fmtPct, plural } from '../ui/format'
 
+const STATUS = {
+    ok: { tone: 'ok', label: 'All systems normal' },
+    warning: { tone: 'warn', label: 'Low battery on a unit' },
+    critical: { tone: 'crit', label: 'Battery critical — we’re on it' },
+    offline: { tone: 'off', label: 'A unit is offline — we’re on it' },
+}
+
+// Customer portal home: the customer's sites and how their units are doing
 export default function PortalDashboard() {
-    const navigate = useNavigate()
+    const { user } = useAuth()
     const fetchFn = useCallback(() => fetchPortalSites(), [])
-    const { data, loading } = useApiPolling(fetchFn, 30000)
+    const { data, loading } = useApiPolling(fetchFn, 60000)
     const sites = data?.sites || []
-
-    const kpis = useMemo(() => {
-        let totalTrailers = 0, totalOnline = 0, totalSoc = 0, socCount = 0
-        for (const s of sites) {
-            totalTrailers += s.trailer_count || 0
-            totalOnline += s.trailers_online || 0
-            for (const t of (s.trailers || [])) {
-                if (t.battery_soc != null) { totalSoc += t.battery_soc; socCount++ }
-            }
-        }
-        return {
-            sites: sites.length,
-            trailers: totalTrailers,
-            online: totalOnline,
-            avgSoc: socCount > 0 ? Math.round(totalSoc / socCount) : null,
-        }
-    }, [sites])
-
-    if (loading && sites.length === 0) {
-        return <div className="page-loading"><div className="spinner" /></div>
-    }
+    const trailers = sites.reduce((n, s) => n + s.trailer_count, 0)
+    const online = sites.reduce((n, s) => n + s.trailers_online, 0)
+    const socs = sites.filter(s => s.avg_soc != null)
+    const avgSoc = socs.length ? socs.reduce((a, s) => a + s.avg_soc, 0) / socs.length : null
 
     return (
-        <div className="fleet-overview">
-            <div className="page-header">
-                <h1>My Sites</h1>
-            </div>
-            <div className="kpi-row">
-                <div className="kpi-card kpi-blue"><div><div className="kpi-label">Sites</div><div className="kpi-value">{kpis.sites}</div></div></div>
-                <div className="kpi-card kpi-green"><div><div className="kpi-label">Trailers Online</div><div className="kpi-value">{kpis.online}/{kpis.trailers}</div></div></div>
-                <div className="kpi-card kpi-teal"><div><div className="kpi-label">Avg SOC</div><div className="kpi-value">{kpis.avgSoc != null ? `${kpis.avgSoc}%` : '—'}</div></div></div>
-            </div>
-            <div className="site-grid" style={{ marginTop: 24 }}>
-                {sites.map(site => (
-                    <div key={site.id} className={`site-card site-card-${site.worst_status || 'ok'}`}
-                        onClick={() => navigate(`/site/${site.id}`)} style={{ cursor: 'pointer' }}>
-                        <div className="site-card-header">
-                            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
-                                {site.name}
-                                {site.uid && <span style={{ fontSize: '13px', fontWeight: 'normal', color: 'var(--text-secondary)' }}>({site.uid})</span>}
-                            </h3>
-                            <span className={`status-badge status-${site.status}`}>{site.status}</span>
-                        </div>
-                        <div className="site-card-stats">
-                            <div><span className="stat-label">Trailers</span><span className="stat-value">{site.trailers_online}/{site.trailer_count}</span></div>
-                            <div><span className="stat-label">Avg SOC</span><span className="stat-value">{site.avg_soc != null ? `${site.avg_soc}%` : '—'}</span></div>
-                        </div>
-                        {site.address && <div className="site-card-address">{site.address}</div>}
+        <Page title={`Welcome${user?.display_name ? ', ' + user.display_name.split(' ')[0] : ''}`} sub="Live status of the BIGView units on your sites">
+            <Stats>
+                <Stat label="Your sites" value={data ? sites.length : '—'} />
+                <Stat label="Units online" value={data ? `${online} / ${trailers}` : '—'} dot={online < trailers ? 'warn' : 'ok'} />
+                <Stat label="Average battery" value={data ? fmtPct(avgSoc) : '—'} />
+            </Stats>
+            <Card title="Sites" flush>
+                {loading && !data ? <Loading /> : sites.length === 0 ? (
+                    <Empty title="No sites yet">Your BIGView contact will add your sites here.</Empty>
+                ) : (
+                    <div className="list">
+                        {sites.map(s => {
+                            const st = STATUS[s.worst_status] || STATUS.ok
+                            return (
+                                <Link key={s.id} to={`/site/${s.id}`} className="list-row">
+                                    <Dot tone={st.tone} />
+                                    <div className="main">
+                                        <div className="title">{s.name}</div>
+                                        <div className="desc">{s.address || '—'}</div>
+                                    </div>
+                                    <div className="side" style={{ display: 'grid', gap: 4, justifyItems: 'end' }}>
+                                        <Badge tone={st.tone}>{st.label}</Badge>
+                                        <span>{plural(s.trailer_count, 'unit')} · {s.trailers_online} online</span>
+                                    </div>
+                                    <Icon name="chevron" />
+                                </Link>
+                            )
+                        })}
                     </div>
-                ))}
-            </div>
-        </div>
+                )}
+            </Card>
+        </Page>
     )
 }

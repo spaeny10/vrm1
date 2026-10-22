@@ -1,140 +1,105 @@
-import { useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useMemo } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchBillingSummary, fetchBillingAlerts } from '../api/vrm'
-import { formatDate, formatMoney, pricingLabel, RentalStatusBadge } from '../components/RentalLifecycle'
+import { fetchBillingSummary, fetchBillingAlerts, fetchBillingStatements } from '../api/vrm'
+import { Page, Card, Stats, Stat, Dot, DataTable, AllClear, Loading, Icon } from '../ui'
+import { fmtMoney, fmtDate, todayISO, plural } from '../ui/format'
+import { RentalStatusBadge, pricingLabel, useRentalEventFlow } from '../components/RentalLifecycle'
 
-// Billing workspace home: is the money right, and what needs fixing.
-function BillingHome() {
-    const fetchSummaryFn = useCallback(() => fetchBillingSummary(), [])
-    const fetchAlertsFn = useCallback(() => fetchBillingAlerts(), [])
-
-    const { data: summaryData } = useApiPolling(fetchSummaryFn, 60000)
-    const { data: alertsData } = useApiPolling(fetchAlertsFn, 60000)
-
-    const summary = summaryData?.summary || {}
-    const rentals = summaryData?.rentals || []
-    const alerts = alertsData?.alerts || []
-
-    const billingNow = rentals.filter(r => r.status === 'billing' || r.status === 'called_off')
-
-    return (
-        <div className="page">
-            <div className="page-header">
-                <div className="page-header-row">
-                    <h1>Billing</h1>
-                    <div className="page-header-actions">
-                        <Link to="/rentals?view=statements" className="btn btn-primary">Monthly Statements</Link>
-                        <Link to="/rentals" className="btn btn-secondary">All Rentals</Link>
-                    </div>
-                </div>
-                <p className="page-subtitle">Revenue at a glance — accruals, leaks, and month-end statements</p>
-            </div>
-
-            {/* Money KPIs */}
-            <div className="kpi-row">
-                <div className="kpi-card kpi-yellow">
-                    <div className="kpi-value">{formatMoney(summary.accrued_mtd)}</div>
-                    <div className="kpi-label">Accrued This Month</div>
-                </div>
-                <div className="kpi-card kpi-green">
-                    <div className="kpi-value">{summary.rentals_billing ?? '—'}</div>
-                    <div className="kpi-label">Rentals Billing</div>
-                </div>
-                <div className="kpi-card kpi-blue">
-                    <div className="kpi-value">{formatMoney(summary.accrued_total_open)}</div>
-                    <div className="kpi-label">Open Accruals Total</div>
-                </div>
-                <div className={`kpi-card ${alerts.length > 0 ? 'kpi-red' : ''}`}>
-                    <div className="kpi-value">{alerts.length}</div>
-                    <div className="kpi-label">Billing Alerts</div>
-                </div>
-                <div className={`kpi-card ${summary.rentals_missing_rate > 0 ? 'kpi-red' : ''}`}>
-                    <div className="kpi-value">{summary.rentals_missing_rate ?? 0}</div>
-                    <div className="kpi-label">Missing Rates</div>
-                </div>
-            </div>
-
-            {/* Revenue leaks first — this is the money page */}
-            <div className="maint-table-section" style={{ marginBottom: 20 }}>
-                <div className="maint-group-header">
-                    <h3>Billing Alerts</h3>
-                    <span className="maint-group-count">{alerts.length} issue{alerts.length !== 1 ? 's' : ''}</span>
-                </div>
-                {alerts.length === 0 ? (
-                    <p className="settings-desc" style={{ padding: '8px 0' }}>
-                        No revenue leaks detected — nothing billing past its call-off, nothing billing from HQ, no unbilled deployed trailers.
-                    </p>
-                ) : (
-                    <table className="maint-table">
-                        <tbody>
-                            {alerts.map((a, i) => (
-                                <tr key={i}>
-                                    <td style={{ width: 90 }}>
-                                        <span className={a.severity === 'critical' ? 'priority-badge-critical' : 'priority-badge-warning'}>
-                                            {a.severity === 'critical' ? 'Critical' : 'Warning'}
-                                        </span>
-                                    </td>
-                                    <td>{a.message}</td>
-                                    <td style={{ width: 110, textAlign: 'right' }}>
-                                        <Link to="/rentals" className="btn btn-sm btn-secondary">Open Rentals</Link>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                )}
-            </div>
-
-            {/* What's earning right now */}
-            <div className="maint-table-section">
-                <div className="maint-group-header">
-                    <h3>Currently Billing</h3>
-                    <span className="maint-group-count">{billingNow.length} rental{billingNow.length !== 1 ? 's' : ''}</span>
-                </div>
-                {billingNow.length === 0 ? (
-                    <p className="settings-desc" style={{ padding: '8px 0' }}>Nothing is billing right now.</p>
-                ) : (
-                    <table className="maint-table">
-                        <thead>
-                            <tr>
-                                <th>Unit</th>
-                                <th>Customer</th>
-                                <th>Job Site</th>
-                                <th>PO #</th>
-                                <th>Rate</th>
-                                <th>Billing Start</th>
-                                <th>Days</th>
-                                <th>Accrued</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {billingNow.map(r => (
-                                <tr key={r.id}>
-                                    <td className="maint-title">
-                                        {r.vrm_site_id
-                                            ? <Link to={`/trailer/${r.vrm_site_id}`} className="table-link">{r.unit_number}</Link>
-                                            : r.unit_number}
-                                    </td>
-                                    <td>{r.company_name || '—'}</td>
-                                    <td>{r.job_site_id
-                                        ? <Link to={`/site/${r.job_site_id}`} className="table-link">{r.job_site_name}</Link>
-                                        : (r.job_site_name || '—')}</td>
-                                    <td>{r.po_number || '—'}</td>
-                                    <td style={{ fontSize: 13 }}>{pricingLabel(r) || '—'}</td>
-                                    <td className="maint-date">{formatDate(r.billing_start)}</td>
-                                    <td>{r.days_on_rent ?? '—'}</td>
-                                    <td className="maint-cost">{formatMoney(r.total_due ?? r.accrued_amount)}</td>
-                                    <td><RentalStatusBadge status={r.status} /></td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                )}
-            </div>
-        </div>
-    )
+// Which billing action fixes each alert type
+const FIX = {
+    delivered_not_billing: { label: 'Start billing', event: 'start_billing' },
+    billing_past_calloff: { label: 'Stop billing', event: 'stop_billing' },
+    billing_at_hq: { label: 'Stop billing', event: 'stop_billing' },
 }
 
-export default BillingHome
+// Billing workspace home: is the money right, and what needs fixing.
+export default function BillingHome() {
+    const navigate = useNavigate()
+    const month = todayISO().slice(0, 7)
+    const summaryFn = useCallback(() => fetchBillingSummary(), [])
+    const alertsFn = useCallback(() => fetchBillingAlerts(), [])
+    const stmtFn = useCallback(() => fetchBillingStatements(month), [month])
+    const { data: summaryData, loading, refetch: refetchSummary } = useApiPolling(summaryFn, 60000)
+    const { data: alertsData, refetch: refetchAlerts } = useApiPolling(alertsFn, 60000)
+    const { data: stmt } = useApiPolling(stmtFn, 300000)
+
+    const flow = useRentalEventFlow(() => { refetchSummary(); refetchAlerts() })
+    const s = summaryData?.summary || {}
+    const rentals = summaryData?.rentals || []
+    const alerts = alertsData?.alerts || []
+    const rentalById = useMemo(() => new Map(rentals.map(r => [r.id, r])), [rentals])
+    const billingNow = rentals.filter(r => r.status === 'billing' || r.status === 'called_off')
+    const missingRate = billingNow.filter(r => r.accrued_amount == null)
+
+    const columns = [
+        { key: 'unit', label: 'Unit', sort: r => r.unit_number, render: r => <span className="primary">{r.unit_number}</span> },
+        { key: 'customer', label: 'Customer', sort: r => r.company_name, render: r => r.company_name || <span className="faint">—</span> },
+        { key: 'site', label: 'Site', sort: r => r.job_site_name, render: r => r.job_site_id ? <Link className="link" to={`/site/${r.job_site_id}`} onClick={e => e.stopPropagation()}>{r.job_site_name}</Link> : '—' },
+        { key: 'rate', label: 'Rate', render: r => pricingLabel(r) || <span className="badge crit">No rate</span> },
+        { key: 'start', label: 'Billing since', sort: r => r.billing_start, render: r => fmtDate(r.billing_start) },
+        { key: 'days', label: 'Days', align: 'r', sort: r => r.days_on_rent, render: r => <span className="num">{r.days_on_rent ?? '—'}</span> },
+        { key: 'due', label: 'Accrued', align: 'r', sort: r => r.total_due, render: r => <span className="num">{fmtMoney(r.total_due ?? r.accrued_amount)}</span> },
+        { key: 'status', label: 'Status', render: r => <RentalStatusBadge status={r.status} /> },
+    ]
+
+    return (
+        <Page title="Billing" sub={`Revenue for ${new Date().toLocaleDateString([], { month: 'long', year: 'numeric' })}`}
+            actions={<>
+                <Link to="/statements" className="btn primary"><Icon name="doc" />Monthly statements</Link>
+                <Link to="/rentals" className="btn">All rentals</Link>
+            </>}>
+            <Stats>
+                <Stat label="Accrued this month" value={summaryData ? fmtMoney(s.accrued_mtd, { cents: false }) : '—'} hint={stmt ? `${plural(stmt.companies?.length || 0, 'customer')} billed` : null} />
+                <Stat label="Billing now" value={s.rentals_billing ?? '—'} hint={`${s.rentals_open ?? 0} open rentals`} dot="ok" />
+                <Stat label="Open accruals" value={summaryData ? fmtMoney(s.accrued_total_open, { cents: false }) : '—'} hint="Since billing start, all open rentals" />
+                <Stat label="Needs fixing" value={alertsData ? alerts.length + missingRate.length : '—'} tone={alerts.length + missingRate.length ? 'crit' : 'ok'} hint="Leaks and missing rates" />
+            </Stats>
+
+            <Card title="Fix these" meta={alerts.length + missingRate.length || null} flush>
+                {!alertsData ? <Loading /> : alerts.length + missingRate.length === 0 ? (
+                    <AllClear>Billing matches the fleet — no leaks, no missing rates.</AllClear>
+                ) : (
+                    <div className="list">
+                        {alerts.map((a, i) => {
+                            const fix = FIX[a.type]
+                            const rental = a.rental_id ? rentalById.get(a.rental_id) : null
+                            return (
+                                <div key={i} className="list-row">
+                                    <Dot tone={a.severity === 'critical' ? 'crit' : 'warn'} />
+                                    <div className="main">
+                                        <div className="title">{a.unit_number}</div>
+                                        <div className="desc">{a.message}</div>
+                                    </div>
+                                    {fix && rental && <button className="btn sm primary" onClick={() => flow.start(rental, fix.event)}>{fix.label}</button>}
+                                    {a.type === 'unbilled_deployed' && (
+                                        <button className="btn sm primary" onClick={() => navigate(`/rentals?new=1&trailer_id=${a.trailer_id}`)}>Create rental</button>
+                                    )}
+                                </div>
+                            )
+                        })}
+                        {missingRate.map(r => (
+                            <div key={`rate-${r.id}`} className="list-row">
+                                <Dot tone="warn" />
+                                <div className="main">
+                                    <div className="title">{r.unit_number}</div>
+                                    <div className="desc">Billing with no rate card match and no manual rate — accruals are understated.</div>
+                                </div>
+                                <button className="btn sm" onClick={() => navigate(`/rentals?edit=${r.id}`)}>Set rate</button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </Card>
+
+            <Card title="Currently billing" meta={billingNow.length || null} flush>
+                {loading && !summaryData ? <Loading /> : (
+                    <DataTable columns={columns} rows={billingNow} initialSort={{ key: 'customer', dir: 'asc' }}
+                        onRowClick={r => navigate(`/rentals?open=${r.id}`)}
+                        empty={<AllClear>Nothing is billing right now.</AllClear>} />
+                )}
+            </Card>
+            {flow.modal}
+        </Page>
+    )
+}
