@@ -9,7 +9,8 @@
         "start": "node server/server.js",
         "preview": "vite preview",
         "demo:sim": "node scripts/demo/simulator.js",
-        "demo:seed": "node scripts/demo/seed.js"
+        "demo:seed": "node scripts/demo/seed.js",
+        "test": "node --test --experimental-test-module-mocks server/services/board.test.js"
     },
     "dependencies": {
         "@anthropic-ai/sdk": "^0.78.0",
