@@ -50,8 +50,35 @@ export function mpptStateToString(state) {
     return states[state] || `Unknown (${state})`;
 }
 
+// Unit names are typed by hand in VRM, InControl and the registry
+// ("Trailer 619", "trailer 619", "Trailer  619 "), so compare them loosely.
+export function normalizeUnitName(name) {
+    return String(name ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// Pepwave record for a unit name: exact key first, then a loose match.
+export function findPepwaveByName(name) {
+    if (name == null) return null;
+    const exact = pepwaveCache.get(name);
+    if (exact) return exact;
+    const want = normalizeUnitName(name);
+    for (const [key, rec] of pepwaveCache) {
+        if (normalizeUnitName(key) === want) return rec;
+    }
+    return null;
+}
+
+// Short human age: 45m, 20h, 13d
+export function formatAge(ms) {
+    const min = Math.max(0, Math.round(ms / 60000));
+    if (min < 90) return `${min}m`;
+    const hrs = Math.round(min / 60);
+    if (hrs < 48) return `${hrs}h`;
+    return `${Math.round(hrs / 24)}d`;
+}
+
 export function getPepwaveForTrailer(trailer) {
-    let pw = pepwaveCache.get(trailer.site_name);
+    let pw = findPepwaveByName(trailer.site_name);
     if (pw) return pw;
     if (trailer.ic2_device_id) {
         const name = ic2DeviceIdToName.get(trailer.ic2_device_id);
