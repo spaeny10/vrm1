@@ -38,6 +38,43 @@ export async function upsertTrailerAssignment(siteId, siteName, latitude, longit
     return result.rows[0];
 }
 
+// Move a trailer from its router's synthetic site id (negative) to its real
+// VRM installation id: the registry row, and the assignment with its job site
+// and location. Leaves a trailer alone if another one already owns realId.
+export async function relinkSyntheticSite(syntheticId, realId) {
+    if (!pool || !(syntheticId < 0) || !(realId > 0)) return null;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const trailers = await client.query(
+            `UPDATE trailers SET vrm_site_id = $2
+             WHERE vrm_site_id = $1
+               AND NOT EXISTS (SELECT 1 FROM trailers WHERE vrm_site_id = $2)`,
+            [syntheticId, realId]
+        );
+        await client.query(
+            `INSERT INTO trailer_assignments (site_id, site_name, latitude, longitude, job_site_id, ic2_device_id, manual_override, assigned_at)
+             SELECT $2, site_name, latitude, longitude, job_site_id, ic2_device_id, manual_override, assigned_at
+             FROM trailer_assignments WHERE site_id = $1
+             ON CONFLICT (site_id) DO UPDATE SET
+               latitude = COALESCE(trailer_assignments.latitude, EXCLUDED.latitude),
+               longitude = COALESCE(trailer_assignments.longitude, EXCLUDED.longitude),
+               job_site_id = COALESCE(trailer_assignments.job_site_id, EXCLUDED.job_site_id),
+               manual_override = trailer_assignments.manual_override OR EXCLUDED.manual_override,
+               ic2_device_id = COALESCE(trailer_assignments.ic2_device_id, EXCLUDED.ic2_device_id)`,
+            [syntheticId, realId]
+        );
+        await client.query(`DELETE FROM trailer_assignments WHERE site_id = $1`, [syntheticId]);
+        await client.query('COMMIT');
+        return { trailersUpdated: trailers.rowCount };
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
 export async function linkIc2Device(siteId, ic2DeviceId) {
     if (!pool) return null;
     const result = await pool.query(
