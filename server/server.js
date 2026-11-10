@@ -382,7 +382,10 @@ async function start() {
             const assignments = await getTrailerAssignments();
             for (const a of assignments) {
                 if (a.ic2_device_id != null) {
-                    ic2DeviceIdToSiteId.set(a.ic2_device_id, a.site_id);
+                    // A device can have both a stale synthetic row and a real
+                    // VRM row; the real installation wins.
+                    const prev = ic2DeviceIdToSiteId.get(a.ic2_device_id);
+                    if (prev == null || prev < 0) ic2DeviceIdToSiteId.set(a.ic2_device_id, a.site_id);
                 }
             }
             console.log(`  ✓ Loaded ${ic2DeviceIdToSiteId.size} IC2 device linkages`);
