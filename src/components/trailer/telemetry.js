@@ -134,6 +134,9 @@ const DIAG_RULES = [
     [/^SOC declining ([\d.]+)%\/day\s*[—-]\s*critical in ~(\d+)d$/i, (m) => `Battery draining ${m[1]}% a day, critical in about ${m[2]} days`],
     [/^SOC declining ([\d.]+)%\/day$/i, (m) => `Battery draining ${m[1]}% a day`],
     [/^Network-only trailer, Pepwave online$/i, () => 'Router online; no battery monitor linked'],
+    [/^Network only — no Cerbo in VRM$/i, () => 'Router online; no battery monitor linked'],
+    [/^Cerbo silent (\S+) — router online, check Cerbo link$/i, (m) => `Battery monitor silent for ${m[1]} while the router is online; check the Cerbo's connection to the router`],
+    [/^last SOC (\d+)%$/i, (m) => `Battery was at ${m[1]}% when last heard from`],
 ]
 export function plainDiagnosis(text) {
     if (!text) return []

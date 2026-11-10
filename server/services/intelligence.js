@@ -1,11 +1,11 @@
-import { TRAILER_SPECS, SOLAR_SCORE_DEFAULTS } from '../config.js';
+import { TRAILER_SPECS, SOLAR_SCORE_DEFAULTS, VRM_STALE_MS, CERBO_SILENT_ATTENTION_MS } from '../config.js';
 import {
     snapshotCache, pepwaveCache, dailyEnergy, gpsCache, trailerJobSiteMap,
     socStartOfDay, solarScoreConfig, dbAvailable, geofenceAlerts, maintStatsCache,
 } from '../state.js';
 import { getSetting, getDailyEnergy, getMaintenanceStatsBySite } from '../db.js';
 import { fetchSolarIrradiance, computeAstronomicalPSH } from './weather.js';
-import { hasVrmData, todayStr, extractMpptState, mpptStateToString, getPepwaveForTrailer } from '../lib/util.js';
+import { hasVrmData, todayStr, extractMpptState, mpptStateToString, getPepwaveForTrailer, findPepwaveByName, formatAge } from '../lib/util.js';
 
 // Refresh the per-trailer maintenance stats used by computeHealthGrade.
 // Called after each VRM poll cycle (computeHealthGrade itself is sync).
@@ -339,14 +339,45 @@ export function computeHealthGrade(siteId) {
 // ============================================================
 // Tech Status — Actionable 3-state status for field techs
 // ============================================================
+// Status for a trailer without live VRM data. A router-only unit (no VRM
+// installation) is fine while its router is online. But a trailer that HAS a
+// Cerbo in VRM and has gone quiet is a fault even when the router is online:
+// the router being up means the trailer has power and internet, so the
+// silent Cerbo is what needs fixing. Returns offline | attention | watch | good.
+export function silentTelemetryStatus(snapshot, pw, now = Date.now()) {
+    if (!snapshot) {
+        return pw?.online
+            ? { status: 'good', reason: 'Network only — no Cerbo in VRM' }
+            : { status: 'offline', reason: 'Router offline — no VRM installation' };
+    }
+    if (!pw?.online) {
+        return { status: 'offline', reason: 'No data from trailer — router and Cerbo silent' };
+    }
+    const lastTs = snapshot.vrm_timestamp || null;
+    if (!lastTs) {
+        return { status: 'attention', reason: 'Router online, but the Cerbo has never reported to VRM' };
+    }
+    const age = now - lastTs;
+    if (age <= VRM_STALE_MS) {
+        // Fresh upload with no battery/solar fields: the Cerbo sees no devices
+        return { status: 'attention', reason: 'Cerbo reporting, but no battery or solar data' };
+    }
+    const lastSoc = snapshot.battery_soc;
+    const lowSoc = lastSoc != null && lastSoc < 20;
+    const reasons = [`Cerbo silent ${formatAge(age)} — router online, check Cerbo link`];
+    if (lowSoc) reasons.push(`last SOC ${Math.round(lastSoc)}%`);
+    const status = (age >= CERBO_SILENT_ATTENTION_MS || lowSoc) ? 'attention' : 'watch';
+    return { status, reason: reasons.join('; ') };
+}
+
 export function computeTechStatus(siteId, alertsMap) {
     const snapshot = snapshotCache.get(siteId);
-    const pw = pepwaveCache.get(snapshot?.site_name);
+    const pw = findPepwaveByName(snapshot?.site_name);
 
-    // No VRM data — check if pepwave is online
+    // No live VRM data. Tech status has no "offline" state, so it maps to attention.
     if (!snapshot || !hasVrmData(snapshot)) {
-        if (pw?.online) return { status: 'good', reason: 'Network-only trailer, Pepwave online' };
-        return { status: 'attention', reason: 'Trailer offline — no VRM or network data' };
+        const s = silentTelemetryStatus(snapshot, pw);
+        return { status: s.status === 'offline' ? 'attention' : s.status, reason: s.reason };
     }
 
     const soc = snapshot.battery_soc;

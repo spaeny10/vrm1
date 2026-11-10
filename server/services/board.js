@@ -6,21 +6,33 @@
 // ============================================================
 import { snapshotCache, pepwaveCache, dailyEnergy } from '../state.js';
 import { getTrailers, getTrailerAssignments, getJobSites, getCompanies, getRentals } from '../db.js';
-import { hasVrmData, todayStr } from '../lib/util.js';
+import { hasVrmData, todayStr, normalizeUnitName, findPepwaveByName } from '../lib/util.js';
 import { computeAlerts } from './alerts.js';
-import { computeTechStatus, computeHealthGrade } from './intelligence.js';
+import { computeTechStatus, computeHealthGrade, silentTelemetryStatus } from './intelligence.js';
 
 const SEVERITY = { offline: 0, attention: 1, watch: 2, good: 3, unknown: 4 };
 
 function healthFor(siteId, alertsMap, snap, pw) {
     if (siteId == null) return { health: 'unknown', diagnosis: 'No telemetry linked' };
-    const live = hasVrmData(snap);
-    if (!live) {
-        if (pw?.online) return { health: 'good', diagnosis: 'Network only — no battery telemetry' };
-        return { health: 'offline', diagnosis: snap ? 'No data from trailer — router and Cerbo silent' : 'Never reported' };
+    if (!hasVrmData(snap)) {
+        const s = silentTelemetryStatus(snap, pw);
+        return { health: s.status, diagnosis: s.reason };
     }
     const ts = computeTechStatus(siteId, alertsMap) || {};
     return { health: ts.status || 'good', diagnosis: ts.reason || null };
+}
+
+// When the trailer last sent anything. VRM time if there is a Cerbo (stale or
+// not, so a silent Cerbo shows how long it has been silent); otherwise the
+// router's last check-in. An offline router's poll time is not "last seen".
+function lastSeenFor(snap, pw) {
+    if (snap?.vrm_timestamp) return snap.vrm_timestamp;
+    if (pw?.online) return pw.timestamp || null;
+    if (pw?.last_online) {
+        const t = typeof pw.last_online === 'number' ? pw.last_online : Date.parse(pw.last_online);
+        if (Number.isFinite(t)) return t < 1e12 ? t * 1000 : t;
+    }
+    return snap?.timestamp || null;
 }
 
 export async function buildTrailerBoard() {
@@ -36,30 +48,50 @@ export async function buildTrailerBoard() {
     const alertsMap = {};
     for (const alert of computeAlerts()) alertsMap[alert.site_id] = alert.streak_days;
 
-    // Union of identities: registry trailers, VRM installations, IC2-only devices
+    // Union of identities: registry trailers, VRM installations, IC2-only devices.
+    // One row per physical trailer: a registry trailer still pointing at its
+    // router's synthetic id (negative, from before its Cerbo was in VRM) is
+    // joined to the VRM installation with the same name, so the router and
+    // the Cerbo don't show up as two trailers.
     const rows = new Map();
-    const vrmByName = new Map([...snapshotCache.values()].map(s => [s.site_name, s.site_id]));
+    const vrmByName = new Map([...snapshotCache.values()].map(s => [normalizeUnitName(s.site_name), s.site_id]));
+    const claimed = new Set(registry.filter(t => t.vrm_site_id > 0).map(t => t.vrm_site_id));
 
     for (const t of registry) {
-        const key = t.vrm_site_id != null ? String(t.vrm_site_id) : `t${t.id}`;
-        rows.set(key, { key, site_id: t.vrm_site_id, trailer: t, unit: t.unit_number });
+        let siteId = t.vrm_site_id;
+        let altSiteId = null;
+        if (siteId == null || siteId < 0) {
+            const real = vrmByName.get(normalizeUnitName(t.unit_number));
+            if (real != null && !claimed.has(real)) {
+                altSiteId = siteId;
+                siteId = real;
+                claimed.add(real);
+            }
+        }
+        const key = siteId != null ? String(siteId) : `t${t.id}`;
+        rows.set(key, { key, site_id: siteId, alt_site_id: altSiteId, trailer: t, unit: t.unit_number });
     }
     for (const [siteId, snap] of snapshotCache) {
         if (!rows.has(String(siteId))) rows.set(String(siteId), { key: String(siteId), site_id: siteId, trailer: null, unit: snap.site_name });
     }
+    const knownNames = new Set([...rows.values()].map(r => normalizeUnitName(r.unit)));
     for (const [name, dev] of pepwaveCache) {
-        if (vrmByName.has(name)) continue;
-        const already = [...rows.values()].some(r => r.unit === name);
-        if (!already) rows.set(String(-dev.id), { key: String(-dev.id), site_id: -dev.id, trailer: null, unit: name });
+        const norm = normalizeUnitName(name);
+        if (vrmByName.has(norm) || knownNames.has(norm)) continue;
+        knownNames.add(norm);
+        rows.set(String(-dev.id), { key: String(-dev.id), site_id: -dev.id, trailer: null, unit: name });
     }
 
     const out = [];
     for (const r of rows.values()) {
-        const snap = r.site_id != null ? snapshotCache.get(r.site_id) : null;
-        const pw = pepwaveCache.get(r.unit) || null;
+        const snap = r.site_id > 0 ? snapshotCache.get(r.site_id) : null;
+        const pw = findPepwaveByName(r.unit) || (snap ? findPepwaveByName(snap.site_name) : null);
         const live = hasVrmData(snap);
         const { health, diagnosis } = healthFor(r.site_id, alertsMap, snap, pw);
-        const assignment = r.site_id != null ? assignmentBySite.get(r.site_id) : null;
+        // A joined trailer's job site may still sit on its old synthetic-id row
+        const primary = r.site_id != null ? assignmentBySite.get(r.site_id) : null;
+        const fallback = r.alt_site_id != null ? assignmentBySite.get(r.alt_site_id) : null;
+        const assignment = (primary?.job_site_id || !fallback) ? primary : fallback;
         const site = assignment?.job_site_id ? siteById.get(assignment.job_site_id) : null;
         const rental = r.trailer ? rentalByTrailer.get(r.trailer.id) : null;
         const customerId = rental?.company_id || site?.company_id || null;
@@ -89,7 +121,7 @@ export async function buildTrailerBoard() {
             signal_bars: pw?.cellular?.signal_bar ?? null,
             rsrp: pw?.cellular?.signal?.rsrp ?? null,
             carrier: pw?.cellular?.carrier || null,
-            last_seen: (snap?.vrm_timestamp || snap?.timestamp || null) ?? (pw?.timestamp || null),
+            last_seen: lastSeenFor(snap, pw),
             latitude: assignment?.latitude ?? null,
             longitude: assignment?.longitude ?? null,
             site: site ? { id: site.id, name: site.name, is_hq: !!site.is_headquarters } : null,

@@ -5,19 +5,39 @@ import {
     setLastIc2Poll, setBandwidthLoggedOnce, bandwidthLoggedOnce,
 } from '../state.js';
 import { ic2Fetch, extractCellularInfo, extractWanInterfaces } from './ic2Client.js';
-import { insertPepwaveSnapshot, upsertTrailerAssignment, linkIc2Device, updateTrailerGps, getPool } from '../db.js';
+import { insertPepwaveSnapshot, upsertTrailerAssignment, linkIc2Device, updateTrailerGps, getPool, relinkSyntheticSite } from '../db.js';
+import { normalizeUnitName } from '../lib/util.js';
 import { runClustering } from '../clustering.js';
 import { checkGeofences, detectGpsChanges } from './geofence.js';
+
+const findVrmSiteByName = (vrmSites, name) => {
+    const want = normalizeUnitName(name);
+    return vrmSites.find(s => normalizeUnitName(s.name) === want) || null;
+};
 
 export function resolveIc2DeviceToSiteId(dev, vrmSites) {
     // Priority 1: stored linkage
     if (ic2DeviceIdToSiteId.has(dev.id)) {
         const siteId = ic2DeviceIdToSiteId.get(dev.id);
-        const vrmSite = vrmSites.find(s => s.idSite === siteId);
-        return { siteId, siteName: vrmSite?.name || dev.name };
+        if (siteId > 0) {
+            const vrmSite = vrmSites.find(s => s.idSite === siteId);
+            return { siteId, siteName: vrmSite?.name || dev.name };
+        }
+        // A synthetic link was stored before this trailer's Cerbo showed up
+        // in VRM. Upgrade it once a matching installation exists, or the
+        // router and the Cerbo stay two separate trailers forever.
+        const match = findVrmSiteByName(vrmSites, dev.name);
+        if (!match) return { siteId, siteName: dev.name };
+        ic2DeviceIdToSiteId.set(dev.id, match.idSite);
+        if (dbAvailable) {
+            relinkSyntheticSite(siteId, match.idSite)
+                .then(r => r && console.log(`  IC2 relink: ${dev.name} ${siteId} → ${match.idSite} (${r.trailersUpdated} trailer)`))
+                .catch(e => console.warn(`  IC2 relink failed for ${dev.name}: ${e.message}`));
+        }
+        return { siteId: match.idSite, siteName: match.name };
     }
     // Priority 2: name match to VRM
-    const vrmSite = vrmSites.find(s => s.name === dev.name);
+    const vrmSite = findVrmSiteByName(vrmSites, dev.name);
     if (vrmSite) {
         ic2DeviceIdToSiteId.set(dev.id, vrmSite.idSite);
         return { siteId: vrmSite.idSite, siteName: vrmSite.name };
