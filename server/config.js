@@ -42,6 +42,9 @@ export const allowedOrigins = process.env.ALLOWED_ORIGINS
 export const SITES_CACHE_TTL = 5 * 60 * 1000;
 export const WEATHER_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 export const VRM_STALE_MS = 30 * 60 * 1000;
+// A Cerbo that has been silent this long while its router is online is a
+// fault to fix ("attention"); under it, the trailer is only on "watch".
+export const CERBO_SILENT_ATTENTION_MS = 2 * 60 * 60 * 1000;
 
 // ============================================================
 // Trailer Hardware Specifications
