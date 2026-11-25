@@ -68,6 +68,17 @@ export function findPepwaveByName(name) {
     return null;
 }
 
+// InControl timestamps arrive as epoch seconds, epoch ms, ISO strings, or
+// "YYYY-MM-DD HH:MM:SS" with no zone (UTC). Returns epoch ms or null.
+export function parseDeviceTime(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return v < 1e12 ? v * 1000 : v;
+    const s = String(v).trim();
+    const iso = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/.test(s) ? s.replace(' ', 'T') + 'Z' : s;
+    const t = Date.parse(iso);
+    return Number.isFinite(t) ? t : null;
+}
+
 // Short human age: 45m, 20h, 13d
 export function formatAge(ms) {
     const min = Math.max(0, Math.round(ms / 60000));

@@ -1,4 +1,4 @@
-import { TRAILER_SPECS, SOLAR_SCORE_DEFAULTS, VRM_STALE_MS, CERBO_SILENT_ATTENTION_MS } from '../config.js';
+import { TRAILER_SPECS, SOLAR_SCORE_DEFAULTS, VRM_STALE_MS, CERBO_SILENT_ATTENTION_MS, DEFICIT_URGENT_BELOW_SOC } from '../config.js';
 import {
     snapshotCache, pepwaveCache, dailyEnergy, gpsCache, trailerJobSiteMap,
     socStartOfDay, solarScoreConfig, dbAvailable, geofenceAlerts, maintStatsCache,
@@ -102,10 +102,16 @@ export async function computeTrailerIntelligence(siteId) {
     }
 
     // --- 7-day average score: per-day scores using each day's stored expected yield ---
+    // A day that ended with the battery full says nothing about the panels:
+    // the charger had nowhere to put the power, so it throttled. Those days
+    // are left out, whatever time of day we happen to be looking.
+    const cfg = solarScoreConfig;
+    const endedFull = (d) => d?.battery_soc_eod != null && d.battery_soc_eod >= cfg.throttle_soc_threshold;
+    const fullBatteryDays = pastDays.filter(([, d]) => endedFull(d)).length;
     let avg7dScore = null;
     if (pastDays.length > 0) {
         const dayScores = pastDays
-            .filter(([, d]) => d.yield_wh != null && d.yield_wh > 0)
+            .filter(([, d]) => d.yield_wh != null && d.yield_wh > 0 && !endedFull(d))
             .map(([, d]) => {
                 const exp = d.expected_yield_wh || expectedDailyYieldWh;
                 return exp > 0 ? (d.yield_wh / exp) * 100 : null;
@@ -128,7 +134,7 @@ export async function computeTrailerIntelligence(siteId) {
     // Victron MPPT charge states: 0=Off, 1=Low power, 2=Fault, 3=Bulk, 4=Absorption,
     // 5=Float, 6=Storage, 7=Equalize, 252=External control
     // When in Float/Storage/Idle, the MPPT throttles production — yield is artificially low.
-    const cfg = solarScoreConfig;
+    const yesterdayFull = endedFull(yesterdayEntry?.[1]);
     const chargeState = snapshot.charge_state;
     const csNum = typeof chargeState === 'string' ? parseInt(chargeState, 10) : chargeState;
     const isThrottled = (typeof csNum === 'number' && !isNaN(csNum) && (csNum === 5 || csNum === 6))
@@ -138,7 +144,7 @@ export async function computeTrailerIntelligence(siteId) {
     let adjustedSolarScore = solarScore;
     let scoreAdjustmentReason = null;
 
-    if (isThrottled && isHighSoc && solarScore !== null && solarScore < cfg.score_excellent) {
+    if (((isThrottled && isHighSoc) || yesterdayFull) && solarScore !== null && solarScore < cfg.score_excellent) {
         // Use best estimate: raw score, 7-day average, or panel-health indicator
         const panelHealthScore = (panelPerformance !== null && panelPerformance > cfg.throttle_panel_min_pct)
             ? cfg.score_excellent : 0;
@@ -150,7 +156,7 @@ export async function computeTrailerIntelligence(siteId) {
         }
 
         // Floor: if SOC >= floor threshold and still below floor score
-        if (snapshot.battery_soc >= cfg.throttle_floor_soc && adjustedSolarScore < cfg.throttle_floor_score) {
+        if ((snapshot.battery_soc >= cfg.throttle_floor_soc || yesterdayFull) && adjustedSolarScore < cfg.throttle_floor_score) {
             adjustedSolarScore = cfg.throttle_floor_score;
             scoreAdjustmentReason = 'full_battery_floor';
         }
@@ -218,6 +224,7 @@ export async function computeTrailerIntelligence(siteId) {
                 : null,
             throttled: isThrottled,
             score_adjustment_reason: scoreAdjustmentReason,
+            full_battery_days: fullBatteryDays,
             today_live_score: todayLiveScore,
             panel_performance_pct: panelPerformance,
             current_watts: snapshot.solar_watts,
@@ -348,12 +355,16 @@ export function silentTelemetryStatus(snapshot, pw, now = Date.now()) {
     if (!snapshot) {
         return pw?.online
             ? { status: 'good', reason: 'Network only — no Cerbo in VRM' }
-            : { status: 'offline', reason: 'Router offline — no VRM installation' };
-    }
-    if (!pw?.online) {
-        return { status: 'offline', reason: 'No data from trailer — router and Cerbo silent' };
+            : { status: 'offline', reason: 'Router offline — no Cerbo in VRM' };
     }
     const lastTs = snapshot.vrm_timestamp || null;
+    if (!pw) {
+        // A Cerbo with no router on record: all we can say is how long it has been quiet
+        return { status: 'offline', reason: lastTs ? `Cerbo silent ${formatAge(now - lastTs)} — no router linked` : 'Cerbo has never reported — no router linked' };
+    }
+    if (!pw.online) {
+        return { status: 'offline', reason: 'No data from trailer — router and Cerbo silent' };
+    }
     if (!lastTs) {
         return { status: 'attention', reason: 'Router online, but the Cerbo has never reported to VRM' };
     }
@@ -395,7 +406,7 @@ export function computeTechStatus(siteId, alertsMap) {
 
     // Critical SOC
     if (soc !== null && soc < 20) {
-        reasons.push(`Critical SOC: ${soc.toFixed(0)}%`);
+        reasons.push(`Battery critically low: ${soc.toFixed(0)}%`);
     }
 
     // Battery overheating (LiFePO4 charging is unsafe above ~45°C)
@@ -406,16 +417,16 @@ export function computeTechStatus(siteId, alertsMap) {
     // Energy deficit streak >= 5 days — urgent only once the battery is
     // actually being drawn down. At 80%+ it's a trend to watch, not a dispatch.
     const deficitStreak = alertsMap?.[siteId] ?? 0;
-    const DEFICIT_URGENT_BELOW_SOC = 80;
     const deficitUrgent = soc === null || soc < DEFICIT_URGENT_BELOW_SOC;
     if (deficitStreak >= 5 && deficitUrgent) {
-        reasons.push(`Energy deficit: ${deficitStreak} day streak`);
+        reasons.push(`Using more power than solar provides: ${deficitStreak} days running`);
     }
 
     // SOC declining and projected critical within 3 days
     const socTrend = computeSocTrend(siteId);
     if (socTrend && socTrend.declining && socTrend.daysUntilCritical !== null && socTrend.daysUntilCritical <= 3) {
-        reasons.push(`SOC declining ${Math.abs(socTrend.slopePerDay).toFixed(1)}%/day — critical in ~${socTrend.daysUntilCritical}d`);
+        const when = socTrend.daysUntilCritical < 1 ? 'today' : `in about ${socTrend.daysUntilCritical} day${socTrend.daysUntilCritical === 1 ? '' : 's'}`;
+        reasons.push(`Battery draining ${Math.abs(socTrend.slopePerDay).toFixed(1)}% a day, critical ${when}`);
     }
 
     if (reasons.length > 0) return { status: 'attention', reason: reasons.join('; ') };
@@ -425,7 +436,7 @@ export function computeTechStatus(siteId, alertsMap) {
 
     // Low SOC (20-40%)
     if (soc !== null && soc >= 20 && soc < 40) {
-        watchReasons.push(`Low SOC: ${soc.toFixed(0)}%`);
+        watchReasons.push(`Battery low: ${soc.toFixed(0)}%`);
     }
 
     if (snapshot.battery_temp != null && snapshot.battery_temp >= 40) {
@@ -434,12 +445,12 @@ export function computeTechStatus(siteId, alertsMap) {
 
     // SOC declining > 2%/day (but not yet critical-imminent)
     if (socTrend && socTrend.declining && socTrend.slopePerDay < -2) {
-        watchReasons.push(`SOC declining ${Math.abs(socTrend.slopePerDay).toFixed(1)}%/day`);
+        watchReasons.push(`Battery draining ${Math.abs(socTrend.slopePerDay).toFixed(1)}% a day`);
     }
 
     // Energy deficit 2-4 days, or a longer streak on a still-full battery
     if ((deficitStreak >= 2 && deficitStreak < 5) || (deficitStreak >= 5 && !deficitUrgent)) {
-        watchReasons.push(`Energy deficit: ${deficitStreak} day streak`);
+        watchReasons.push(`Using more power than solar provides: ${deficitStreak} days running${deficitStreak >= 5 ? `, but the battery is holding at ${soc.toFixed(0)}%` : ''}`);
     }
 
     if (watchReasons.length > 0) return { status: 'watch', reason: watchReasons.join('; ') };

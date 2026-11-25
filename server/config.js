@@ -45,6 +45,9 @@ export const VRM_STALE_MS = 30 * 60 * 1000;
 // A Cerbo that has been silent this long while its router is online is a
 // fault to fix ("attention"); under it, the trailer is only on "watch".
 export const CERBO_SILENT_ATTENTION_MS = 2 * 60 * 60 * 1000;
+// A long energy-deficit streak is only urgent once the battery is actually
+// being drawn down. At or above this level it is a trend to watch.
+export const DEFICIT_URGENT_BELOW_SOC = 80;
 
 // ============================================================
 // Trailer Hardware Specifications

@@ -7,19 +7,32 @@ import {
 import { ic2Fetch, extractCellularInfo, extractWanInterfaces } from './ic2Client.js';
 import { insertPepwaveSnapshot, upsertTrailerAssignment, linkIc2Device, updateTrailerGps, getPool, relinkSyntheticSite } from '../db.js';
 import { normalizeUnitName } from '../lib/util.js';
+import { snapshotCache } from '../state.js';
+import { rosterEntry } from './roster.js';
 import { runClustering } from '../clustering.js';
 import { checkGeofences, detectGpsChanges } from './geofence.js';
 
+// A replaced Cerbo leaves an old installation with the same name in VRM, so
+// several can match. The trailer is the one that reported most recently.
 const findVrmSiteByName = (vrmSites, name) => {
     const want = normalizeUnitName(name);
-    return vrmSites.find(s => normalizeUnitName(s.name) === want) || null;
+    const matches = vrmSites.filter(s => normalizeUnitName(s.name) === want);
+    if (matches.length < 2) return matches[0] || null;
+    const lastHeard = (s) => snapshotCache.get(s.idSite)?.vrm_timestamp || 0;
+    return matches.sort((a, b) => (lastHeard(b) - lastHeard(a)) || (b.idSite - a.idSite))[0];
 };
 
 export function resolveIc2DeviceToSiteId(dev, vrmSites) {
     // Priority 1: stored linkage
     if (ic2DeviceIdToSiteId.has(dev.id)) {
-        const siteId = ic2DeviceIdToSiteId.get(dev.id);
+        let siteId = ic2DeviceIdToSiteId.get(dev.id);
         if (siteId > 0) {
+            // Follow the trailer if the roster says this installation was superseded
+            const entry = rosterEntry(siteId);
+            if (entry && !entry.primary && Number(entry.key) > 0) {
+                siteId = Number(entry.key);
+                ic2DeviceIdToSiteId.set(dev.id, siteId);
+            }
             const vrmSite = vrmSites.find(s => s.idSite === siteId);
             return { siteId, siteName: vrmSite?.name || dev.name };
         }
@@ -123,17 +136,20 @@ export async function pollIc2Devices() {
             console.log(`  IC2 bandwidth fetch failed: ${bwErr.message}`);
         }
 
-        // Always load latest non-zero usage from DB as fallback
+        // Fallback for a bandwidth API hiccup: today's last non-zero reading.
+        // (Only today's: usage is a per-day total, and yesterday's number shown
+        // as today's made long-dead routers look busy.)
         let dbUsageFallback = {};
         if (dbAvailable) {
             try {
                 const pool = getPool();
+                const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
                 const fbResult = await pool.query(`
                     SELECT DISTINCT ON (device_name) device_name, usage_mb, tx_mb, rx_mb
                     FROM pepwave_snapshots
-                    WHERE usage_mb > 0
+                    WHERE usage_mb > 0 AND timestamp >= $1
                     ORDER BY device_name, timestamp DESC
-                `);
+                `, [dayStart.getTime()]);
                 for (const row of fbResult.rows) {
                     dbUsageFallback[row.device_name] = {
                         usage_mb: parseFloat(row.usage_mb) || 0,

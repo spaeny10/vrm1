@@ -1,25 +1,34 @@
 import {
-    getCustomerSiteAccess, getJobSite, getJobSites, getSiteContacts, getTrailersByJobSite,
+    getCustomerSiteAccess, getJobSite, getJobSites, getSiteContacts,
     upsertCustomerSiteAccess, getCustomerVisibleNotes, insertSiteNote,
 } from '../db.js';
-import { hasVrmData, getPepwaveForTrailer } from '../lib/util.js';
 import { requireRole } from '../middleware/auth.js';
-import { snapshotCache } from '../state.js';
+import { buildTrailerBoard } from '../services/board.js';
 
 // Customer-facing trailer summary: charge and solar only, and offline units
-// stay in the list (marked offline) rather than silently disappearing
-function portalTrailer(assignment) {
-    const snap = snapshotCache.get(assignment.site_id);
-    const live = hasVrmData(snap);
-    const pw = getPepwaveForTrailer(assignment);
+// stay in the list (marked offline) rather than silently disappearing.
+// Built from the fleet board, so customers see one row per physical trailer.
+function portalTrailer(row) {
     return {
-        site_id: assignment.site_id,
-        site_name: assignment.site_name,
-        online: live || !!pw?.online,
-        battery_soc: live ? snap.battery_soc : null,
-        solar_watts: live ? snap.solar_watts : null,
-        solar_yield_today: live ? snap.solar_yield_today : null,
+        site_id: row.site_id ?? row.key,
+        site_name: row.unit,
+        // A unit we have no telemetry for is "no live data", not "offline"
+        monitored: row.health !== 'unknown',
+        online: row.soc != null || row.online,
+        battery_soc: row.soc,
+        solar_watts: row.solar_w,
+        solar_yield_today: row.yield_today_kwh,
     };
+}
+
+async function trailersBySite() {
+    const bySite = new Map();
+    for (const row of await buildTrailerBoard()) {
+        if (!row.in_service || !row.site) continue;
+        if (!bySite.has(row.site.id)) bySite.set(row.site.id, []);
+        bySite.get(row.site.id).push(portalTrailer(row));
+    }
+    return bySite;
 }
 
 function siteSummary(js, trailers) {
@@ -33,8 +42,9 @@ function siteSummary(js, trailers) {
         address: js.address,
         trailer_count: trailers.length,
         trailers_online: trailers.filter(t => t.online).length,
+        trailers_monitored: trailers.filter(t => t.monitored !== false).length,
         avg_soc: avgSoc,
-        worst_status: trailers.some(t => !t.online) ? 'offline'
+        worst_status: trailers.some(t => !t.online && t.monitored !== false) ? 'offline'
             : trailers.some(t => t.battery_soc != null && t.battery_soc < 20) ? 'critical'
             : trailers.some(t => t.battery_soc != null && t.battery_soc < 50) ? 'warning' : 'ok',
     };
@@ -68,10 +78,11 @@ app.get('/api/portal/sites', customerOnly, async (req, res) => {
         const siteIds = await customerSiteIds(req);
         if (siteIds.length === 0) return res.json({ sites: [] });
         const jobSites = (await getJobSites()).filter(js => siteIds.includes(js.id));
-        const sites = await Promise.all(jobSites.map(async js => {
-            const trailers = (await getTrailersByJobSite(js.id)).map(portalTrailer);
+        const bySite = await trailersBySite();
+        const sites = jobSites.map(js => {
+            const trailers = bySite.get(js.id) || [];
             return { ...siteSummary(js, trailers), trailers };
-        }));
+        });
         res.json({ sites });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -82,7 +93,7 @@ app.get('/api/portal/site/:id', customerOnly, requireSiteAccess, async (req, res
     try {
         const js = await getJobSite(req.siteId);
         if (!js) return res.status(404).json({ error: 'Site not found' });
-        const trailers = (await getTrailersByJobSite(req.siteId)).map(portalTrailer);
+        const trailers = (await trailersBySite()).get(req.siteId) || [];
         const siteContacts = await getSiteContacts(req.siteId);
         const primaryContact = siteContacts.find(c => c.is_primary) || siteContacts[0];
         res.json({

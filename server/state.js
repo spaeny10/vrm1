@@ -65,6 +65,10 @@ export let sitesCache = null;
 export let sitesCacheTime = 0;
 export function setSitesCache(data) { sitesCache = data; sitesCacheTime = Date.now(); }
 
+// Completed VRM polls since startup (0 = the caches are still filling)
+export let vrmPollCount = 0;
+export function markVrmPollComplete() { vrmPollCount++; }
+
 export let lastIc2Poll = 0;
 export function setLastIc2Poll(v) { lastIc2Poll = v; }
 

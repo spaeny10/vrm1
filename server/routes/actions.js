@@ -4,6 +4,7 @@ import { getAcknowledgedActions, getUpcomingMaintenance, getBillingPastCalloff, 
 import { hasVrmData, todayStr } from '../lib/util.js';
 import { requireRole } from '../middleware/auth.js';
 import { computeAlerts } from '../services/alerts.js';
+import { isMonitored } from '../services/roster.js';
 import { dailyEnergy, dbAvailable, geofenceAlerts, snapshotCache } from '../state.js';
 
 export function registerActionsRoutes(app) {
@@ -37,7 +38,7 @@ app.get('/api/action-queue', async (req, res) => {
 
         // Source 2: Intelligence flags (VRM-connected trailers only)
         for (const [siteId, snapshot] of snapshotCache) {
-            if (!hasVrmData(snapshot)) continue;
+            if (!hasVrmData(snapshot) || !isMonitored(siteId)) continue;
             // Battery temp critical
             if (snapshot.battery_temp !== null && snapshot.battery_temp > 45) {
                 actions.push({
@@ -116,7 +117,7 @@ app.get('/api/action-queue', async (req, res) => {
 
         // Source: Predictive SOC depletion (VRM-connected trailers only)
         for (const [siteId, snapshot] of snapshotCache) {
-            if (!hasVrmData(snapshot)) continue;
+            if (!hasVrmData(snapshot) || !isMonitored(siteId)) continue;
             const siteEnergy = dailyEnergy.get(siteId) || {};
             const today = todayStr();
             const pastDays = Object.entries(siteEnergy)

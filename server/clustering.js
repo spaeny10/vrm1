@@ -1,3 +1,4 @@
+import { isCurrentIdentity } from './services/roster.js';
 import {
     getTrailersWithGps, getJobSites, insertJobSite, updateJobSite,
     upsertTrailerAssignment, getPool
@@ -139,7 +140,8 @@ async function openRentalSiteByVrm() {
 
 export async function runClustering(thresholdMeters = 300) {
     const trailers = await getTrailersWithGps();
-    const unassigned = trailers.filter(t => !t.manual_override && t.job_site_id == null);
+    // A superseded VRM installation or a leftover router id is not a trailer to place
+    const unassigned = trailers.filter(t => !t.manual_override && t.job_site_id == null && isCurrentIdentity(t.site_id));
     if (unassigned.length === 0) {
         return { jobSites: 0, created: 0, updated: 0, trailers: 0 };
     }

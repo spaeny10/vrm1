@@ -1,7 +1,9 @@
 import {
     dailyEnergy, trailerJobSiteMap, snapshotCache, dbAvailable,
 } from '../state.js';
-import { todayStr, mpptStateToString, extractMpptState } from '../lib/util.js';
+import { todayStr, mpptStateToString, hasVrmData } from '../lib/util.js';
+import { DEFICIT_URGENT_BELOW_SOC } from '../config.js';
+import { isMonitored } from './roster.js';
 import { getTrailerAssignments, insertAlertHistory, resolveAlert, getActiveAlerts, updateActiveAlert } from '../db.js';
 import { sendAlertEmail, sendAlertResolvedEmail, isEmailConfigured, checkRateLimit, markNotified } from '../email.js';
 
@@ -26,12 +28,21 @@ export async function refreshTrailerJobSiteMap() {
 // ============================================================
 // Alert logic: yield < consumed for 2+ consecutive REAL deficit days
 // (excludes idle-throttled deficits: SOC ≥88%, MPPT Float/Storage, <1 kWh)
+//
+// Only trailers that are in service and reporting right now can have
+// an energy alert. A unit in the yard may be indoors or on shore power;
+// a superseded VRM installation isn't a trailer; and a trailer that has
+// gone dark has a bigger problem than its energy balance, which the
+// board reports as offline. Pass { all: true } to see every installation.
 // ============================================================
-export function computeAlerts() {
+export function computeAlerts({ all = false } = {}) {
     const alerts = [];
     const today = todayStr();
 
     for (const [siteId, days] of dailyEnergy.entries()) {
+        const snapshot = snapshotCache.get(siteId);
+        if (!all && (!isMonitored(siteId) || !hasVrmData(snapshot))) continue;
+
         const dates = Object.keys(days)
             .filter(d => d < today)
             .sort()
@@ -86,13 +97,19 @@ export function computeAlerts() {
                 }
             }
 
+            // A long streak is only critical once the battery is being drawn
+            // down; while it holds near full, the trailer is coping.
+            const soc = hasVrmData(snapshot) ? snapshot.battery_soc : null;
+            const batteryHolding = soc != null && soc >= DEFICIT_URGENT_BELOW_SOC;
             alerts.push({
                 site_id: siteId,
                 site_name: siteName,
                 job_site_name: trailerJobSiteMap.get(siteId) || null,  // NEW: Job site for email context
                 streak_days: realStreak,  // Only real deficit days
                 deficit_days: allDeficitDays,
-                severity: realStreak >= 5 ? 'critical' : realStreak >= 3 ? 'warning' : 'caution',
+                battery_soc: soc,
+                battery_holding: batteryHolding,
+                severity: realStreak >= 5 && !batteryHolding ? 'critical' : realStreak >= 3 ? 'warning' : 'caution',
             });
         }
     }
@@ -160,8 +177,10 @@ export async function persistAlertHistory(currentAlerts) {
         for (const dbAlert of activeDbAlerts) {
             if (!activeSiteIds.has(dbAlert.site_id)) {
                 await resolveAlert(dbAlert.site_id);
-                // Send resolution email (fire-and-forget)
-                if (isEmailConfigured()) {
+                // "Resolved" means the energy balance recovered. If the alert ended
+                // because the trailer went dark or left service, say nothing.
+                const recovered = isMonitored(dbAlert.site_id) && hasVrmData(snapshotCache.get(dbAlert.site_id));
+                if (recovered && isEmailConfigured()) {
                     sendAlertResolvedEmail(dbAlert).catch(err => console.error('  Resolution email error:', err.message));
                 }
             }

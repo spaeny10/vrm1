@@ -1,8 +1,10 @@
-import { VRM_USER_ID, TRAILER_SPECS } from '../config.js';
+import { VRM_USER_ID, TRAILER_SPECS, SITES_CACHE_TTL } from '../config.js';
 import {
     snapshotCache, pepwaveCache, gpsCache, trailerJobSiteMap, dailyEnergy,
-    socStartOfDay, dbAvailable, pgvectorAvailable, sitesCache, setSitesCache,
+    socStartOfDay, dbAvailable, pgvectorAvailable, sitesCache, sitesCacheTime, setSitesCache, markVrmPollComplete,
 } from '../state.js';
+import { hasVrmData } from '../lib/util.js';
+import { reconcileRegistry } from './registrySync.js';
 import { vrmFetch, extractDiagValue, extractVrmTimestamp } from './vrmClient.js';
 import { insertSnapshot, pruneOldData, upsertTrailerAssignment } from '../db.js';
 import { isConfigured as isEmbeddingsConfigured } from '../embeddings.js';
@@ -24,9 +26,15 @@ export async function pollAllSites() {
     console.log(`[${new Date().toISOString()}] Polling VRM sites...`);
 
     try {
-        if (!sitesCache) {
-            const data = await vrmFetch(`/users/${VRM_USER_ID}/installations`);
-            setSitesCache(data);
+        // Re-read the installation list regularly so new Cerbos appear and
+        // removed ones drop out without a restart
+        if (!sitesCache || Date.now() - sitesCacheTime >= SITES_CACHE_TTL) {
+            try {
+                setSitesCache(await vrmFetch(`/users/${VRM_USER_ID}/installations`));
+            } catch (err) {
+                if (!sitesCache) throw err;
+                console.warn(`  VRM installation list refresh failed, using the previous list: ${err.message}`);
+            }
         }
 
         const sites = sitesCache.records || [];
@@ -110,9 +118,14 @@ export async function pollAllSites() {
 
                     snapshotCache.set(site.idSite, snapshot);
 
+                    // VRM keeps serving a silent Cerbo's last readings. Keep them in
+                    // the cache (they tell us how long it has been quiet and what the
+                    // battery was at), but don't record them as today's history.
+                    const live = hasVrmData(snapshot);
+
                     // Compute today's expected yield (weather-based) and store with daily energy
                     let expectedYieldWh = null;
-                    const gpsForYield = gpsCache.get(site.idSite);
+                    const gpsForYield = live ? gpsCache.get(site.idSite) : null;
                     if (gpsForYield) {
                         try {
                             const wx = await fetchSolarIrradiance(gpsForYield.latitude, gpsForYield.longitude);
@@ -121,9 +134,9 @@ export async function pollAllSites() {
                         } catch { }
                     }
 
-                    updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage, snapshot.battery_soc, dcLoadW, loadCurrent, expectedYieldWh);
+                    if (live) updateDailyEnergy(site.idSite, site.name, yieldToday, consumedAh, batteryVoltage, snapshot.battery_soc, dcLoadW, loadCurrent, expectedYieldWh);
 
-                    if (yieldYesterday !== null) {
+                    if (live && yieldYesterday !== null) {
                         const yesterday = new Date();
                         yesterday.setDate(yesterday.getDate() - 1);
                         const yestStr = yesterday.toISOString().slice(0, 10);
@@ -140,7 +153,7 @@ export async function pollAllSites() {
                         }
                     }
 
-                    if (dbAvailable) {
+                    if (dbAvailable && live) {
                         try {
                             await insertSnapshot({
                                 ...snapshot,
@@ -159,6 +172,8 @@ export async function pollAllSites() {
                                 },
                             });
                         } catch (dbErr) { /* in memory */ }
+                    }
+                    if (dbAvailable) {
                         // Persist trailer assignment (GPS comes from IC2, pass null to preserve existing)
                         try {
                             await upsertTrailerAssignment(site.idSite, site.name, null, null);
@@ -187,12 +202,16 @@ export async function pollAllSites() {
             }
         }
 
+        markVrmPollComplete();
+
         if (dbAvailable) {
             try { await pruneOldData(); } catch (e) { /* ignore */ }
             // Refresh trailer-to-job-site mapping for alert emails
             try { await refreshTrailerJobSiteMap(); } catch (e) { /* ignore */ }
             // Refresh maintenance stats for health grades
             try { await refreshMaintStatsCache(); } catch (e) { /* ignore */ }
+            // One roster for everything that follows; repair the registry when the picture is complete
+            try { await reconcileRegistry(); } catch (e) { console.warn('  Registry reconcile failed:', e.message); }
         }
 
         const currentAlerts = computeAlerts();

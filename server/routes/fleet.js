@@ -2,7 +2,8 @@ import { TRAILER_SPECS } from '../config.js';
 import { getAlertHistory, getJobSites, getLatestSnapshots, getRentals, getTrailerAssignments, getTrailers } from '../db.js';
 import { hasVrmData } from '../lib/util.js';
 import { computeAlerts } from '../services/alerts.js';
-import { computeHealthGrade, computeTechStatus, computeTrailerIntelligence } from '../services/intelligence.js';
+import { computeHealthGrade, computeTrailerIntelligence } from '../services/intelligence.js';
+import { isCurrentIdentity, isMonitored } from '../services/roster.js';
 import { fetchSolarIrradiance } from '../services/weather.js';
 import { dailyEnergy, dbAvailable, gpsCache, lastIc2Poll, pepwaveCache, sitesCacheTime, snapshotCache } from '../state.js';
 
@@ -29,6 +30,7 @@ app.get('/api/fleet/latest', async (req, res) => {
 app.get('/api/fleet/energy', (req, res) => {
     const result = [];
     for (const [siteId, days] of dailyEnergy.entries()) {
+        if (!isCurrentIdentity(siteId)) continue;   // superseded installation or retired unit
         const siteName = Object.values(days)[0]?.site_name || `Site ${siteId}`;
         const dailyData = Object.entries(days)
             .sort(([a], [b]) => a.localeCompare(b))
@@ -38,7 +40,7 @@ app.get('/api/fleet/energy', (req, res) => {
                 consumed_wh: info.consumed_wh,
                 consumption_source: info.consumption_source || null,
             }));
-        result.push({ site_id: siteId, site_name: siteName, days: dailyData });
+        result.push({ site_id: siteId, site_name: siteName, in_service: isMonitored(siteId), days: dailyData });
     }
     result.sort((a, b) => a.site_name.localeCompare(b.site_name, undefined, { numeric: true }));
     res.json({ success: true, records: result });
@@ -176,51 +178,6 @@ app.get('/api/fleet/deployment', async (req, res) => {
 });
 
 // ============================================================
-// Unified dashboard endpoint (single call for FleetOverview)
-// ============================================================
-app.get('/api/fleet/dashboard', (req, res) => {
-    const snapshots = Array.from(snapshotCache.values());
-    const vrmSnapshots = snapshots.filter(hasVrmData);
-    const devices = Array.from(pepwaveCache.values());
-
-    let totalSoc = 0, socCount = 0, totalSolar = 0;
-    let onlineTrailers = 0, offlineTrailers = 0;
-
-    for (const s of vrmSnapshots) {
-        if (s.battery_soc != null) {
-            totalSoc += s.battery_soc;
-            socCount++;
-        }
-        totalSolar += s.solar_watts || 0;
-        onlineTrailers++;
-    }
-
-    let netOnline = 0, netOffline = 0;
-    for (const d of devices) {
-        if (d.online) netOnline++;
-        else netOffline++;
-    }
-
-    const alerts = computeAlerts();
-
-    res.json({
-        success: true,
-        site_count: snapshots.length,
-        device_count: devices.length,
-        avg_soc: socCount > 0 ? totalSoc / socCount : null,
-        total_solar_watts: totalSolar,
-        trailers_online: onlineTrailers,
-        trailers_offline: offlineTrailers,
-        net_online: netOnline,
-        net_offline: netOffline,
-        alert_count: alerts.length,
-        top_alerts: alerts.slice(0, 5),
-        last_vrm_poll: sitesCacheTime,
-        last_ic2_poll: lastIc2Poll,
-    });
-});
-
-// ============================================================
 // Intelligence API: Spec + location-aware metrics
 // ============================================================
 app.get('/api/intelligence/trailer/:id', async (req, res) => {
@@ -254,9 +211,9 @@ app.get('/api/fleet/intelligence', async (req, res) => {
 
         // Now compute intelligence for VRM-connected trailers only (weather is cached)
         for (const [siteId, snap] of snapshotCache) {
-            if (!hasVrmData(snap)) continue;
+            if (!hasVrmData(snap) || !isCurrentIdentity(siteId)) continue;
             const intel = await computeTrailerIntelligence(siteId);
-            if (intel) results.push(intel);
+            if (intel) results.push({ ...intel, in_service: isMonitored(siteId) });
         }
 
         // Fleet-wide aggregates
@@ -264,8 +221,9 @@ app.get('/api/fleet/intelligence', async (req, res) => {
         const withAutonomy = results.filter(r => r.battery.days_of_autonomy !== null);
         const withPerformance = results.filter(r => r.solar.panel_performance_pct !== null);
 
-        const underperforming = results.filter(r => r.solar.avg_7d_score !== null && r.solar.avg_7d_score < 50 && !r.solar.score_adjustment_reason);
-        const lowAutonomy = results.filter(r => r.battery.days_of_autonomy !== null && r.battery.days_of_autonomy < 1.5);
+        // Problems are only counted for trailers in service: a unit in the yard may be indoors or covered
+        const underperforming = results.filter(r => r.in_service && r.solar.avg_7d_score !== null && r.solar.avg_7d_score < 50 && !r.solar.score_adjustment_reason);
+        const lowAutonomy = results.filter(r => r.in_service && r.battery.days_of_autonomy !== null && r.battery.days_of_autonomy < 1.5);
 
         res.json({
             success: true,
@@ -306,39 +264,5 @@ app.get('/api/fleet/health-grades', (req, res) => {
     res.json({ success: true, grades });
 });
 
-app.get('/api/fleet/tech-status', (req, res) => {
-    // Build deficit streak map once (reuse computeAlerts)
-    const alertsMap = {};
-    for (const alert of computeAlerts()) {
-        alertsMap[alert.site_id] = alert.streak_days;
-    }
-
-    const statuses = {};
-    // VRM-connected trailers
-    for (const [siteId] of snapshotCache) {
-        statuses[siteId] = computeTechStatus(siteId, alertsMap);
-    }
-    // IC2-only trailers (pepwave-only, no VRM snapshot)
-    // Use negative device ID to match /api/sites key format
-    for (const [name, dev] of pepwaveCache) {
-        let covered = false;
-        for (const [, snap] of snapshotCache) {
-            if (snap.site_name === name) { covered = true; break; }
-        }
-        if (!covered) {
-            statuses[-dev.id] = {
-                status: dev.online ? 'good' : 'attention',
-                reason: dev.online ? 'Network-only, Pepwave online' : 'Pepwave offline',
-            };
-        }
-    }
-
-    const summary = { good: 0, watch: 0, attention: 0 };
-    for (const s of Object.values(statuses)) {
-        if (s) summary[s.status]++;
-    }
-
-    res.json({ success: true, statuses, summary });
-});
 
 }

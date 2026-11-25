@@ -28,6 +28,13 @@ export async function getTrailers({ status } = {}) {
     return result.rows;
 }
 
+// trailer id -> number of rentals it has ever had (open or closed)
+export async function getRentalCountsByTrailer() {
+    if (!pool) return new Map();
+    const result = await pool.query(`SELECT trailer_id, COUNT(*)::int AS n FROM rentals GROUP BY trailer_id`);
+    return new Map(result.rows.map(r => [r.trailer_id, r.n]));
+}
+
 export async function getTrailer(id) {
     if (!pool) return null;
     const result = await pool.query(`SELECT * FROM trailers WHERE id = $1`, [id]);

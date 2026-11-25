@@ -771,14 +771,10 @@ export async function applySchema(client) {
         await client.query(`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS rollback_amount NUMERIC(12,2)`);
         console.log('  ✓ Pricing rate cards ready (BV1305 seeded)');
 
-        // Backfill trailers from existing GPS-derived assignments (idempotent)
-        await client.query(`
-      INSERT INTO trailers (unit_number, vrm_site_id, ic2_device_id)
-      SELECT ta.site_name, ta.site_id, ta.ic2_device_id
-      FROM trailer_assignments ta
-      WHERE NOT EXISTS (SELECT 1 FROM trailers t WHERE t.vrm_site_id = ta.site_id)
-      ON CONFLICT (unit_number) DO NOTHING
-    `);
+        // New telemetry is registered by services/registrySync.js once both
+        // pollers have run. (A startup backfill here used to register a
+        // router and its Cerbo as two trailers whenever their names differed
+        // by case or spacing.)
 
         // One-time rental backfill: open a rental for every trailer currently
         // deployed on a customer job site, seeded from the site's lifecycle dates

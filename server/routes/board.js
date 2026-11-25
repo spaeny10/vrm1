@@ -1,4 +1,5 @@
 import { buildTrailerBoard, buildSiteBoard, summarize } from '../services/board.js';
+import { getRoster } from '../services/roster.js';
 
 export function registerBoardRoutes(app) {
 
@@ -6,7 +7,9 @@ export function registerBoardRoutes(app) {
 app.get('/api/board/trailers', async (req, res) => {
     try {
         const rows = await buildTrailerBoard();
-        res.json({ success: true, trailers: rows, summary: summarize(rows) });
+        // issues: places where the records disagree and the roster had to guess
+        // warming: the server restarted and hasn't finished its first read of VRM and InControl
+        res.json({ success: true, trailers: rows, summary: summarize(rows), issues: getRoster().issues, warming: getRoster().warming });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }

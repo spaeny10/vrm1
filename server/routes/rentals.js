@@ -1,4 +1,4 @@
-import { getBillingAtHeadquarters, getBillingPastCalloff, getDeliveredNotBilling, getRateCards, getRental, getRentalEvents, getRentals, getTrailer, getTrailers, getUnbilledDeployedTrailers, getVolumeTiers, insertAuditLog, insertRental, insertRentalEvent, insertTrailer, updateRental, updateTrailer } from '../db.js';
+import { getBillingAtHeadquarters, getBillingPastCalloff, getDeliveredNotBilling, getRateCards, getRental, getRentalEvents, getRentals, getTrailer, getTrailers, getUnbilledDeployedTrailers, getVolumeTiers, insertAuditLog, insertRental, insertRentalEvent, insertTrailer, updateRental, updateTrailer, releaseTelemetryLink } from '../db.js';
 import { requireRole } from '../middleware/auth.js';
 import { TERM_DAYS, buildTierCounter, computeRollback, parseDateUTC } from '../pricing.js';
 import { RENTAL_TRANSITIONS, buildPricingContext, buildStatements, computeAccruedThisMonth, computeMtdEngine, priceRental } from '../services/billing.js';
@@ -17,6 +17,10 @@ app.get('/api/trailers', async (req, res) => {
 app.post('/api/trailers', requireRole('admin', 'technician'), async (req, res) => {
     try {
         if (!req.body.unit_number) return res.status(400).json({ success: false, error: 'unit_number is required' });
+        if (req.body.vrm_site_id != null) {
+            const heldBy = await releaseTelemetryLink(req.body.vrm_site_id);
+            if (heldBy) return res.status(409).json({ success: false, error: `That Cerbo or router is already linked to ${heldBy}.` });
+        }
         const created = await insertTrailer(req.body);
         const actor = req.user ? req.user.display_name : 'system';
         insertAuditLog('trailer', created.id, 'trailer_created', { unit_number: created.unit_number }, actor).catch(() => { });
@@ -29,7 +33,12 @@ app.post('/api/trailers', requireRole('admin', 'technician'), async (req, res) =
 
 app.put('/api/trailers/:id', requireRole('admin', 'technician'), async (req, res) => {
     try {
-        const updated = await updateTrailer(parseInt(req.params.id), req.body);
+        const id = parseInt(req.params.id);
+        if (req.body.vrm_site_id != null) {
+            const heldBy = await releaseTelemetryLink(req.body.vrm_site_id, id);
+            if (heldBy) return res.status(409).json({ success: false, error: `That Cerbo or router is already linked to ${heldBy}. Unlink it there first.` });
+        }
+        const updated = await updateTrailer(id, req.body);
         if (!updated) return res.status(404).json({ success: false, error: 'Trailer not found' });
         const actor = req.user ? req.user.display_name : 'system';
         insertAuditLog('trailer', updated.id, 'trailer_updated', { fields: Object.keys(req.body) }, actor).catch(() => { });

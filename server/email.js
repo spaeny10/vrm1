@@ -264,8 +264,8 @@ export async function sendDigestEmail(recipients, digestData) {
             <tr>
                 <td width="23%" style="padding:12px; background-color:#1a1d23; border-radius:6px; text-align:center;">
                     <div style="font-size:20px; font-weight:bold; color:#3498db;">${digestData.fleet_size || 0}</div>
-                    <div style="font-size:10px; color:#7f8c8d; margin-top:4px;">Fleet Size</div>
-                    <div style="font-size:9px; color:#5a6c7d; margin-top:2px;">${digestData.fleet_breakdown?.vrm || 0} VRM + ${digestData.fleet_breakdown?.ic2_only || 0} IC2</div>
+                    <div style="font-size:10px; color:#7f8c8d; margin-top:4px;">Trailers in service</div>
+                    <div style="font-size:9px; color:#5a6c7d; margin-top:2px;">${digestData.yard?.total || 0} more in the yard</div>
                 </td>
                 <td width="4"></td>
                 <td width="23%" style="padding:12px; background-color:#1a1d23; border-radius:6px; text-align:center;">
@@ -291,7 +291,7 @@ export async function sendDigestEmail(recipients, digestData) {
     // === CURRENT STATUS ===
     const currentSection = `
         <h2 style="margin:0 0 10px; color:#ecf0f1; font-size:16px;">🔋 Current Status</h2>
-        <p style="margin:0 0 12px; color:#7f8c8d; font-size:11px;">Right now — ${digestData.current?.online || 0}/${digestData.current?.total || 0} online · Avg SOC ${digestData.current?.avg_soc?.toFixed(1) || 0}%</p>`;
+        <p style="margin:0 0 12px; color:#7f8c8d; font-size:11px;">Right now — ${digestData.current?.online || 0} of ${digestData.current?.total || 0} in-service trailers reporting · average battery ${digestData.current?.avg_soc?.toFixed(0) || 0}%</p>`;
 
     // === NEEDS ATTENTION ===
     let needsAttentionSection = '';
@@ -299,39 +299,24 @@ export async function sendDigestEmail(recipients, digestData) {
     const watchItems = digestData.watch_items || [];
 
     if (criticalItems.length > 0 || watchItems.length > 0) {
-        let criticalRows = '';
-        if (criticalItems.length > 0) {
-            criticalRows = criticalItems.map(item => {
-                if (item.type === 'low_soc') {
-                    return `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${item.trailer}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#e74c3c; text-align:right; font-weight:bold;">SOC ${item.soc.toFixed(0)}%</td></tr>`;
-                } else if (item.type === 'alarm') {
-                    return `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${item.trailer}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#e74c3c; text-align:right;">${item.message}</td></tr>`;
-                }
-                return '';
-            }).join('');
-        }
-
-        let watchRows = '';
-        if (watchItems.length > 0) {
-            watchRows = watchItems.slice(0, 5).map(item => {
-                if (item.type === 'low_soc') {
-                    return `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${item.trailer}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#f39c12; text-align:right;">SOC ${item.soc.toFixed(0)}%</td></tr>`;
-                } else if (item.type === 'energy_deficit') {
-                    return `<tr><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1;">${item.trailer}</td><td style="padding:6px 12px; border-bottom:1px solid #3a3f4b; color:#f39c12; text-align:right;">${item.streak_days}d deficit</td></tr>`;
-                }
-                return '';
-            }).join('');
-        }
+        // Every item reads the same way: the trailer, where it is, and what is wrong
+        const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const row = (item, color) => {
+            const where = [item.site, item.customer].filter(Boolean).map(esc).join(' · ');
+            return `<tr><td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:#ecf0f1; white-space:nowrap; vertical-align:top;"><strong>${esc(item.trailer)}</strong>${where ? `<div style="font-size:11px; color:#7f8c8d;">${where}</div>` : ''}</td><td style="padding:8px 12px; border-bottom:1px solid #3a3f4b; color:${color}; text-align:right;">${esc(item.reason) || (item.type === 'offline' ? 'Offline' : '')}</td></tr>`;
+        };
+        const criticalRows = criticalItems.map(i => row(i, '#e74c3c')).join('');
+        const watchRows = watchItems.slice(0, 10).map(i => row(i, '#f39c12')).join('');
 
         needsAttentionSection = `
             <h2 style="margin:0 0 10px; color:#ecf0f1; font-size:16px;">🚨 Needs Attention Today</h2>
             ${criticalItems.length > 0 ? `
-                <h3 style="margin:0 0 8px; color:#e74c3c; font-size:13px;">Critical — Dispatch Now (${criticalItems.length})</h3>
+                <h3 style="margin:0 0 8px; color:#e74c3c; font-size:13px;">Offline or needs attention (${criticalItems.length})</h3>
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:16px;">
                     ${criticalRows}
                 </table>` : ''}
             ${watchItems.length > 0 ? `
-                <h3 style="margin:0 0 8px; color:#f39c12; font-size:13px;">Watch — Monitor Today (${watchItems.length})</h3>
+                <h3 style="margin:0 0 8px; color:#f39c12; font-size:13px;">Watch (${watchItems.length})</h3>
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1a1d23; border-radius:6px; overflow:hidden; margin-bottom:24px;">
                     ${watchRows}
                 </table>` : ''}`;

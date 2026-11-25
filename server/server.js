@@ -321,6 +321,9 @@ registerDigestRoutesRoutes(app);
 app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {
         res.sendFile(path.join(distPath, 'index.html'));
+    } else {
+        // An unknown API path must answer, or the caller waits forever
+        res.status(404).json({ success: false, error: 'Not found' });
     }
 });
 

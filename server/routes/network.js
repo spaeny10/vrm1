@@ -1,5 +1,7 @@
 import { getPepwaveDailyUsage, getPepwaveHistory } from '../db.js';
 import { dbAvailable, lastIc2Poll, offlineTimestamps, pepwaveCache } from '../state.js';
+import { rosterEntryForRouter } from '../services/roster.js';
+import { parseDeviceTime } from '../lib/util.js';
 
 export function registerNetworkRoutes(app) {
 
@@ -7,10 +9,19 @@ export function registerNetworkRoutes(app) {
 // Fleet network: Pepwave device data
 // ============================================================
 app.get('/api/fleet/network', (req, res) => {
-    const records = Array.from(pepwaveCache.values()).map(r => ({
-        ...r,
-        offline_since: offlineTimestamps.get(r.name) || null,
-    }));
+    const records = Array.from(pepwaveCache.values()).map(r => {
+        const owner = rosterEntryForRouter(r.id);
+        return {
+            ...r,
+            // When InControl last heard from it; our own "first seen offline" only as a fallback,
+            // because that resets to now whenever this server restarts
+            offline_since: r.online ? null : (parseDeviceTime(r.last_online) ?? offlineTimestamps.get(r.name) ?? null),
+            // The trailer this router belongs to. A router in the yard being off is not a problem.
+            unit: owner?.unit || r.name,
+            trailer_key: owner?.key || null,
+            in_service: owner ? (owner.in_service && !owner.hidden) : true,
+        };
+    });
     records.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     res.json({
         success: true,

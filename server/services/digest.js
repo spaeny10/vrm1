@@ -1,291 +1,126 @@
 import cron from 'node-cron';
-import {
-    snapshotCache, pepwaveCache, dailyEnergy, trailerJobSiteMap, dbAvailable,
-} from '../state.js';
+import { dbAvailable } from '../state.js';
 import { getPool, getUsers, getUpcomingMaintenance } from '../db.js';
 import { computeAlerts } from './alerts.js';
 import { sendDigestEmail, isEmailConfigured } from '../email.js';
-import { todayStr, hasVrmData } from '../lib/util.js';
+import { buildTrailerBoard, summarize } from './board.js';
+import { solarScoreConfig } from '../state.js';
 
-// --- Enhanced Digest ---
+// --- Morning digest ---
+// Built from the same board rows as the dashboard, so the email and the
+// screens always agree: in-service trailers only, one row per physical
+// trailer, health and wording decided in services/board.js.
 export async function buildDigestData() {
     const db = getPool();
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = yesterday.toISOString().slice(0, 10);
 
-    // Get HQ job sites and deployed trailers
-    const hqJobSiteIds = new Set();
-    let deployedTrailerCount = 0;
-    const trailerJobSites = new Map();
+    const rows = await buildTrailerBoard();
+    const summary = summarize(rows);
+    const fleet = rows.filter(r => r.in_service);
+    const item = (r) => ({
+        type: r.health, trailer: r.unit, reason: r.diagnosis || '',
+        site: r.site?.name || null, customer: r.customer?.name || null, soc: r.soc, last_seen: r.last_seen,
+    });
+
+    // Dispatch now: dark or faulted. Watch: trending the wrong way, or can't be monitored.
+    const criticalItems = fleet.filter(r => r.health === 'offline' || r.health === 'attention').map(item);
+    const watchItems = fleet.filter(r => r.health === 'watch' || r.health === 'unknown').map(item);
+
+    const live = fleet.filter(r => r.soc != null);
+    const reporting = fleet.filter(r => r.soc != null || (!r.has_cerbo && r.online)).length;
+    const avgSoc = live.length ? live.reduce((s, r) => s + r.soc, 0) / live.length : 0;
+    const lowSoc = live.filter(r => r.soc < 50).sort((a, b) => a.soc - b.soc).slice(0, 10)
+        .map(r => ({ site_name: r.unit, battery_soc: r.soc }));
+
+    // Yesterday's history, limited to the trailers that are in service today
+    const siteIds = fleet.map(r => r.site_id).filter(id => id > 0);
+    const routerNames = fleet.map(r => r.router_name).filter(Boolean);
+    const yesterdayData = { avg_eod_soc: 0, total_yield_kwh: 0, total_data_gb: 0, trailers_with_data: 0 };
+    const performers = [];
+    const networkSummary = { avg_signal_dbm: 0, total_data_gb: 0, high_usage: [], poor_signal: [] };
 
     if (dbAvailable) {
         try {
-            const hqResult = await db.query(`SELECT id FROM job_sites WHERE is_headquarters = true`);
-            hqResult.rows.forEach(row => hqJobSiteIds.add(row.id));
-
-            const deployedResult = await db.query(`
-                SELECT COUNT(DISTINCT ta.site_id)
-                FROM trailer_assignments ta
-                LEFT JOIN job_sites js ON ta.job_site_id = js.id
-                WHERE ta.job_site_id IS NOT NULL
-                AND (js.is_headquarters IS NULL OR js.is_headquarters = false)
-            `);
-            deployedTrailerCount = parseInt(deployedResult.rows[0].count) || 0;
-
-            const assignResult = await db.query(`SELECT site_id, job_site_id FROM trailer_assignments WHERE job_site_id IS NOT NULL`);
-            assignResult.rows.forEach(row => trailerJobSites.set(row.site_id, row.job_site_id));
-        } catch (err) {
-            console.error('  Failed to fetch job site data:', err.message);
-        }
-    }
-
-    // Count IC2-only trailers (have Pepwave but no VRM data)
-    let ic2OnlyCount = 0;
-    const vrmNames = new Set([...snapshotCache.values()].map(s => s.site_name));
-    for (const [deviceName, pw] of pepwaveCache) {
-        if (!vrmNames.has(deviceName)) {
-            const siteId = pw.id != null ? -pw.id : null;
-            const jobSiteId = siteId != null ? trailerJobSites.get(siteId) : null;
-            if (!jobSiteId || !hqJobSiteIds.has(jobSiteId)) {
-                ic2OnlyCount++;
-            }
-        }
-    }
-
-    const vrmTrailerCount = deployedTrailerCount - ic2OnlyCount;
-
-    // === YESTERDAY'S COMPLETE METRICS ===
-    let yesterdayData = {
-        avg_eod_soc: 0,
-        total_yield_kwh: 0,
-        total_data_gb: 0,
-        trailers_with_data: 0
-    };
-
-    if (dbAvailable) {
-        try {
-            // Yesterday's EOD SOC and yield from daily_energy_summary
-            const energyResult = await db.query(`
-                SELECT
-                    AVG(battery_soc_eod) as avg_soc,
-                    SUM(yield_wh) / 1000.0 as total_yield_kwh,
-                    COUNT(*) as trailer_count
+            const energy = await db.query(`
+                SELECT AVG(battery_soc_eod) AS avg_soc, SUM(yield_wh) / 1000.0 AS total_yield_kwh, COUNT(*) AS trailer_count
                 FROM daily_energy_summary
-                WHERE date = $1
-            `, [yesterdayStr]);
-
-            if (energyResult.rows[0]) {
-                yesterdayData.avg_eod_soc = parseFloat(energyResult.rows[0].avg_soc) || 0;
-                yesterdayData.total_yield_kwh = parseFloat(energyResult.rows[0].total_yield_kwh) || 0;
-                yesterdayData.trailers_with_data = parseInt(energyResult.rows[0].trailer_count) || 0;
+                WHERE date = $1::date AND site_id = ANY($2::int[])
+            `, [yesterdayStr, siteIds]);
+            if (energy.rows[0]) {
+                yesterdayData.avg_eod_soc = parseFloat(energy.rows[0].avg_soc) || 0;
+                yesterdayData.total_yield_kwh = parseFloat(energy.rows[0].total_yield_kwh) || 0;
+                yesterdayData.trailers_with_data = parseInt(energy.rows[0].trailer_count) || 0;
             }
 
-            // Yesterday's network data usage
-            const networkResult = await db.query(`
-                SELECT SUM(day_mb) / 1024.0 as total_gb FROM (
-                    SELECT MAX(usage_mb) AS day_mb
-                    FROM pepwave_snapshots
-                    WHERE timestamp >= extract(epoch from $1::date) * 1000
-                    AND timestamp < extract(epoch from ($1::date + interval '1 day')) * 1000
-                    GROUP BY device_name
-                ) per_device
-            `, [yesterdayStr]);
+            const perf = await db.query(`
+                SELECT site_name, yield_wh / 1000.0 AS yield_kwh, expected_yield_wh / 1000.0 AS expected_kwh,
+                       yield_wh::float / expected_yield_wh * 100 AS percent
+                FROM daily_energy_summary
+                WHERE date = $1::date AND expected_yield_wh > 0 AND site_id = ANY($2::int[])
+                  -- a day that ended with a full battery was throttled, not underperforming
+                  AND (battery_soc_eod IS NULL OR battery_soc_eod < $3)
+                ORDER BY percent DESC
+            `, [yesterdayStr, siteIds, solarScoreConfig.throttle_soc_threshold]);
+            performers.push(...perf.rows.map(r => ({
+                site_name: r.site_name,
+                yield_kwh: parseFloat(r.yield_kwh) || 0,
+                expected_kwh: parseFloat(r.expected_kwh) || 0,
+                percent: parseFloat(r.percent) || 0,
+            })));
 
-            if (networkResult.rows[0]) {
-                yesterdayData.total_data_gb = parseFloat(networkResult.rows[0].total_gb) || 0;
-            }
+            // usage_mb is a running total for the day, so a device's day is its maximum
+            const net = await db.query(`
+                SELECT device_name, MAX(usage_mb) / 1024.0 AS total_gb, AVG(rsrp) AS avg_signal
+                FROM pepwave_snapshots
+                WHERE timestamp >= extract(epoch from $1::date) * 1000
+                  AND timestamp < extract(epoch from ($1::date + interval '1 day')) * 1000
+                  AND device_name = ANY($2::text[])
+                GROUP BY device_name
+            `, [yesterdayStr, routerNames]);
+            const withSignal = net.rows.filter(r => r.avg_signal != null);
+            networkSummary.total_data_gb = net.rows.reduce((s, r) => s + (parseFloat(r.total_gb) || 0), 0);
+            networkSummary.avg_signal_dbm = withSignal.length
+                ? withSignal.reduce((s, r) => s + parseFloat(r.avg_signal), 0) / withSignal.length : 0;
+            networkSummary.high_usage = net.rows
+                .map(r => ({ device: r.device_name, usage_gb: parseFloat(r.total_gb) || 0 }))
+                .filter(r => r.usage_gb > 0.5).sort((a, b) => b.usage_gb - a.usage_gb).slice(0, 5);
+            yesterdayData.total_data_gb = networkSummary.total_data_gb;
         } catch (err) {
             console.error('  Failed to fetch yesterday data:', err.message);
         }
     }
 
-    // === CURRENT STATUS (for actionable items) ===
-    const currentTrailers = [];
-    const currentLowSoc = [];
-    const currentCritical = [];
-    const currentWatch = [];
-
-    for (const [siteId, snapshot] of snapshotCache) {
-        const jobSiteId = trailerJobSites.get(siteId);
-        if (jobSiteId && hqJobSiteIds.has(jobSiteId)) continue;
-        if (!hasVrmData(snapshot)) continue;
-
-        currentTrailers.push({
-            site_id: siteId,
-            site_name: snapshot.site_name,
-            battery_soc: snapshot.battery_soc,
-            solar_yield_today: snapshot.solar_yield_today,
-            alarm_reason: snapshot.alarm_reason,
-            error_code: snapshot.error_code
-        });
-
-        // Critical items (dispatch now)
-        if (snapshot.battery_soc != null && snapshot.battery_soc < 20) {
-            currentCritical.push({
-                type: 'low_soc',
-                trailer: snapshot.site_name,
-                soc: snapshot.battery_soc,
-                severity: 'critical'
-            });
-        }
-        if (snapshot.alarm_reason || snapshot.error_code) {
-            currentCritical.push({
-                type: 'alarm',
-                trailer: snapshot.site_name,
-                message: snapshot.alarm_reason || snapshot.error_code,
-                severity: 'critical'
-            });
-        }
-
-        // Watch items
-        if (snapshot.battery_soc != null && snapshot.battery_soc >= 20 && snapshot.battery_soc < 40) {
-            currentWatch.push({
-                type: 'low_soc',
-                trailer: snapshot.site_name,
-                soc: snapshot.battery_soc
-            });
-        }
-
-        if (snapshot.battery_soc != null && snapshot.battery_soc < 50) {
-            currentLowSoc.push({
-                site_name: snapshot.site_name,
-                battery_soc: snapshot.battery_soc
-            });
-        }
-    }
-
-    const currentOnlineCount = currentTrailers.filter(t => t.battery_soc != null).length;
-    const currentAvgSoc = currentOnlineCount > 0
-        ? currentTrailers.reduce((s, t) => s + (t.battery_soc || 0), 0) / currentOnlineCount : 0;
-
-    // Add energy deficit alerts to watch list
-    // Note: streak_days only counts REAL deficits (throttled deficits excluded by computeAlerts)
-    const alerts = computeAlerts();
-    alerts.filter(a => a.streak_days >= 5).forEach(a => {
-        currentWatch.push({
-            type: 'energy_deficit',
-            trailer: a.site_name,
-            streak_days: a.streak_days,
-            severity: a.severity,
-            has_throttled: a.deficit_days.some(d => d.throttled),  // NEW: transparency
-        });
-    });
-
-    currentLowSoc.sort((a, b) => a.battery_soc - b.battery_soc);
-
-    // === TOP/BOTTOM PERFORMERS (Yesterday) ===
-    const performers = [];
-    if (dbAvailable) {
-        try {
-            const perfResult = await db.query(`
-                SELECT
-                    site_name,
-                    yield_wh / 1000.0 as yield_kwh,
-                    expected_yield_wh / 1000.0 as expected_kwh,
-                    CASE
-                        WHEN expected_yield_wh > 0 THEN (yield_wh::float / expected_yield_wh * 100)
-                        ELSE 0
-                    END as percent
-                FROM daily_energy_summary
-                WHERE date = $1
-                AND expected_yield_wh > 0
-                ORDER BY percent DESC
-            `, [yesterdayStr]);
-
-            performers.push(...perfResult.rows.map(r => ({
-                site_name: r.site_name,
-                yield_kwh: parseFloat(r.yield_kwh) || 0,
-                expected_kwh: parseFloat(r.expected_kwh) || 0,
-                percent: parseFloat(r.percent) || 0
-            })));
-        } catch (err) {
-            console.error('  Failed to fetch performance data:', err.message);
-        }
-    }
-
-    const topPerformers = performers.filter(p => p.percent >= 100).slice(0, 3);
-    const underperformers = performers.filter(p => p.percent < 70).slice(0, 3);
-
-    // === NETWORK SUMMARY (Yesterday) ===
-    let networkSummary = {
-        avg_signal_dbm: 0,
-        total_data_gb: yesterdayData.total_data_gb,
-        high_usage: [],
-        poor_signal: []
-    };
-
-    if (dbAvailable) {
-        try {
-            const netResult = await db.query(`
-                SELECT
-                    AVG(rsrp) as avg_signal,
-                    device_name,
-                    MAX(usage_mb) / 1024.0 as total_gb
-                FROM pepwave_snapshots
-                WHERE timestamp >= extract(epoch from $1::date) * 1000
-                AND timestamp < extract(epoch from ($1::date + interval '1 day')) * 1000
-                GROUP BY device_name
-                HAVING MAX(usage_mb) > 500
-                ORDER BY total_gb DESC
-                LIMIT 5
-            `, [yesterdayStr]);
-
-            networkSummary.high_usage = netResult.rows.map(r => ({
-                device: r.device_name,
-                usage_gb: parseFloat(r.total_gb) || 0
-            }));
-
-            const signalResult = await db.query(`
-                SELECT AVG(rsrp) as avg_signal
-                FROM pepwave_snapshots
-                WHERE timestamp >= extract(epoch from $1::date) * 1000
-                AND timestamp < extract(epoch from ($1::date + interval '1 day')) * 1000
-            `, [yesterdayStr]);
-
-            if (signalResult.rows[0]) {
-                networkSummary.avg_signal_dbm = parseFloat(signalResult.rows[0].avg_signal) || 0;
-            }
-        } catch (err) {
-            console.error('  Failed to fetch network summary:', err.message);
-        }
-    }
-
     return {
-        // Fleet summary
-        fleet_size: deployedTrailerCount || currentTrailers.length,
-        fleet_breakdown: { vrm: vrmTrailerCount, ic2_only: ic2OnlyCount },
+        // The fleet = trailers in service (on rent or at a customer site)
+        fleet_size: summary.total,
+        fleet_breakdown: {
+            vrm: fleet.filter(r => r.has_cerbo).length,
+            ic2_only: fleet.filter(r => !r.has_cerbo && r.has_router).length,
+        },
+        yard: { total: summary.inactive, ready: summary.yard_ready },
+        summary,
 
-        // Yesterday's complete metrics
         yesterday: {
             avg_eod_soc: yesterdayData.avg_eod_soc,
             total_yield_kwh: yesterdayData.total_yield_kwh,
             total_data_gb: yesterdayData.total_data_gb,
-            trailers_reporting: yesterdayData.trailers_with_data
+            trailers_reporting: yesterdayData.trailers_with_data,
         },
 
-        // Current status
-        current: {
-            online: currentOnlineCount,
-            total: deployedTrailerCount || currentTrailers.length,
-            avg_soc: currentAvgSoc,
-            low_soc_trailers: currentLowSoc.slice(0, 10)
-        },
+        current: { online: reporting, total: summary.total, avg_soc: avgSoc, low_soc_trailers: lowSoc },
 
-        // Needs attention
-        critical_items: currentCritical,
-        watch_items: currentWatch.slice(0, 10),
+        critical_items: criticalItems,
+        watch_items: watchItems,
 
-        // Performance
-        top_performers: topPerformers,
-        underperformers: underperformers,
+        top_performers: performers.filter(p => p.percent >= 100).slice(0, 3),
+        underperformers: performers.filter(p => p.percent < 70).slice(-3).reverse(),
 
-        // Network
         network: networkSummary,
 
-        // Alerts (for compatibility)
-        active_alerts: alerts,
-        trailers_below_50_soc: currentLowSoc.slice(0, 10)
+        active_alerts: computeAlerts(),
+        trailers_below_50_soc: lowSoc,
     };
 }
 
