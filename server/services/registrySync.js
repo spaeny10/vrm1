@@ -38,7 +38,15 @@ export async function reconcileRegistry() {
     if (!AUTO_REPAIR || !telemetryComplete()) { await refreshRoster(); return null; }
 
     const roster = await refreshRoster();
-    const repairs = [...roster.repairs].sort((a, b) => ORDER[a.type] - ORDER[b.type]);
+    let repairs = [...roster.repairs].sort((a, b) => ORDER[a.type] - ORDER[b.type]);
+    // Sanity check: duplicates are rare. If a pass wants to remove a large share
+    // of the registry, something upstream is wrong, so remove nothing.
+    const registrySize = roster.units.reduce((n, u) => n + (u.trailer ? 1 : 0) + u.duplicates.length, 0);
+    const removals = repairs.filter(r => r.type === 'remove_duplicate').length;
+    if (removals > Math.max(10, registrySize * 0.2)) {
+        console.warn(`  Registry: ${removals} of ${registrySize} rows look like duplicates, which is implausible. Skipping removals.`);
+        repairs = repairs.filter(r => r.type !== 'remove_duplicate');
+    }
     let applied = 0;
     for (const r of repairs) {
         try {
