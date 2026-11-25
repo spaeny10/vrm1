@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams, Navigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { useAuth } from '../components/AuthProvider'
 import { useWorkspace } from '../components/WorkspaceProvider'
@@ -48,11 +48,17 @@ export default function TrailerDetail() {
     const { data: systemData } = useApiPolling(systemFn, 300000)
     const { data: netData } = useApiPolling(netFn, 60000)
 
-    const row = useMemo(() => (board?.trailers || []).find(t => String(t.site_id) === String(id)) || null, [board, id])
+    // Find the trailer by any id it has been known by (a replaced Cerbo, its router's old id)
+    const row = useMemo(() => {
+        const list = board?.trailers || []
+        return list.find(t => String(t.site_id) === String(id)) || list.find(t => (t.site_ids || []).some(x => String(x) === String(id))) || null
+    }, [board, id])
     const systemName = systemData?.records?.name || null
     const device = useMemo(() => {
         const list = netData?.records || []
-        return list.find(d => (row?.unit && d.name === row.unit) || (systemName && d.name === systemName) || (!isVrm && d.id === -siteId)) || null
+        // The roster knows which router is this trailer's, even when the names differ
+        return (row?.router_name && list.find(d => d.name === row.router_name))
+            || list.find(d => (row?.unit && d.name === row.unit) || (systemName && d.name === systemName) || (!isVrm && d.id === -siteId)) || null
     }, [netData, row, systemName, isVrm, siteId])
 
     const d = useMemo(() => parseDiagnostics(diagData?.records || []), [diagData])
@@ -85,6 +91,8 @@ export default function TrailerDetail() {
     const setTab = (k) => setParams(k === 'overview' ? {} : { tab: k }, { replace: true })
 
     if (boardLoading && !board) return <Loading label="Loading trailer…" />
+    // An old id for this trailer: carry on at the one it reports under now
+    if (row && row.site_id != null && String(row.site_id) !== String(id)) return <Navigate to={`/trailer/${row.site_id}`} replace />
     if (board && !row && !device && !(diagData?.records || []).length) {
         return (
             <Page title="Trailer not found" crumbs={[{ label: 'Trailers', to: '/trailers' }, { label: id }]}>
@@ -132,7 +140,15 @@ export default function TrailerDetail() {
                 {canEdit && row?.trailer_id && <button className="btn ghost" onClick={() => setEditAsset(true)}><Icon name="edit" />Edit asset</button>}
             </>}
         >
-            <FreshnessCallout isVrm={isVrm} stale={stale} lastData={lastData} routerOnline={routerOnline} hasDevice={!!device} />
+            {row && !row.in_service
+                ? <div className="callout">
+                    <Icon name="pin" size={18} />
+                    <div>
+                        <b>Not in service.</b> {row.placement === 'shop' ? 'This unit is out of service' : row.site?.is_hq ? `This unit is at ${row.site.name}` : 'This unit has no customer site or rental'}, so it isn't counted in fleet health and doesn't raise alerts.
+                        {stale && lastData ? ` Readings below are the last received, ${fmtAgo(lastData)}.` : ''}
+                    </div>
+                </div>
+                : <FreshnessCallout isVrm={isVrm} stale={stale} lastData={lastData} routerOnline={routerOnline} hasDevice={!!device} />}
 
             {isVrm ? (
                 <Stats>

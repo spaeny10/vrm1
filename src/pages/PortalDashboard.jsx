@@ -19,7 +19,8 @@ export default function PortalDashboard() {
     const fetchFn = useCallback(() => fetchPortalSites(), [])
     const { data, loading } = useApiPolling(fetchFn, 60000)
     const sites = data?.sites || []
-    const trailers = sites.reduce((n, s) => n + s.trailer_count, 0)
+    // Compare against units we have live data for; one with no telemetry isn't "offline"
+    const trailers = sites.reduce((n, s) => n + (s.trailers_monitored ?? s.trailer_count), 0)
     const online = sites.reduce((n, s) => n + s.trailers_online, 0)
     const socs = sites.filter(s => s.avg_soc != null)
     const avgSoc = socs.length ? socs.reduce((a, s) => a + s.avg_soc, 0) / socs.length : null

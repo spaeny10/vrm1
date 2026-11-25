@@ -38,9 +38,13 @@ const GUIDES = {
 }
 
 const TERMS = [
-    ['Needs attention', 'Critical battery (under 20%), battery over 45°C, an alarm, a 5+ day energy deficit, or a battery projected to go critical within 3 days.'],
-    ['Watch', 'Low battery (20–40%), a warm battery, a 2–4 day energy deficit, or a steady decline.'],
-    ['Offline', 'Neither the router nor the battery system has reported recently.'],
+    ['In service', 'A trailer that is on rent or sitting at a customer site. Fleet health, alerts and the morning digest only cover trailers in service.'],
+    ['Not in service', 'A trailer in the yard, in the shop (named BAD, RMA, spare, tester or R&D) or with no site and no rental. Being powered down there is expected, so it never raises an alert. The Fleet workspace shows whether each one is ready to deploy.'],
+    ['Needs attention', 'Critical battery (under 20%), battery over 45°C, an alarm, a battery projected to go critical within 3 days, a 5+ day energy deficit that is draining the battery, or a Cerbo that has gone silent while the router is still online.'],
+    ['Watch', 'Low battery (20–40%), a warm battery, a 2–4 day energy deficit, a longer deficit while the battery is still above 80%, or a steady decline.'],
+    ['Offline', 'Neither the router nor the Cerbo has reported recently.'],
+    ['Not monitored', 'A trailer in service with no Cerbo or router linked, so the app can’t see it. Link its telemetry from the Trailers page.'],
+    ['Records to fix', 'Places where the trailer registry, VRM and InControl disagree, such as two entries for one trailer or a replaced Cerbo still listed in VRM. The app shows one row per physical trailer and lists what it assumed, so you can make the records right.'],
     ['Energy deficit', 'A day where the trailer used more energy than the sun provided. Days where the battery was full and the charger deliberately throttled solar don’t count. That’s healthy.'],
     ['Solar score', 'Yesterday’s solar output compared to what the weather at that location should have produced.'],
     ['Health grade', 'A–F blend of battery, solar performance, autonomy, network, and maintenance history.'],

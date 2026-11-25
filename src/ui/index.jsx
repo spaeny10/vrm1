@@ -140,7 +140,9 @@ export function Soc({ value }) {
     )
 }
 
-export function Signal({ bars, online }) {
+// hasRouter === false means there is no router on record, which is not the same as one being offline
+export function Signal({ bars, online, hasRouter }) {
+    if (hasRouter === false) return <span className="faint">no router</span>
     if (!online) return <span className="faint">offline</span>
     if (bars == null) return <span className="faint">—</span>
     return (

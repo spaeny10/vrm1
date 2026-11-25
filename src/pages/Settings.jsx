@@ -681,6 +681,8 @@ function NotificationsTab() {
 const signalWord = (dbm) => (dbm == null || dbm === 0) ? null : dbm >= -90 ? 'good' : dbm >= -105 ? 'fair' : 'poor'
 
 function describeItem(item) {
+    // The digest carries the same diagnosis and location the dashboard shows
+    if (item.reason != null) return [item.reason || HEALTH[item.type]?.label, [item.site, item.customer].filter(Boolean).join(' · ')].filter(Boolean).join(' — ')
     if (item.type === 'low_soc') return `${item.severity === 'critical' ? 'Battery critical' : 'Battery low'}: ${fmtPct(item.soc)}`
     if (item.type === 'alarm') return `Alarm: ${item.message}`
     if (item.type === 'energy_deficit') return `Using more energy than it makes, ${plural(item.streak_days, 'day')} running${item.has_throttled ? ' (some days throttled)' : ''}`
@@ -718,8 +720,8 @@ function DigestPreview() {
             {error ? <div className="callout crit">{error}</div> : !d ? <Loading /> : (
                 <div className="stack">
                     <Stats>
-                        <Stat label="Deployed trailers" value={d.fleet_size ?? '—'}
-                            hint={d.fleet_breakdown ? `${d.fleet_breakdown.vrm} with Victron · ${d.fleet_breakdown.ic2_only} router-only` : null} />
+                        <Stat label="Trailers in service" value={d.fleet_size ?? '—'}
+                            hint={d.yard ? `${d.yard.total} more in the yard` : null} />
                         <Stat label="Reporting now" value={cur.online ?? '—'} unit={cur.total != null ? `/ ${cur.total}` : null} />
                         <Stat label="Average battery now" value={cur.online ? fmtPct(cur.avg_soc) : '—'} />
                         <Stat label="Solar yesterday" value={reported ? fmtNum(y.total_yield_kwh, 1) : '—'} unit={reported ? 'kWh' : null}
@@ -727,7 +729,7 @@ function DigestPreview() {
                     </Stats>
 
                     <div className="grid-2">
-                        <DigestList title="Dispatch now" tone="crit" items={d.critical_items || []} empty="Nothing critical." />
+                        <DigestList title="Offline or needs attention" tone="crit" items={d.critical_items || []} empty="Nothing critical." />
                         <DigestList title="Watch" tone="warn" items={d.watch_items || []} empty="Nothing on the watch list." />
                     </div>
 

@@ -38,7 +38,7 @@ export default function PortalSiteDetail() {
 
     const columns = [
         { key: 'unit', label: 'Unit', render: t => <span className="primary">{t.site_name}</span> },
-        { key: 'status', label: 'Status', render: t => t.online ? <Badge tone="ok" dot>Online</Badge> : <Badge tone="off" dot>Offline</Badge> },
+        { key: 'status', label: 'Status', render: t => t.online ? <Badge tone="ok" dot>Online</Badge> : t.monitored === false ? <Badge tone="plain">No live data</Badge> : <Badge tone="off" dot>Offline</Badge> },
         { key: 'soc', label: 'Battery', render: t => <Soc value={t.battery_soc} /> },
         { key: 'solar', label: 'Solar now', align: 'r', render: t => <span className="num">{fmtWatts(t.solar_watts)}</span> },
         { key: 'yield', label: 'Solar today', align: 'r', render: t => <span className="num">{fmtKwh(t.solar_yield_today)}</span> },
@@ -48,7 +48,7 @@ export default function PortalSiteDetail() {
         <Page title={site.name} sub={site.address} crumbs={[{ label: 'My sites', to: '/' }, { label: site.name }]}>
             <Stats>
                 <Stat label="Units" value={site.trailer_count} />
-                <Stat label="Online" value={`${site.trailers_online} / ${site.trailer_count}`} dot={site.trailers_online < site.trailer_count ? 'warn' : 'ok'} />
+                <Stat label="Online" value={`${site.trailers_online} / ${site.trailers_monitored ?? site.trailer_count}`} dot={site.trailers_online < (site.trailers_monitored ?? site.trailer_count) ? 'warn' : 'ok'} />
                 <Stat label="Average battery" value={site.avg_soc != null ? `${site.avg_soc}%` : '—'} />
             </Stats>
             <div className="grid-main">

@@ -45,7 +45,9 @@ export default function FleetHome() {
 
     const kpi = useMemo(() => ({
         onRent: rows.filter(r => r.rental && ['billing', 'called_off', 'delivered'].includes(r.rental.status) && !r.rental.picked_up_at).length,
-        available: rows.filter(r => r.asset_status === 'available').length,
+        // Ready = in the yard and reporting normally, not merely marked "available"
+        ready: rows.filter(r => !r.in_service && r.yard?.ready).length,
+        notReady: rows.filter(r => !r.in_service && !r.yard?.ready).length,
         movesDue: moves.deliveries.length + moves.pickups.length,
     }), [rows, moves])
 
@@ -67,11 +69,15 @@ export default function FleetHome() {
 
     return (
         <Page title="Fleet operations" sub="Moves, decisions, and site visits for today">
+            {board?.warming && (
+                <div className="callout">The server just restarted and is still reading VRM and InControl. The numbers settle within a minute or two.</div>
+            )}
             <Stats>
                 <Stat label="On rent" value={board ? kpi.onRent : '—'} hint="Delivered to customer sites" />
-                <Stat label="Available" value={board ? kpi.available : '—'} hint="Ready to deploy" dot="ok" />
+                <Stat label="Ready to deploy" value={board ? kpi.ready : '—'} dot="ok" onClick={() => navigate('/trailers?status=ready')}
+                    hint={kpi.notReady ? `${kpi.notReady} more in the yard not ready` : 'In the yard, reporting normally'} />
                 <Stat label="Moves due" value={rentalsData ? kpi.movesDue : '—'} hint={`${moves.deliveries.length} deliver · ${moves.pickups.length} pick up`} tone={kpi.movesDue ? 'warn' : null} />
-                <Stat label="Need a site visit" value={board ? siteVisits.length : '—'} tone={siteVisits.length ? 'crit' : null} onClick={() => navigate('/trailers?health=attention')} />
+                <Stat label="Need a site visit" value={board ? siteVisits.length : '—'} tone={siteVisits.length ? 'crit' : null} onClick={() => navigate('/trailers?status=issues')} />
             </Stats>
 
             <Card title="Moves" meta={rentalsData ? `${moves.deliveries.length + moves.pickups.length + moves.transit.length} open` : null} flush>

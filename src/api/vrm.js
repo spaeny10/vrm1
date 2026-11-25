@@ -530,10 +530,6 @@ export async function fetchAlertHistory(days = 30) {
     return apiFetch(`${API_BASE}/alerts/history?days=${days}`);
 }
 
-export async function fetchFleetDashboard() {
-    return apiFetch(`${API_BASE}/fleet/dashboard`);
-}
-
 export async function fetchBatteryHealth(siteId, days = 30) {
     return apiFetch(`${API_BASE}/analytics/trailer/${siteId}/battery-health?days=${days}`);
 }
@@ -585,10 +581,6 @@ export async function unacknowledgeAction(key) {
 
 export async function fetchHealthGrades() {
     return apiFetch(`${API_BASE}/fleet/health-grades`);
-}
-
-export async function fetchTechStatus() {
-    return apiFetch(`${API_BASE}/fleet/tech-status`);
 }
 
 // ============================================================

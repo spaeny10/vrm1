@@ -35,10 +35,10 @@ export default function InsightsPage() {
     const netFn = useCallback(() => fetchFleetNetwork(), [])
     const netQ = useApiPolling(netFn, 60000)
     const alertCount = alertsQ.data?.alerts?.length || 0
-    const offlineCount = (netQ.data?.records || []).filter(d => !d.online).length
+    const offlineCount = (netQ.data?.records || []).filter(d => !d.online && d.in_service !== false).length
 
     return (
-        <Page title="Insights" sub="Fleet-wide energy balance, performance trends and network health">
+        <Page title="Insights" sub="Energy balance, performance trends and network health for trailers in service">
             <div style={{ minWidth: 0 }}>
                 <Tabs value={tab} onChange={setTab} tabs={[
                     { key: 'energy', label: 'Energy', count: alertCount || null },
@@ -90,7 +90,7 @@ function EnergyTab({ alertsQ, theme }) {
     const { data: hist, loading: histLoading } = useApiPolling(histFn, 120000)
     const [siteId, setSiteId] = useState('all')
 
-    const records = useMemo(() => energy?.records || [], [energy])
+    const records = useMemo(() => (energy?.records || []).filter(r => r.in_service !== false), [energy])
     const alerts = alertsQ.data?.alerts || []
     const history = hist?.alerts || []
 
@@ -258,7 +258,7 @@ function TrendsTab({ theme }) {
 
     const daily = useMemo(() => sumQ.data?.daily || [], [sumQ.data])
     const rankings = useMemo(() => (rankQ.data?.rankings || []).map((r, i) => ({ ...r, rank: i + 1 })), [rankQ.data])
-    const intel = useMemo(() => intelQ.data?.trailers || [], [intelQ.data])
+    const intel = useMemo(() => (intelQ.data?.trailers || []).filter(t => t.in_service !== false), [intelQ.data])
     const fleet = intelQ.data?.fleet
 
     // A full battery throttles the charger, so a low score there is expected, not a panel problem
@@ -448,7 +448,7 @@ function NetworkTab({ netQ }) {
     const [selected, setSelected] = useState(null)
 
     const rows = useMemo(() => {
-        const byUnit = new Map((board?.trailers || []).map(t => [t.unit, t]))
+        const byKey = new Map((board?.trailers || []).map(t => [t.key, t]))
         const list = (netQ.data?.records || []).map(d => {
             const rsrp = d.cellular?.signal?.rsrp ?? null
             const bars = d.cellular?.signal_bar ?? null
@@ -456,25 +456,29 @@ function NetworkTab({ netQ }) {
                 ...d, rsrp, bars,
                 carrier: d.cellular?.carrier || null,
                 tech: d.cellular?.technology || null,
-                trailer: byUnit.get(d.name) || null,
+                trailer: byKey.get(d.trailer_key) || null,
+                yard: d.in_service === false,
                 weak: !!d.online && ((bars != null && bars <= 1) || (rsrp != null && rsrp < -105)),
             }
         })
-        // Exceptions first: offline, then weak signal, then by name
-        const rank = r => !r.online ? 0 : r.weak ? 1 : 2
+        // Exceptions first: offline, then weak signal, then by name; routers in the yard last
+        const rank = r => r.yard ? 3 : !r.online ? 0 : r.weak ? 1 : 2
         return list.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { numeric: true }))
     }, [netQ.data, board])
 
-    const online = rows.filter(r => r.online)
-    const offline = rows.filter(r => !r.online)
-    const weak = rows.filter(r => r.weak)
-    const totalMb = rows.reduce((a, r) => a + (Number(r.usage_mb) || 0), 0)
-    const topUsage = [...rows].sort((a, b) => (b.usage_mb || 0) - (a.usage_mb || 0)).slice(0, 8)
+    // Counts describe routers on trailers in service; a router in the yard being off is expected
+    const svc = rows.filter(r => !r.yard)
+    const yardRows = rows.filter(r => r.yard)
+    const online = svc.filter(r => r.online)
+    const offline = svc.filter(r => !r.online)
+    const weak = svc.filter(r => r.weak)
+    const totalMb = svc.reduce((a, r) => a + (Number(r.usage_mb) || 0), 0)
+    const topUsage = [...svc].sort((a, b) => (b.usage_mb || 0) - (a.usage_mb || 0)).slice(0, 8)
     const maxUsage = topUsage[0]?.usage_mb || 1
 
     const carriers = useMemo(() => {
         const m = new Map()
-        for (const r of rows) {
+        for (const r of svc) {
             const k = r.carrier || 'Unknown'
             const e = m.get(k) || { name: k, total: 0, online: 0, rsrpSum: 0, rsrpN: 0 }
             e.total++
@@ -483,9 +487,11 @@ function NetworkTab({ netQ }) {
             m.set(k, e)
         }
         return [...m.values()].sort((a, b) => b.total - a.total)
-    }, [rows])
+    }, [rows])   // svc is derived from rows
 
     const filtered = rows.filter(r => {
+        if (filter === 'yard') { if (!r.yard) return false }
+        else if (filter !== 'all' && r.yard) return false
         if (filter === 'online' && !r.online) return false
         if (filter === 'offline' && r.online) return false
         if (filter === 'weak' && !r.weak) return false
@@ -501,7 +507,7 @@ function NetworkTab({ netQ }) {
     }
 
     const columns = [
-        { key: 'name', label: 'Router', sort: r => r.name, render: r => <div><span className="primary">{r.name}</span><div className="sub">{r.trailer?.site?.name || 'Unassigned'}</div></div> },
+        { key: 'name', label: 'Router', sort: r => r.name, render: r => <div><span className="primary">{r.name}</span><div className="sub">{r.trailer?.site?.name || 'No site'}{r.yard ? ' · not in service' : ''}</div></div> },
         {
             key: 'status', label: 'Status', sort: r => (r.online ? 1 : 0), render: r => r.online ? <Badge tone="ok" dot>Online</Badge>
                 : <div><Badge tone="off" dot>Offline</Badge>{r.offline_since && <div className="sub">since {fmtAgo(r.offline_since)}</div>}</div>,
@@ -526,10 +532,10 @@ function NetworkTab({ netQ }) {
     return (
         <div className="stack" style={STACK}>
             <Stats>
-                <Stat label="Routers online" value={online.length} unit={`/ ${rows.length}`} dot="ok" onClick={() => setFilter('online')} active={filter === 'online'} />
+                <Stat label="Routers online" value={online.length} unit={`/ ${svc.length}`} dot="ok" onClick={() => setFilter('online')} active={filter === 'online'} />
                 <Stat label="Offline" value={offline.length} dot="off" onClick={() => setFilter('offline')} active={filter === 'offline'} />
                 <Stat label="Weak signal" value={weak.length} tone={weak.length ? 'warn' : null} dot="warn" onClick={() => setFilter('weak')} active={filter === 'weak'} />
-                <Stat label="Data today" value={fmtMB(totalMb)} hint={rows.length ? `about ${fmtMB(totalMb / rows.length)} per router` : null} />
+                <Stat label="Data today" value={fmtMB(totalMb)} hint={svc.length ? `about ${fmtMB(totalMb / svc.length)} per router` : null} />
             </Stats>
 
             <div className="grid-3">
@@ -599,6 +605,7 @@ function NetworkTab({ netQ }) {
                         { key: 'online', label: 'Online', dot: 'ok', count: online.length },
                         { key: 'offline', label: 'Offline', dot: 'off', count: offline.length },
                         { key: 'weak', label: 'Weak signal', dot: 'warn', count: weak.length },
+                        ...(yardRows.length ? [{ key: 'yard', label: 'Not in service', dot: 'off', count: yardRows.length }] : []),
                     ]} />
                 </div>
                 <DataTable columns={columns} rows={filtered} onRowClick={setSelected}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createTrailer, updateTrailerAsset, fetchTrailers } from '../api/vrm'
+import { createTrailer, updateTrailerAsset, fetchTrailers, fetchBoardTrailers } from '../api/vrm'
 import { useToast } from './ToastProvider'
 import { Modal, Field } from '../ui'
 import { TRAILER_STATUS_LABELS } from './RentalLifecycle'
@@ -14,6 +14,19 @@ export default function TrailerFormModal({ trailerId, onSaved, onClose }) {
     })
     const [loaded, setLoaded] = useState(isNew)
     const [saving, setSaving] = useState(false)
+    const [telemetry, setTelemetry] = useState([])
+
+    // Every Cerbo and router the app can see, so linking is a choice, not a number to look up
+    useEffect(() => {
+        fetchBoardTrailers().then(d => setTelemetry(
+            (d.trailers || []).filter(r => r.site_id != null)
+                .map(r => ({
+                    id: r.site_id,
+                    label: `${r.unit} · ${r.site_id > 0 ? (r.has_router ? 'Cerbo and router' : 'Cerbo') : 'router only'}`,
+                }))
+                .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+        )).catch(() => setTelemetry([]))
+    }, [trailerId])
 
     useEffect(() => {
         if (isNew) return
@@ -70,8 +83,14 @@ export default function TrailerFormModal({ trailerId, onSaved, onClose }) {
                     <Field label="Purchase date"><input className="input" type="date" value={form.purchase_date} onChange={set('purchase_date')} /></Field>
                 </div>
                 <div className="form-row">
-                    <Field label="Victron VRM site ID" hint="Links live battery and solar telemetry">
-                        <input className="input" type="number" value={form.vrm_site_id} onChange={set('vrm_site_id')} />
+                    <Field label="Telemetry" hint="The Cerbo and router this trailer reports through">
+                        <select className="select" value={form.vrm_site_id} onChange={set('vrm_site_id')}>
+                            <option value="">Not linked</option>
+                            {form.vrm_site_id !== '' && !telemetry.some(t => String(t.id) === String(form.vrm_site_id)) && (
+                                <option value={form.vrm_site_id}>VRM {form.vrm_site_id} (no longer found)</option>
+                            )}
+                            {telemetry.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                        </select>
                     </Field>
                     <Field label="Status" hint="Rental events set this automatically">
                         <select className="select" value={form.status} onChange={set('status')}>

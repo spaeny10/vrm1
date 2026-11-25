@@ -16,10 +16,11 @@ const WORST = {
     offline: { tone: 'off', label: 'Trailer offline' },
     watch: { tone: 'warn', label: 'Watch' },
     good: { tone: 'ok', label: 'Healthy' },
-    inactive: { tone: 'off', label: 'Not deployed' },
+    unknown: { tone: 'warn', label: 'Not monitored' },
+    inactive: { tone: 'off', label: 'Yard' },
     empty: { tone: 'off', label: 'No trailers' },
 }
-const WORST_ORDER = ['attention', 'offline', 'watch', 'good', 'inactive', 'empty']
+const WORST_ORDER = ['attention', 'offline', 'watch', 'unknown', 'good', 'inactive', 'empty']
 // Fallback when only /map/sites is available
 const LEGACY_WORST = { critical: 'attention', warning: 'watch', healthy: 'good', unknown: 'empty' }
 const ISSUE_HEALTH = ['attention', 'offline', 'watch']
