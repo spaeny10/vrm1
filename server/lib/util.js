@@ -51,9 +51,9 @@ export function mpptStateToString(state) {
 }
 
 // Unit names are typed by hand in VRM, InControl and the registry
-// ("Trailer 619", "trailer 619", "Trailer  619 "), so compare them loosely.
+// ("Trailer 619", "trailer 619", "Trailer  619 ", "619"), so compare them loosely.
 export function normalizeUnitName(name) {
-    return String(name ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+    return String(name ?? '').toLowerCase().trim().replace(/^trailer[\s_-]*/, '').replace(/[\s_]+/g, '');
 }
 
 // Pepwave record for a unit name: exact key first, then a loose match.

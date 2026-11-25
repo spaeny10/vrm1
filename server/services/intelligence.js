@@ -403,9 +403,12 @@ export function computeTechStatus(siteId, alertsMap) {
         reasons.push(`Battery hot: ${Number(snapshot.battery_temp).toFixed(0)}°C`);
     }
 
-    // Energy deficit streak >= 5 days
+    // Energy deficit streak >= 5 days — urgent only once the battery is
+    // actually being drawn down. At 80%+ it's a trend to watch, not a dispatch.
     const deficitStreak = alertsMap?.[siteId] ?? 0;
-    if (deficitStreak >= 5) {
+    const DEFICIT_URGENT_BELOW_SOC = 80;
+    const deficitUrgent = soc === null || soc < DEFICIT_URGENT_BELOW_SOC;
+    if (deficitStreak >= 5 && deficitUrgent) {
         reasons.push(`Energy deficit: ${deficitStreak} day streak`);
     }
 
@@ -434,8 +437,8 @@ export function computeTechStatus(siteId, alertsMap) {
         watchReasons.push(`SOC declining ${Math.abs(socTrend.slopePerDay).toFixed(1)}%/day`);
     }
 
-    // Energy deficit 2-4 days
-    if (deficitStreak >= 2 && deficitStreak < 5) {
+    // Energy deficit 2-4 days, or a longer streak on a still-full battery
+    if ((deficitStreak >= 2 && deficitStreak < 5) || (deficitStreak >= 5 && !deficitUrgent)) {
         watchReasons.push(`Energy deficit: ${deficitStreak} day streak`);
     }
 

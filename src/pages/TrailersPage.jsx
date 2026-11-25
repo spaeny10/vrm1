@@ -16,6 +16,7 @@ const HEALTH_CHIPS = [
     { key: 'offline', label: 'Offline', dot: 'off' },
     { key: 'watch', label: 'Watch', dot: 'warn' },
     { key: 'good', label: 'Healthy', dot: 'ok' },
+    { key: 'inactive', label: 'Not deployed', dot: 'off' },
 ]
 
 const ASSET_CHIPS = [
@@ -77,7 +78,7 @@ export default function TrailersPage() {
     const techColumns = [
         { key: 'unit', label: 'Trailer', sort: r => r.unit, render: r => <span className="primary">{r.unit}</span> },
         {
-            key: 'health', label: 'Health', sort: r => ['offline', 'attention', 'watch', 'good', 'unknown'].indexOf(r.health),
+            key: 'health', label: 'Health', sort: r => ['offline', 'attention', 'watch', 'good', 'unknown', 'inactive'].indexOf(r.health),
             render: r => <div><HealthBadge health={r.health} />{r.diagnosis && r.health !== 'good' && <div className="sub" style={{ marginTop: 4, maxWidth: 360 }}>{r.diagnosis}</div>}</div>
         },
         { key: 'soc', label: 'Battery', sort: r => r.soc, render: r => <Soc value={r.soc} /> },
@@ -102,7 +103,7 @@ export default function TrailersPage() {
             key: 'rental', label: 'Rental', sort: r => r.rental?.status,
             render: r => r.rental ? <div><RentalStatusBadge status={r.rental.status} />{r.rental.billing_start && <div className="sub" style={{ marginTop: 4 }}>since {fmtDate(r.rental.billing_start)}</div>}</div> : <span className="faint">—</span>
         },
-        { key: 'health', label: 'Health', sort: r => ['offline', 'attention', 'watch', 'good', 'unknown'].indexOf(r.health), render: r => <HealthBadge health={r.health} /> },
+        { key: 'health', label: 'Health', sort: r => ['offline', 'attention', 'watch', 'good', 'unknown', 'inactive'].indexOf(r.health), render: r => <HealthBadge health={r.health} /> },
         { key: 'seen', label: 'Last data', align: 'r', sort: r => -(r.last_seen || 0), render: r => <span className="faint">{fmtAgo(r.last_seen)}</span> },
     ]
 

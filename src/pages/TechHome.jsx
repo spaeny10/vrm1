@@ -16,13 +16,14 @@ export default function TechHome() {
     const urgent = rows.filter(r => r.health === 'offline' || r.health === 'attention')
     const watch = rows.filter(r => r.health === 'watch')
     const weakSignal = rows.filter(r => r.online && r.signal_bars != null && r.signal_bars <= 1)
+    const inactive = rows.filter(r => r.health === 'inactive')
 
     const fleet = useMemo(() => {
         const live = rows.filter(r => r.soc != null)
         const avgSoc = live.length ? live.reduce((a, r) => a + r.soc, 0) / live.length : null
         const yieldToday = live.reduce((a, r) => a + (r.yield_today_kwh || 0), 0)
         const expected = live.reduce((a, r) => a + (r.expected_yield_kwh || 0), 0)
-        const net = rows.filter(r => r.site_id != null)
+        const net = rows.filter(r => r.site_id != null && r.health !== 'inactive')
         return {
             avgSoc, yieldToday, expected,
             netOnline: net.filter(r => r.online).length, netTotal: net.length,
@@ -63,6 +64,18 @@ export default function TechHome() {
                             ['Routers online', `${fleet.netOnline} / ${fleet.netTotal}`],
                             ['Energy deficits', plural(rows.filter(r => r.deficit_streak >= 2).length, 'trailer')],
                         ]} />
+                    </Card>
+                    <Card title="Not deployed" meta={inactive.length || null} flush>
+                        {inactive.length === 0 ? <AllClear>Every unit is out in the field.</AllClear> : (
+                            <div className="list">
+                                <Link to="/trailers?health=inactive" className="list-row">
+                                    <div className="main">
+                                        <div className="title">{plural(inactive.length, 'unit')} in the shop, spare or RMA</div>
+                                        <div className="desc">Offline on purpose — not counted in fleet health</div>
+                                    </div>
+                                </Link>
+                            </div>
+                        )}
                     </Card>
                     <Card title="Weak signal" meta={weakSignal.length || null} flush>
                         {weakSignal.length === 0 ? <AllClear>All routers have usable signal.</AllClear> : (

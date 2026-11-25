@@ -10,12 +10,35 @@ import { hasVrmData, todayStr, normalizeUnitName, findPepwaveByName } from '../l
 import { computeAlerts } from './alerts.js';
 import { computeTechStatus, computeHealthGrade, silentTelemetryStatus } from './intelligence.js';
 
-const SEVERITY = { offline: 0, attention: 1, watch: 2, good: 3, unknown: 4 };
+const SEVERITY = { offline: 0, attention: 1, watch: 2, good: 3, unknown: 4, inactive: 5 };
 
-function healthFor(siteId, alertsMap, snap, pw) {
-    if (siteId == null) return { health: 'unknown', diagnosis: 'No telemetry linked' };
+// Units that aren't deployed: going dark is expected, not an outage.
+// A unit on rent or assigned to a customer site is deployed whatever its
+// asset status says (status lags reality, and service happens on site).
+// Otherwise asset status, sitting at HQ, or a name like "Trailer 560-BAD" /
+// "Trailer 528 - RMA" marks it as in the shop.
+const NOT_DEPLOYED_STATUSES = new Set(['available', 'maintenance', 'retired']);
+const NOT_DEPLOYED_NAME = /(?:^|[\s-])(?:BAD|RMA|SPARE)(?:$|[\s-])|\btester\b|\bR&D\b/i;
+
+export function isNotDeployed({ unit, trailer, rental, site }) {
+    if (rental) return false;
+    if (site && !site.is_headquarters) return false;
+    if (site?.is_headquarters) return true;
+    if (trailer && NOT_DEPLOYED_STATUSES.has(trailer.status)) return true;
+    return NOT_DEPLOYED_NAME.test(unit || '');
+}
+
+export function healthFor(siteId, alertsMap, snap, pw, { notDeployed = false } = {}) {
+    if (siteId == null) {
+        return notDeployed
+            ? { health: 'inactive', diagnosis: 'Not deployed — no telemetry linked' }
+            : { health: 'unknown', diagnosis: 'No telemetry linked' };
+    }
     if (!hasVrmData(snap)) {
         const s = silentTelemetryStatus(snap, pw);
+        if (notDeployed && s.status !== 'good') {
+            return { health: 'inactive', diagnosis: pw?.online ? 'Not deployed — Cerbo off' : 'Not deployed — powered down' };
+        }
         return { health: s.status, diagnosis: s.reason };
     }
     const ts = computeTechStatus(siteId, alertsMap) || {};
@@ -60,7 +83,9 @@ export async function buildTrailerBoard() {
     for (const t of registry) {
         let siteId = t.vrm_site_id;
         let altSiteId = null;
-        if (siteId == null || siteId < 0) {
+        // Missing, synthetic (router-only, negative) or stale (no snapshot):
+        // adopt the live VRM installation with the same name.
+        if (siteId == null || siteId < 0 || !snapshotCache.has(siteId)) {
             const real = vrmByName.get(normalizeUnitName(t.unit_number));
             if (real != null && !claimed.has(real)) {
                 altSiteId = siteId;
@@ -87,13 +112,15 @@ export async function buildTrailerBoard() {
         const snap = r.site_id > 0 ? snapshotCache.get(r.site_id) : null;
         const pw = findPepwaveByName(r.unit) || (snap ? findPepwaveByName(snap.site_name) : null);
         const live = hasVrmData(snap);
-        const { health, diagnosis } = healthFor(r.site_id, alertsMap, snap, pw);
         // A joined trailer's job site may still sit on its old synthetic-id row
         const primary = r.site_id != null ? assignmentBySite.get(r.site_id) : null;
         const fallback = r.alt_site_id != null ? assignmentBySite.get(r.alt_site_id) : null;
         const assignment = (primary?.job_site_id || !fallback) ? primary : fallback;
         const site = assignment?.job_site_id ? siteById.get(assignment.job_site_id) : null;
         const rental = r.trailer ? rentalByTrailer.get(r.trailer.id) : null;
+        if (r.trailer?.status === 'retired' && !rental) continue;
+        const notDeployed = isNotDeployed({ unit: r.unit, trailer: r.trailer, rental, site });
+        const { health, diagnosis } = healthFor(r.site_id, alertsMap, snap, pw, { notDeployed });
         const customerId = rental?.company_id || site?.company_id || null;
         const customer = customerId ? companyById.get(customerId) : null;
         const energyToday = r.site_id != null ? (dailyEnergy.get(r.site_id) || {})[today] : null;
@@ -121,6 +148,7 @@ export async function buildTrailerBoard() {
             signal_bars: pw?.cellular?.signal_bar ?? null,
             rsrp: pw?.cellular?.signal?.rsrp ?? null,
             carrier: pw?.cellular?.carrier || null,
+            not_deployed: notDeployed,
             last_seen: lastSeenFor(snap, pw),
             latitude: assignment?.latitude ?? null,
             longitude: assignment?.longitude ?? null,
@@ -139,9 +167,13 @@ export async function buildTrailerBoard() {
     return out;
 }
 
+// total = the deployed fleet; units in the shop are counted under inactive.
 export function summarize(rows) {
-    const s = { total: rows.length, offline: 0, attention: 0, watch: 0, good: 0, unknown: 0 };
-    for (const r of rows) s[r.health] = (s[r.health] || 0) + 1;
+    const s = { total: 0, offline: 0, attention: 0, watch: 0, good: 0, unknown: 0, inactive: 0 };
+    for (const r of rows) {
+        s[r.health] = (s[r.health] || 0) + 1;
+        if (r.health !== 'inactive') s.total++;
+    }
     return s;
 }
 
@@ -164,9 +196,9 @@ export async function buildSiteBoard() {
             longitude: js.longitude,
             is_hq: !!js.is_headquarters,
             customer: js.company_id && companyById.get(js.company_id) ? { id: js.company_id, name: companyById.get(js.company_id).name } : null,
-            trailers: s.total,
+            trailers: trailers.length,
             health: s,
-            worst: s.offline ? 'offline' : s.attention ? 'attention' : s.watch ? 'watch' : s.total ? 'good' : 'empty',
+            worst: s.offline ? 'offline' : s.attention ? 'attention' : s.watch ? 'watch' : s.total ? 'good' : s.inactive ? 'inactive' : 'empty',
             rentals_open: rentals.length,
             rentals_billing: rentals.filter(r => r.status === 'billing' || r.status === 'called_off').length,
         };

@@ -17,7 +17,7 @@ import ReportPanel from '../components/ReportPanel'
 import MentionInput, { extractMentions, renderNoteWithMentions } from '../components/MentionInput'
 import TagPicker, { NOTE_CATEGORIES, parseTags } from '../components/TagPicker'
 
-const HEALTH_ORDER = ['attention', 'offline', 'watch', 'unknown', 'good']
+const HEALTH_ORDER = ['attention', 'offline', 'watch', 'unknown', 'good', 'inactive']
 const CONTACT_ROLES = [
     { key: 'on-site', label: 'On-site' },
     { key: 'project-manager', label: 'Project manager' },

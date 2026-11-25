@@ -10,6 +10,7 @@ const WORST = {
     attention: { tone: 'crit', label: 'Needs attention' },
     watch: { tone: 'warn', label: 'Watch' },
     good: { tone: 'ok', label: 'Healthy' },
+    inactive: { tone: 'off', label: 'Not deployed' },
     empty: { tone: 'plain', label: 'No trailers' },
 }
 

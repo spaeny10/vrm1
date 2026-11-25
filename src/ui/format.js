@@ -99,6 +99,7 @@ export const HEALTH = {
     watch: { tone: 'warn', label: 'Watch' },
     good: { tone: 'ok', label: 'Healthy' },
     unknown: { tone: 'off', label: 'No telemetry' },
+    inactive: { tone: 'off', label: 'Not deployed' },
 }
 
 export function socTone(soc) {
