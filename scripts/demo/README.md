@@ -10,6 +10,18 @@ The simulator stands in for the Victron VRM and Peplink InControl2 APIs. It serv
 - weak signal
 - a healthy full-battery unit that must *not* alert
 
+A second group of units is deliberately messy, the way real records drift:
+
+- a trailer registered from its router before its Cerbo existed
+- a Cerbo that went silent while its router stayed online
+- a router named differently from its Cerbo
+- router-only and Cerbo-only units
+- a replaced Cerbo whose old installation is still in VRM
+- units in the shop (named BAD, RMA, tester), on shore power, and retired
+- a rented trailer with no telemetry linked, and one whose registry link is stale
+
+Set `DEMO_FLEET=clean` for the simulator and the seeder to leave these out.
+
 The seeder builds customers, sites, rentals in every lifecycle state, maintenance,
 notes, and two weeks of history. That lets every page, chart, and alert be
 exercised without production access.

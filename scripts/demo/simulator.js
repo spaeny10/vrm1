@@ -9,27 +9,32 @@
 //   IC2_API_BASE=http://localhost:4010     IC2_CLIENT_ID=demo  IC2_CLIENT_SECRET=demo
 // ============================================================
 import express from 'express'
-import { TRAILERS, telemetry, cellular, trailerPosition } from './fleet.js'
+import { TRAILERS, telemetry, cellular, trailerPosition, vrmName, ic2Name, staleDaysOf, routerDown } from './fleet.js'
 
 const PORT = process.env.SIM_PORT || 4010
 const app = express()
 app.use(express.urlencoded({ extended: false }))
 
-const byVrmId = new Map(TRAILERS.map(t => [t.vrmId, t]))
-const byIc2Id = new Map(TRAILERS.map(t => [t.ic2Id, t]))
+// Not every trailer exists in both systems
+const VRM_UNITS = TRAILERS.filter(t => t.vrm !== false)
+const IC2_UNITS = TRAILERS.filter(t => t.ic2 !== false)
+const byVrmId = new Map(VRM_UNITS.map(t => [t.vrmId, t]))
+const byIc2Id = new Map(IC2_UNITS.map(t => [t.ic2Id, t]))
 
 // ---------- Victron VRM ----------
 
 app.get('/v2/users/:userId/installations', (req, res) => {
     res.json({
         success: true,
-        records: TRAILERS.map(t => ({ idSite: t.vrmId, name: t.unit, identifier: `sim-${t.vrmId}` })),
+        records: VRM_UNITS.map(t => ({ idSite: t.vrmId, name: vrmName(t), identifier: `sim-${t.vrmId}` })),
     })
 })
 
 app.get('/v2/installations/:id/diagnostics', (req, res) => {
     const t = byVrmId.get(parseInt(req.params.id))
     if (!t) return res.status(404).json({ success: false, errors: 'Unknown installation' })
+    // A Cerbo that was installed but has never uploaded anything
+    if (t.scenario === 'no_data') return res.json({ success: true, records: [] })
     const v = telemetry(t)
     const rec = (Device, code, rawValue) => ({ idSite: t.vrmId, timestamp: v.ts, Device, code, rawValue })
     res.json({
@@ -69,7 +74,7 @@ app.get('/v2/installations/:id/system-overview', (req, res) => {
     res.json({
         success: true,
         records: {
-            name: t.unit,
+            name: vrmName(t),
             devices: [
                 { name: 'Cerbo GX', productCode: 'C030', machineSerialNumber: `HQ22${t.vrmId}`, firmwareVersion: 'v3.40' },
                 { name: 'SmartSolar MPPT 150/45', productCode: 'A06C', machineSerialNumber: `HQ21${t.vrmId}`, firmwareVersion: 'v1.61' },
@@ -94,18 +99,19 @@ function device(t) {
     const pos = trailerPosition(t)
     return {
         id: t.ic2Id,
-        name: t.unit,
+        name: ic2Name(t),
         sn: `1934-SIM-${t.ic2Id}`,
         status: c.online ? 'online' : 'offline',
         product_name: 'Peplink MAX BR1 Pro 5G',
         fw_ver: '8.4.1',
         client_count: c.online ? 3 + Math.round(t.seed * 3) : 0,
         uptime: c.online ? 86400 * (3 + Math.round(t.seed * 20)) : 0,
-        last_online: c.online ? null : new Date(Date.now() - 2 * 86400000).toISOString(),
+        // InControl reports this as "YYYY-MM-DD HH:MM:SS"
+        last_online: c.online ? null : new Date(Date.now() - (staleDaysOf(t) || 2) * 86400000).toISOString().slice(0, 19).replace('T', ' '),
         gps_support: true,
-        gps_exist: true,
-        latitude: pos.lat,
-        longitude: pos.lon,
+        gps_exist: !!pos,
+        latitude: pos?.lat ?? null,
+        longitude: pos?.lon ?? null,
         interfaces: [{
             id: 1,
             name: 'Cellular',
@@ -127,26 +133,26 @@ function device(t) {
 }
 
 app.get('/rest/o/:org/g/:group/d', (req, res) => {
-    res.json({ data: TRAILERS.map(device) })
+    res.json({ data: IC2_UNITS.map(device) })
 })
 
 app.get(['/rest/o/:org/g/:group/bandwidth_per_device', '/rest/o/:org/bandwidth_per_device'], (req, res) => {
     res.json({
-        data: TRAILERS.filter(t => cellular(t).online).map(t => {
+        data: IC2_UNITS.filter(t => !routerDown(t)).map(t => {
             const mb = cellular(t).usageMbToday
             const total = mb * 1024 * 1024
-            return { id: t.ic2Id, name: t.unit, upload: Math.round(total * 0.7), download: Math.round(total * 0.3), total }
+            return { id: t.ic2Id, name: ic2Name(t), upload: Math.round(total * 0.7), download: Math.round(total * 0.3), total }
         }),
     })
 })
 
 app.get('/rest/o/:org/g/:group/d/:id/loc', (req, res) => {
     const t = byIc2Id.get(parseInt(req.params.id))
-    if (!t) return res.status(404).json({ data: [] })
-    const pos = trailerPosition(t)
+    const pos = t && trailerPosition(t)
+    if (!pos) return res.status(404).json({ data: [] })
     res.json({ data: [{ la: pos.lat, lo: pos.lon, ts: Math.floor(Date.now() / 1000) }] })
 })
 
 app.listen(PORT, () => {
-    console.log(`Fleet simulator: ${TRAILERS.length} trailers on http://localhost:${PORT}`)
+    console.log(`Fleet simulator: ${VRM_UNITS.length} VRM installations, ${IC2_UNITS.length} routers on http://localhost:${PORT}`)
 })

@@ -12,7 +12,7 @@
 // ============================================================
 import bcrypt from 'bcryptjs'
 import { initDb, getPool, computeDailyMetrics } from '../../server/db.js'
-import { COMPANIES, SITES, TRAILERS, telemetry, cellular, trailerPosition, siteByKey } from './fleet.js'
+import { COMPANIES, SITES, TRAILERS, telemetry, cellular, trailerPosition, siteByKey, vrmName, ic2Name, staleDaysOf, routerDown } from './fleet.js'
 
 // Demo-only logins (local demo database). Each maps to a persona.
 export const DEMO_USERS = [
@@ -101,19 +101,32 @@ async function main() {
     for (const [i, t] of TRAILERS.entries()) {
         const pos = trailerPosition(t)
         const site = siteByKey(t.site)
-        const trailerStatus = { billing: 'on_rent', called_off: 'on_rent', delivered: 'on_rent', reserved: 'reserved', none: 'available' }[t.rental]
-        const tr = await db.query(
-            `INSERT INTO trailers (unit_number, vin, vrm_site_id, ic2_device_id, status, product_code, purchase_date)
-             VALUES ($1,$2,$3,$4,$5,'BV1305',$6) RETURNING id`,
-            [t.unit, `1BV1305${String(t.vrmId).slice(-5)}`, t.vrmId, t.ic2Id, trailerStatus, dateStr(now - (400 + i * 9) * DAY)])
-        const trailerId = tr.rows[0].id
+        const registry = t.registry || 'linked'
+        const hasVrm = t.vrm !== false, hasIc2 = t.ic2 !== false
+        // The id the telemetry pollers know this unit by
+        const telemetryId = hasVrm ? t.vrmId : hasIc2 ? -t.ic2Id : null
+        // The id the registry row carries, which is where real records go wrong
+        const registryVrmId = { linked: telemetryId, synthetic: -t.ic2Id, stale: 990000 + i, unlinked: null }[registry]
+        const assignmentId = registry === 'synthetic' ? -t.ic2Id : telemetryId
 
-        await db.query(
-            `INSERT INTO trailer_assignments (site_id, site_name, job_site_id, latitude, longitude, ic2_device_id, last_gps_lat, last_gps_lon, last_gps_update, assigned_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$4,$5,$7,$8)`,
-            [t.vrmId, t.unit, siteIds[t.site], pos.lat, pos.lon, t.ic2Id, now, now - 30 * DAY])
+        let trailerId = null
+        if (registry !== 'none') {
+            const trailerStatus = t.status || { billing: 'on_rent', called_off: 'on_rent', delivered: 'on_rent', reserved: 'reserved', none: 'available' }[t.rental]
+            const tr = await db.query(
+                `INSERT INTO trailers (unit_number, vin, vrm_site_id, ic2_device_id, status, product_code, purchase_date)
+                 VALUES ($1,$2,$3,$4,$5,'BV1305',$6) RETURNING id`,
+                [t.unit, `1BV1305${String(t.vrmId).slice(-5)}`, registryVrmId, hasIc2 && registry !== 'unlinked' ? t.ic2Id : null, trailerStatus, dateStr(now - (400 + i * 9) * DAY)])
+            trailerId = tr.rows[0].id
+        }
 
-        if (t.rental === 'none') continue
+        if (assignmentId != null && site) {
+            await db.query(
+                `INSERT INTO trailer_assignments (site_id, site_name, job_site_id, latitude, longitude, ic2_device_id, last_gps_lat, last_gps_lon, last_gps_update, assigned_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$4,$5,$7,$8)`,
+                [assignmentId, assignmentId < 0 ? ic2Name(t) : vrmName(t), siteIds[t.site], pos.lat, pos.lon, hasIc2 ? t.ic2Id : null, now, now - 30 * DAY])
+        }
+
+        if (t.rental === 'none' || trailerId == null) continue
         const companyId = site.company ? companyIds[site.company] : null
         const startDaysAgo = 25 + Math.round(t.seed * 110)
         const ev = []  // [type, daysAgo, extras]
@@ -156,11 +169,14 @@ async function main() {
     console.log('Writing telemetry history...')
     for (const t of TRAILERS) {
         const rows = []
+        const silentHours = staleDaysOf(t) * 24
+        const live = { ...t, staleDays: 0, scenario: t.scenario === 'offline' ? 'normal' : t.scenario }
         for (let hAgo = 7 * 24; hAgo >= 1; hAgo--) {
+            if (t.vrm === false || t.scenario === 'no_data') break
             const when = new Date(now - hAgo * 3600000)
-            const v = telemetry(t, when)
-            if (t.scenario === 'offline' && hAgo < 48) continue  // router went dark two days ago
-            rows.push([t.vrmId, t.unit, when.getTime(), v.soc, v.voltage, v.current, v.temp, v.battPower, v.solarW, v.yieldToday, v.yieldYesterday, String(v.mppt), v.consumedAh, v.load, String(v.mppt)])
+            if (silentHours && hAgo < silentHours) continue  // nothing recorded after it went quiet
+            const v = telemetry(live, when)
+            rows.push([t.vrmId, vrmName(t), when.getTime(), v.soc, v.voltage, v.current, v.temp, v.battPower, v.solarW, v.yieldToday, v.yieldYesterday, String(v.mppt), v.consumedAh, v.load, String(v.mppt)])
         }
         for (let i = 0; i < rows.length; i += 200) {
             const chunk = rows.slice(i, i + 200)
@@ -171,13 +187,15 @@ async function main() {
         }
 
         // Cellular history every 2 hours
+        if (t.ic2 === false) continue
         const c = cellular(t)
+        const downHours = routerDown(t) ? (staleDaysOf(t) || 2) * 24 : 0
         for (let hAgo = 7 * 24; hAgo >= 2; hAgo -= 2) {
-            const online = !(t.scenario === 'offline' && hAgo < 48)
+            const online = !(downHours && hAgo < downHours)
             await db.query(
                 `INSERT INTO pepwave_snapshots (device_name, timestamp, online, signal_bar, rsrp, rsrq, rssi, sinr, carrier, technology, usage_mb, tx_mb, rx_mb, client_count, uptime)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'5G NSA',$10,$11,$12,$13,$14)`,
-                [t.unit, now - hAgo * 3600000, online, online ? c.signal_bar : 0, online ? c.rsrp : null, online ? c.rsrq : null, online ? c.rssi : null, online ? c.sinr : null,
+                [ic2Name(t), now - hAgo * 3600000, online, online ? c.signal_bar : 0, online ? c.rsrp : null, online ? c.rsrq : null, online ? c.rssi : null, online ? c.sinr : null,
                  c.carrier, c.usageMbToday, c.usageMbToday * 0.7, c.usageMbToday * 0.3, online ? 4 : 0, online ? 86400 * 5 : 0])
         }
     }
@@ -185,6 +203,7 @@ async function main() {
     // ---------- Daily energy (14 days) ----------
     console.log('Writing daily energy history...')
     for (const t of TRAILERS) {
+        if (t.vrm === false || t.scenario === 'no_data') continue
         for (let d = 14; d >= 1; d--) {
             const date = dateStr(now - d * DAY)
             const full = telemetry(t, new Date(now - d * DAY)).yieldYesterday * 1000
@@ -196,12 +215,14 @@ async function main() {
             if (t.scenario === 'low_battery' && d <= 6) { yieldWh = 1050 + d * 20; consumedWh = 2300; socEod = 11 + d }
             if (t.scenario === 'dirty_panels' && d <= 3) { yieldWh = 1250; consumedWh = 1520; socEod = 38 }
             if (t.scenario === 'throttled') { yieldWh = 620; consumedWh = 1450; socEod = 100; mpptEod = 5 }
-            if (t.scenario === 'offline' && d <= 2) continue
+            if (t.scenario === 'shore_power') { yieldWh = 0; consumedWh = 1420; socEod = 100; mpptEod = 0 }
+            if (t.scenario === 'deficit_full' && d <= 6) { yieldWh = 1250; consumedWh = 1560; socEod = 85 }
+            if (staleDaysOf(t) && d <= staleDaysOf(t)) continue
             const expected = Math.round(1305 * (5.6 + t.seed) * 0.70)
             await db.query(
                 `INSERT INTO daily_energy_summary (site_id, date, site_name, yield_wh, consumed_wh, expected_yield_wh, consumption_source, soc_start_of_day, battery_soc_eod, mppt_state_eod, updated_at)
                  VALUES ($1,$2,$3,$4,$5,$6,'CE diagnostic',$7,$8,$9,$10)`,
-                [t.vrmId, date, t.unit, yieldWh, consumedWh, expected, socEod - 4, socEod, mpptEod, now - d * DAY])
+                [t.vrmId, date, vrmName(t), yieldWh, consumedWh, expected, socEod - 4, socEod, mpptEod, now - d * DAY])
         }
     }
     for (let d = 7; d >= 1; d--) {
@@ -209,7 +230,7 @@ async function main() {
     }
 
     // ---------- Maintenance ----------
-    const tId = (unit) => TRAILERS.find(t => t.unit === unit).vrmId
+    const tId = (unit) => TRAILERS.find(t => t.unit === unit && !t.duplicate).vrmId
     const maint = [
         ['permian', 'BV-112', 'inspection', 'scheduled', 'Clean solar panels — output at 40% of expected', 'Dust buildup suspected; yield down 60% vs weather-adjusted expectation.', now - 2 * DAY, null, 1.5, 0, 0],
         ['dtc', 'BV-107', 'repair', 'scheduled', 'Battery service — SOC critical', 'Six-day energy deficit; battery at 11%. Check BMS and connections.', now + 1 * DAY, null, 3, 0, 0],
@@ -242,7 +263,7 @@ async function main() {
          VALUES ($1,'BV-108',$2,$3,$4,$5,14.2,$6,'Denver Tech Center Tower',$7,'Aurora Logistics Park','reassign_existing','pending')`,
         [tId('BV-108'), siteByKey('dtc').lat, siteByKey('dtc').lon, siteByKey('aurora').lat, siteByKey('aurora').lon, siteIds.dtc, siteIds.aurora])
 
-    console.log(`Seeded: ${COMPANIES.length} customers, ${SITES.length} sites, ${TRAILERS.length} trailers, ${DEMO_USERS.length} users.`)
+    console.log(`Seeded: ${COMPANIES.length} customers, ${SITES.length} sites, ${TRAILERS.length} units, ${DEMO_USERS.length} users.`)
     await db.end()
 }
 
