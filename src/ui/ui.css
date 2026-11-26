@@ -318,6 +318,21 @@ a.list-row:hover, .list-row.clickable:hover { background: var(--surface-2); curs
 .note-head b { color: var(--text); font-size: 13px; }
 .note-body { white-space: pre-wrap; font-size: 13.5px; }
 
+/* Help desk conversation: customer, our reply, an internal note, a system line */
+.thread { display: grid; gap: 10px; }
+.msg { padding: 11px 14px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border); }
+.msg.ours { background: var(--accent-soft); border-color: transparent; }
+.msg.internal { background: var(--warn-soft); border-color: transparent; }
+.msg-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-3); margin-bottom: 4px; }
+.msg-head b { color: var(--text); font-size: 13px; }
+.msg-head .when { margin-left: auto; }
+.msg-body { white-space: pre-wrap; font-size: 13.5px; overflow-wrap: anywhere; }
+.msg-system { text-align: center; font-size: 12.5px; color: var(--text-3); padding: 2px 0; }
+.composer { display: grid; gap: 10px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.composer-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.composer-foot .hint { flex: 1; min-width: 160px; font-size: 12.5px; color: var(--text-3); }
+.composer-foot .select { width: auto; }
+
 /* ---------------- Calendar ---------------- */
 .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
 .cal-h { padding: 8px; font-size: 11.5px; font-weight: 600; color: var(--text-3); text-transform: uppercase; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }

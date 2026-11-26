@@ -10,7 +10,7 @@
         "preview": "vite preview",
         "demo:sim": "node scripts/demo/simulator.js",
         "demo:seed": "node scripts/demo/seed.js",
-        "test": "node --test --experimental-test-module-mocks server/services/roster.test.js server/services/board.test.js server/services/alerts.test.js"
+        "test": "node --test --experimental-test-module-mocks server/services/roster.test.js server/services/board.test.js server/services/alerts.test.js server/services/helpdesk.test.js"
     },
     "dependencies": {
         "@anthropic-ai/sdk": "^0.78.0",

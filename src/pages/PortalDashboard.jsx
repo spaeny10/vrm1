@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
 import { useAuth } from '../components/AuthProvider'
 import { fetchPortalSites } from '../api/vrm'
@@ -16,6 +16,7 @@ const STATUS = {
 // Customer portal home: the customer's sites and how their units are doing
 export default function PortalDashboard() {
     const { user } = useAuth()
+    const navigate = useNavigate()
     const fetchFn = useCallback(() => fetchPortalSites(), [])
     const { data, loading } = useApiPolling(fetchFn, 60000)
     const sites = data?.sites || []
@@ -26,7 +27,8 @@ export default function PortalDashboard() {
     const avgSoc = socs.length ? socs.reduce((a, s) => a + s.avg_soc, 0) / socs.length : null
 
     return (
-        <Page title={`Welcome${user?.display_name ? ', ' + user.display_name.split(' ')[0] : ''}`} sub="Live status of the BIGView units on your sites">
+        <Page title={`Welcome${user?.display_name ? ', ' + user.display_name.split(' ')[0] : ''}`} sub="Live status of the BIGView units on your sites"
+            actions={sites.length > 0 && <button className="btn primary" onClick={() => navigate('/requests?new=1')}><Icon name="plus" />Report a problem</button>}>
             <Stats>
                 <Stat label="Your sites" value={data ? sites.length : '—'} />
                 <Stat label="Units online" value={data ? `${online} / ${trailers}` : '—'} dot={online < trailers ? 'warn' : 'ok'} />

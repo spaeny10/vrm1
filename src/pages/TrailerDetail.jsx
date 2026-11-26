@@ -137,6 +137,11 @@ export default function TrailerDetail() {
             actions={<>
                 {isVrm && <button className="btn" onClick={() => setShowReport(true)}><Icon name="doc" />Report</button>}
                 {isVrm && <button className="btn" onClick={() => setShowAi(true)}><Icon name="sparkle" />AI analysis</button>}
+                {canEdit && row && (
+                    <Link className="btn" to={`/helpdesk?new=1&by=team&trailer=${encodeURIComponent(row.site_id ?? row.key)}${row.health !== 'good' && row.health !== 'inactive' && findings.length ? `&subject=${encodeURIComponent(findings[0])}` : ''}`}>
+                        <Icon name="inbox" />Open a request
+                    </Link>
+                )}
                 {canEdit && row?.trailer_id && <button className="btn ghost" onClick={() => setEditAsset(true)}><Icon name="edit" />Edit asset</button>}
             </>}
         >

@@ -558,6 +558,54 @@ export async function applySchema(client) {
 
         console.log('  ✓ Checklists, issue templates, action queue tables ready');
 
+        // Help desk: a request has an owner, a status and a conversation.
+        // trailer_id / site_id / trailer_unit are kept without foreign keys on purpose:
+        // registry rows and telemetry ids change, and the request must survive that.
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS tickets (
+        id SERIAL PRIMARY KEY,
+        subject TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','open','waiting','resolved')),
+        priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('normal','urgent')),
+        source TEXT NOT NULL DEFAULT 'staff',
+        customer_visible BOOLEAN NOT NULL DEFAULT FALSE,
+        job_site_id INTEGER REFERENCES job_sites(id) ON DELETE SET NULL,
+        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        trailer_id INTEGER,
+        site_id INTEGER,
+        trailer_unit TEXT,
+        requester_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        requester_name TEXT,
+        requester_email TEXT,
+        requester_phone TEXT,
+        assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        maintenance_log_id INTEGER REFERENCES maintenance_logs(id) ON DELETE SET NULL,
+        awaiting_reply BOOLEAN NOT NULL DEFAULT FALSE,
+        customer_unread BOOLEAN NOT NULL DEFAULT FALSE,
+        created_by TEXT,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL,
+        first_response_at BIGINT,
+        resolved_at BIGINT
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_tickets_job_site ON tickets(job_site_id)`);
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS ticket_messages (
+        id SERIAL PRIMARY KEY,
+        ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+        author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        author_name TEXT,
+        author_role TEXT NOT NULL DEFAULT 'staff' CHECK (author_role IN ('customer','staff','system')),
+        body TEXT NOT NULL,
+        internal BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at BIGINT NOT NULL
+      )
+    `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages(ticket_id, created_at)`);
+        console.log('  ✓ Help desk tables ready');
+
         // Add assigned_technician_id to maintenance_logs if not exists
         await client.query(`
       ALTER TABLE maintenance_logs ADD COLUMN IF NOT EXISTS assigned_technician_id INTEGER REFERENCES users(id)

@@ -32,7 +32,8 @@ const GUIDES = {
             ['Start on Home', 'Trailers that need attention or are offline, sorted by urgency, each with a plain-English diagnosis.'],
             ['Dig in', 'Open a trailer for history charts, network detail, alarms, connected devices, and AI analysis.'],
             ['Insights', 'Energy deficits (with throttled days explained), fleet trends, and router health.'],
-            ['Hand off', 'When a trailer needs hands on site, leave a note on its site or ask the Fleet Manager to schedule service.'],
+            ['Help desk', 'Requests from customers, plus problems our own team has logged. Customers waiting on a reply are always at the top. Replying to an unassigned request makes it yours.'],
+            ['Hand off', 'When a trailer needs hands on site, press Schedule a visit on the request, or ask the Fleet Manager to schedule service.'],
         ],
     },
 }
@@ -45,6 +46,7 @@ const TERMS = [
     ['Offline', 'Neither the router nor the Cerbo has reported recently.'],
     ['Not monitored', 'A trailer in service with no Cerbo or router linked, so the app can’t see it. Link its telemetry from the Trailers page.'],
     ['Records to fix', 'Places where the trailer registry, VRM and InControl disagree, such as two entries for one trailer or a replaced Cerbo still listed in VRM. The app shows one row per physical trailer and lists what it assumed, so you can make the records right.'],
+    ['Request', 'A help desk item with one owner, a status and a conversation. Customers open them from their portal with Report a problem; staff log them for phone calls, or open one from a trailer’s page. Replies go to the customer by email and show in their portal. Internal notes never do.'],
     ['Energy deficit', 'A day where the trailer used more energy than the sun provided. Days where the battery was full and the charger deliberately throttled solar don’t count. That’s healthy.'],
     ['Solar score', 'Yesterday’s solar output compared to what the weather at that location should have produced.'],
     ['Health grade', 'A–F blend of battery, solar performance, autonomy, network, and maintenance history.'],

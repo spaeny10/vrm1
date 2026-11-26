@@ -1,10 +1,11 @@
 import { useCallback, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchBoardTrailers } from '../api/vrm'
+import { fetchBoardTrailers, apiGet } from '../api/vrm'
 import { Page, Card, Stats, Stat, Dot, HealthBadge, Soc, Signal, AllClear, Loading, KV } from '../ui'
 import { HEALTH, fmtAgo, fmtKwh, fmtPct, plural } from '../ui/format'
 import RecordsToFix from '../components/RecordsToFix'
+import TicketRow from '../components/helpdesk/TicketRow'
 
 // Tech workspace home: which trailers in service need remote attention, and why.
 // Units in the yard are counted apart: being off there is not an outage.
@@ -15,6 +16,11 @@ export default function TechHome() {
     const rows = data?.trailers || []
     const s = data?.summary || {}
     const issues = data?.issues || []
+
+    // Help desk: requests nobody owns yet, or where a customer is waiting on us
+    const deskFn = useCallback(() => apiGet('/tickets'), [])
+    const { data: desk } = useApiPolling(deskFn, 60000)
+    const needAction = (desk?.tickets || []).filter(t => t.status !== 'resolved' && (t.awaiting_reply || t.assignee_id == null))
 
     const urgent = rows.filter(r => r.health === 'offline' || r.health === 'attention')
     // While the server is still warming up, 'unknown' only means 'not polled yet'
@@ -56,6 +62,12 @@ export default function TechHome() {
 
             <div className="grid-main">
                 <div className="stack">
+                    {needAction.length > 0 && (
+                        <Card title="Requests waiting on us" meta={needAction.length} flush
+                            actions={<Link className="btn ghost sm" to="/helpdesk">Help desk</Link>}>
+                            <div className="list">{needAction.slice(0, 5).map(t => <TicketRow key={t.id} t={t} />)}</div>
+                        </Card>
+                    )}
                     <Card title="Needs attention or offline" meta={urgent.length || null} flush>
                         {loading && !data ? <Loading /> : urgent.length === 0
                             ? <AllClear>No trailers need attention right now.</AllClear>

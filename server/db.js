@@ -23,3 +23,4 @@ export * from './db/actions.js';
 export * from './db/notifications.js';
 export * from './db/rentals.js';
 export * from './db/registry.js';
+export * from './db/helpdesk.js';

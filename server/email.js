@@ -443,3 +443,56 @@ export async function sendMentionNotification({ recipientEmail, recipientName, a
         console.error(`[Email] Failed to send mention notification to ${recipientEmail}:`, err.message);
     }
 }
+
+// ---------------------------------------------------------------------------
+// sendTicketEmail — help desk messages, to staff or to the customer.
+// Every piece of text here was typed by a person, so all of it is escaped.
+// ---------------------------------------------------------------------------
+
+const APP_URL = (process.env.APP_URL || 'https://omni.bigview.ai').replace(/\/+$/, '');
+const HELPDESK_EMAIL_RECIPIENTS = (process.env.HELPDESK_EMAIL_RECIPIENTS || '')
+    .split(',')
+    .map(e => e.trim())
+    .filter(Boolean);
+
+export function helpDeskExtraRecipients() {
+    return HELPDESK_EMAIL_RECIPIENTS;
+}
+
+function escapeHtml(v) {
+    return String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+// { to, subject, label, heading, intro, quote, facts: [[k, v]], path, cta }
+export async function sendTicketEmail({ to, subject, label = 'HELP DESK', heading, intro, quote, facts = [], path, cta = 'Open the request' }) {
+    const recipients = [...new Set((Array.isArray(to) ? to : [to]).filter(Boolean).map(e => String(e).trim().toLowerCase()))];
+    if (!isEmailConfigured() || recipients.length === 0) return false;
+
+    const factRows = facts.filter(f => f && f[1]).map(([k, v]) => `
+            <tr>
+                <td style="padding:4px 12px 4px 0; color:#7f8c8d; font-size:13px; white-space:nowrap; vertical-align:top;">${escapeHtml(k)}</td>
+                <td style="padding:4px 0; color:#ecf0f1; font-size:13px;">${escapeHtml(v)}</td>
+            </tr>`).join('');
+
+    const body = `
+        <div style="margin-bottom:24px;">
+            <span style="display:inline-block; padding:4px 12px; border-radius:4px; background-color:#3498db; color:#fff; font-size:12px; font-weight:bold; text-transform:uppercase;">${escapeHtml(label)}</span>
+        </div>
+        <h2 style="margin:0 0 8px; color:#ecf0f1; font-size:18px;">${escapeHtml(heading)}</h2>
+        ${intro ? `<p style="margin:0 0 20px; color:#bdc3c7;">${escapeHtml(intro)}</p>` : ''}
+        ${quote ? `<div style="background-color:#1a1d23; border-radius:6px; padding:16px; margin-bottom:20px; border-left:3px solid #3498db;">
+            <p style="margin:0; color:#ecf0f1; font-size:14px; white-space:pre-wrap;">${escapeHtml(quote)}</p>
+        </div>` : ''}
+        ${factRows ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:20px;">${factRows}</table>` : ''}
+        ${path ? `<p style="margin:0;"><a href="${APP_URL}${path}" style="display:inline-block; padding:10px 18px; border-radius:6px; background-color:#3498db; color:#fff; text-decoration:none; font-size:14px; font-weight:bold;">${escapeHtml(cta)}</a></p>` : ''}`;
+
+    try {
+        // One message per person, so recipients never see each other's addresses
+        await Promise.all(recipients.map(email => sgMail.send({ to: email, from: FROM_EMAIL, subject, html: wrapHtml(escapeHtml(subject), body) })));
+        console.log(`[Email] Help desk "${subject}" sent to ${recipients.length} recipient(s)`);
+        return true;
+    } catch (err) {
+        console.error(`[Email] Help desk email failed:`, err.message);
+        return false;
+    }
+}

@@ -50,7 +50,7 @@ async function main() {
                  site_contacts, contacts, customer_site_access, completed_checklists, maintenance_logs,
                  trailer_components, trailer_assignments, job_sites, companies, site_snapshots,
                  pepwave_snapshots, daily_energy_summary, analytics_daily_metrics, alert_history,
-                 action_queue_acks, audit_log
+                 action_queue_acks, audit_log, ticket_messages, tickets
         RESTART IDENTITY CASCADE
     `)
     await db.query(`DELETE FROM users`)
@@ -255,6 +255,68 @@ async function main() {
     ]
     for (const [site, text, author] of notes) {
         await db.query(`INSERT INTO site_notes (job_site_id, note, author, created_at) VALUES ($1,$2,$3,$4)`, [siteIds[site], text, author, now - Math.round(Math.random() * 4) * DAY - 3600000])
+    }
+
+    // ---------- Help desk requests ----------
+    const HOUR = 3600000
+    const dana = { id: userIds.acme, name: 'Dana Ruiz (Acme)', email: 'dana.ruiz@acme-construction.example' }
+    const riley = { id: userIds.tech, name: 'Riley Technical Manager' }
+    const visit = await db.query(`SELECT id FROM maintenance_logs WHERE title = 'Router offline — dispatch tech' LIMIT 1`)
+    const requests = [
+        {   // A customer waiting on us, nobody has picked it up
+            subject: 'A camera has no video', site: 'dallas', unit: 'BV-102', source: 'portal', visible: true, by: dana,
+            status: 'new', awaiting: true, created: now - 2 * HOUR,
+            messages: [['customer', dana, 'Camera 2 on the east fence has been black since this morning. The other cameras are fine. Call Luis on site at 214-555-0190 if you need the gate opened.', false, now - 2 * HOUR]],
+        },
+        {   // Logged for a caller, in progress, with a field visit already linked
+            subject: 'The unit looks powered off', site: 'okc', unit: 'BV-115', source: 'staff', visible: true,
+            requester: { name: 'Earl Whitaker', email: 'ewhitaker@heartland-dot.example', phone: '405-555-0163' },
+            status: 'open', assignee: riley, awaiting: false, created: now - 30 * HOUR, firstResponse: now - 29 * HOUR, visit: visit.rows[0]?.id,
+            messages: [
+                ['staff', riley, 'Earl called: no lights on the mast since Tuesday night. Site power is on. Router and Cerbo both dark on our side.', true, now - 30 * HOUR],
+                ['staff', riley, 'Thanks for the call, Earl. The unit stopped reporting Tuesday at 9:40 pm. A technician is coming out to check power to the router and the battery.', false, now - 29 * HOUR],
+            ],
+        },
+        {   // We asked the customer something
+            subject: 'We need the unit moved', site: 'fortworth', unit: 'BV-104', source: 'portal', visible: true, by: dana,
+            status: 'waiting', assignee: riley, awaiting: false, unread: true, created: now - 3 * DAY, firstResponse: now - 3 * DAY + 2 * HOUR,
+            messages: [
+                ['customer', dana, 'The crane pad is being poured next week where BV-104 sits. Can it move to the north lot?', false, now - 3 * DAY],
+                ['staff', riley, 'We can do that. Which day does the pour start, and is the north lot gate the one on Rosedale?', false, now - 3 * DAY + 2 * HOUR],
+            ],
+        },
+        {   // Our own team spotted it: internal, the customer never sees it
+            subject: 'Battery critically low', site: 'dtc', unit: 'BV-107', source: 'watch', visible: false,
+            status: 'open', assignee: riley, awaiting: false, created: now - 20 * HOUR,
+            messages: [['staff', riley, 'Six days of deficit and down to 11%. Panels look shaded by the new tower crane in the afternoon. Battery service is on the schedule for tomorrow.', true, now - 20 * HOUR]],
+        },
+        {   // Done
+            subject: 'The unit is beeping at night', site: 'dallas', unit: 'BV-103', source: 'portal', visible: true, by: dana,
+            status: 'resolved', assignee: riley, awaiting: false, created: now - 6 * DAY, firstResponse: now - 6 * DAY + HOUR, resolved: now - 5 * DAY,
+            messages: [
+                ['customer', dana, 'BV-103 has been beeping every few minutes after dark. The night guard asked about it.', false, now - 6 * DAY],
+                ['staff', riley, 'That was the low-voltage warning on the mast light. We changed the setting remotely and it should be quiet tonight. Let us know if it comes back.', false, now - 6 * DAY + HOUR],
+                ['system', null, 'Marked resolved by Riley Technical Manager', false, now - 5 * DAY],
+            ],
+        },
+    ]
+    for (const r of requests) {
+        const site = siteByKey(r.site)
+        const who = r.by ? { user: r.by.id, name: r.by.name, email: r.by.email } : { user: null, ...(r.requester || {}) }
+        const last = r.messages[r.messages.length - 1][4]
+        const t = await db.query(
+            `INSERT INTO tickets (subject, status, priority, source, customer_visible, job_site_id, company_id, site_id, trailer_unit,
+                requester_user_id, requester_name, requester_email, requester_phone, assignee_id, maintenance_log_id,
+                awaiting_reply, customer_unread, created_by, created_at, updated_at, first_response_at, resolved_at)
+             VALUES ($1,$2,'normal',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING id`,
+            [r.subject, r.status, r.source, r.visible, siteIds[r.site], site.company ? companyIds[site.company] : null, tId(r.unit), r.unit,
+                who.user, who.name || null, who.email || null, who.phone || null, r.assignee?.id || null, r.visit || null,
+                r.awaiting, !!r.unread, r.by?.name || riley.name, r.created, Math.max(last, r.resolved || 0), r.firstResponse || null, r.resolved || null])
+        for (const [role, author, body, internal, at] of r.messages) {
+            await db.query(
+                `INSERT INTO ticket_messages (ticket_id, author_user_id, author_name, author_role, body, internal, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+                [t.rows[0].id, author?.id || null, author?.name || 'System', role, body, internal, at])
+        }
     }
 
     // ---------- A pending relocation for the Fleet Manager ----------

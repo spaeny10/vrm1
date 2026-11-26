@@ -112,6 +112,7 @@ import { registerReportsRoutes } from './routes/reports.js';
 import { registerPortalRoutes } from './routes/portal.js';
 import { registerDigestRoutesRoutes } from './routes/digestRoutes.js';
 import { registerBoardRoutes } from './routes/board.js';
+import { registerHelpDeskRoutes } from './routes/helpdesk.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -160,6 +161,7 @@ registerAiRoutes(app);
 registerActionsRoutes(app);
 registerReportsRoutes(app);
 registerPortalRoutes(app);
+registerHelpDeskRoutes(app);
 registerDigestRoutesRoutes(app);
 
 

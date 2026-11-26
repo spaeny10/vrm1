@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
-import { lazy, Suspense, useState, useEffect } from 'react'
+import { lazy, Suspense, useState, useEffect, useCallback } from 'react'
 import { useAuth } from './components/AuthProvider'
 import { WorkspaceProvider, useWorkspace } from './components/WorkspaceProvider'
 import Nav from './components/Nav'
@@ -8,6 +8,8 @@ import ErrorBoundary from './components/ErrorBoundary'
 import LoginPage from './pages/LoginPage'
 import ForcePasswordChangePage from './pages/ForcePasswordChangePage'
 import { Icon, Loading } from './ui'
+import { useApiPolling } from './hooks/useApiPolling'
+import { apiGet } from './api/vrm'
 
 const FleetHome = lazy(() => import('./pages/FleetHome'))
 const BillingHome = lazy(() => import('./pages/BillingHome'))
@@ -24,6 +26,10 @@ const CustomersPage = lazy(() => import('./pages/CustomersPage'))
 const InsightsPage = lazy(() => import('./pages/InsightsPage'))
 const Settings = lazy(() => import('./pages/Settings'))
 const HelpPage = lazy(() => import('./pages/HelpPage'))
+const HelpDeskPage = lazy(() => import('./pages/HelpDeskPage'))
+const HelpDeskTicket = lazy(() => import('./pages/HelpDeskTicket'))
+const PortalRequests = lazy(() => import('./pages/PortalRequests'))
+const PortalRequestDetail = lazy(() => import('./pages/PortalRequestDetail'))
 const PortalDashboard = lazy(() => import('./pages/PortalDashboard'))
 const PortalSiteDetail = lazy(() => import('./pages/PortalSiteDetail'))
 const NotFound = lazy(() => import('./pages/NotFound'))
@@ -76,6 +82,8 @@ export default function App() {
                 <Routes>
                     <Route path="/" element={<PortalDashboard />} />
                     <Route path="/site/:id" element={<PortalSiteDetail />} />
+                    <Route path="/requests" element={<PortalRequests />} />
+                    <Route path="/requests/:id" element={<PortalRequestDetail />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
             </Shell>
@@ -99,6 +107,8 @@ export default function App() {
                     <Route path="/insights" element={<InsightsPage />} />
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/help" element={<HelpPage />} />
+                    <Route path="/helpdesk" element={<HelpDeskPage />} />
+                    <Route path="/helpdesk/:id" element={<HelpDeskTicket />} />
                     {/* Old addresses that may be bookmarked or in emails */}
                     <Route path="/companies" element={<Navigate to="/customers" replace />} />
                     <Route path="/fleet" element={<Navigate to="/insights" replace />} />
@@ -114,6 +124,10 @@ function PortalNav({ open, onClose }) {
     const { user, logout } = useAuth()
     const location = useLocation()
     useEffect(() => { onClose?.() }, [location.pathname])
+    // Replies from BIGView the customer hasn't opened yet
+    const fetchRequests = useCallback(() => apiGet('/portal/tickets'), [])
+    const { data: requests } = useApiPolling(fetchRequests, 60000)
+    const unread = (requests?.tickets || []).filter(t => t.unread).length
     return (
         <>
             {open && <div className="scrim" onClick={onClose} />}
@@ -121,6 +135,7 @@ function PortalNav({ open, onClose }) {
                 <div className="nav-brand"><img src="/logo.webp" alt="BIGView" /><span>OMNI</span></div>
                 <nav className="nav-list">
                     <NavLink to="/" className={() => `nav-item ${location.pathname === '/' || location.pathname.startsWith('/site/') ? 'on' : ''}`}><Icon name="pin" />My sites</NavLink>
+                    <NavLink to="/requests" className={({ isActive }) => `nav-item ${isActive ? 'on' : ''}`}><Icon name="inbox" />Requests{unread > 0 && <span className="count">{unread}</span>}</NavLink>
                 </nav>
                 <div className="nav-foot">
                     <div className="who"><b>{user?.display_name}</b><small>Customer</small></div>

@@ -102,6 +102,14 @@ export const HEALTH = {
     inactive: { tone: 'off', label: 'Not in service' },
 }
 
+// Help desk request status, as the team sees it and as the customer sees it
+export const TICKET_STATUS = {
+    new: { tone: 'info', label: 'New', customer: 'Received' },
+    open: { tone: 'plain', label: 'In progress', customer: 'In progress' },
+    waiting: { tone: 'warn', label: 'Waiting on customer', customer: 'Waiting on you' },
+    resolved: { tone: 'ok', label: 'Resolved', customer: 'Resolved' },
+}
+
 export function socTone(soc) {
     if (soc == null) return 'off'
     return soc < 20 ? 'crit' : soc < 40 ? 'warn' : 'ok'

@@ -1,7 +1,7 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useApiPolling } from '../hooks/useApiPolling'
-import { fetchNotifications, markNotifRead, markAllNotifsRead } from '../api/vrm'
+import { fetchNotifications, markNotifRead, markAllNotifsRead, apiGet } from '../api/vrm'
 import { useAuth } from './AuthProvider'
 import { useWorkspace, WORKSPACES } from './WorkspaceProvider'
 import { Icon } from '../ui'
@@ -27,6 +27,7 @@ const MENUS = {
     tech: [
         { to: '/', label: 'Home', icon: 'home', end: true },
         { to: '/trailers', label: 'Trailers', icon: 'truck' },
+        { to: '/helpdesk', label: 'Help desk', icon: 'inbox', count: 'needs_action' },
         { to: '/insights', label: 'Insights', icon: 'chart' },
         { to: '/map', label: 'Map', icon: 'map' },
     ],
@@ -55,6 +56,11 @@ export default function Nav({ open, onClose }) {
     const notifications = notifData?.notifications || []
     const unread = notifData?.unread_count || 0
 
+    // Requests nobody owns yet, or where a customer is waiting on us
+    const fetchDesk = useCallback(() => apiGet('/tickets/counts'), [])
+    const { data: deskData } = useApiPolling(fetchDesk, 60000)
+    const desk = deskData?.counts || {}
+
     const switchTo = (key) => { setWorkspace(key); navigate('/') }
     const isAdmin = user?.role === 'admin'
 
@@ -78,7 +84,7 @@ export default function Nav({ open, onClose }) {
                 <nav className="nav-list">
                     {(MENUS[workspace] || MENUS.fleet).map(item => (
                         <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => `nav-item ${isActive ? 'on' : ''}`}>
-                            <Icon name={item.icon} />{item.label}
+                            <Icon name={item.icon} />{item.label}{item.count && desk[item.count] > 0 && <span className="count">{desk[item.count]}</span>}
                         </NavLink>
                     ))}
 
